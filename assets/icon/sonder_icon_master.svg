@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sonder master icon — original pixel heart + keyhole, near-black bg, lavender heart.
+     108×108 adaptive safe zone. No text, no third-party art. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" role="img" aria-labelledby="title">
+  <title id="title">Sonder — pixel heart with keyhole</title>
+  <rect width="108" height="108" rx="24" fill="#080B0F"/>
+  <!-- Pixel heart (8×8 cells, 6px each) centered at 54,54 -->
+  <path fill="#7E6CFF" stroke="#0A0E14" stroke-width="1.6" stroke-linejoin="miter"
+        d="M30,34h6v-6h6h6v6h6h6v-6h6h6v6h6v6v6v6v6h-6v6h-6v6h-6v6h-6h-6v-6h-6v-6h-6v-6h-6v-6v-6v-6v-6z"/>
+  <!-- Inner highlight — single 4px pixel, 22% white -->
+  <rect x="38" y="38" width="4" height="4" rx="1" fill="white" opacity="0.20"/>
+  <!-- Keyhole — near-black cutout; circular top + shaft -->
+  <g fill="#080B0F" stroke="#E6E6E6" stroke-width="0.9" stroke-linejoin="round">
+    <!-- circle + shaft as one path -->
+    <path d="M54 39a7 7 0 1 0 0 14a7 7 0 0 0 0-14z M48.2 51.2h11.6l-1.6 11.2h-8.4z"/>
+  </g>
+  <!-- tiny sparkle pixel top-right of heart -->
+  <rect x="64" y="36" width="3" height="3" fill="white" opacity="0.85"/>
+</svg>

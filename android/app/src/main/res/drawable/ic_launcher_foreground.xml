@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Pixel heart — lavender, stroke for hard pixel edge; monochrome-safe single fill. -->
+    <path
+        android:fillColor="#7E6CFF"
+        android:strokeColor="#0A0E14"
+        android:strokeWidth="1.6"
+        android:strokeLineJoin="miter"
+        android:pathData="M30,34h6v-6h6h6v6h6h6v-6h6h6v6h6v6v6v6v6h-6v6h-6v6h-6v6h-6h-6v-6h-6v-6h-6v-6h-6v-6v-6v-6v-6z" />
+    <!-- inner highlight pixel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.20"
+        android:pathData="M38,38h4v4h-4z" />
+    <!-- keyhole: near-black fill with light stroke for legibility at 48dp -->
+    <path
+        android:fillColor="#080B0F"
+        android:strokeColor="#E6E6E6"
+        android:strokeWidth="0.9"
+        android:pathData="M54,39m-7,0a7,7 0,1 0,14 0a7,7 0,1 0,-14 0M48.2,51.2h11.6l-1.6,11.2h-8.4z" />
+    <!-- sparkle pixel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.85"
+        android:pathData="M64,36h3v3h-3z" />
+</vector>
