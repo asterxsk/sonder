@@ -64,7 +64,7 @@ class SonderAccessibilityService : AccessibilityService() {
         isRunning = true
         Log.i(TAG, "SonderAccessibilityService connected; package=${applicationContext.packageName}")
         sessionStore = SessionStore(applicationContext)
-        overlayController = GateOverlayController(applicationContext)
+        overlayController = GateOverlayController(this)
         appCatalog = AppTargetCatalog(applicationContext)
 
         // Notify channel plugin that service state changed.
@@ -214,7 +214,10 @@ class SonderAccessibilityService : AccessibilityService() {
         // we pick the configured snapshot that matches the inferred surface, falling
         // back to wholeApp snapshot if present and no surface-specific match.
         if (normalizedPackage == normalizePackageId(applicationContext.packageName)) {
-            overlayController.remove()
+            // Don't fully remove overlay state — just hide it while Sonder is
+            // showing (the user is playing blackjack). When Sonder finishes and
+            // the blocked app returns to foreground, the overlay will re-evaluate.
+            overlayController.hideForSonder()
             return
         }
 
@@ -350,12 +353,10 @@ class SonderAccessibilityService : AccessibilityService() {
         lastInterceptKey = key
         lastInterceptAt = now
         // Notify Flutter
-        SonderChannelPlugin.sendTargetIntercepted(
-            packageName = snapshot.packageName,
-            surface = snapshot.surface.name,
-            atEpochMs = now,
-        )
-        // Show overlay
+        // Show overlay. Do NOT notify Flutter here — the native overlay exposes an
+        // action that deep-links to Sonder; MainActivity.forwardGateExtras will
+        // call sendTargetIntercepted when the user taps the overlay action so the
+        // app opens only on explicit user interaction.
         overlayController.showOrUpdateForSnapshot(snapshot, decision, now)
     }
 

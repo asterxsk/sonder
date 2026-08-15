@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'data/key_value_store.dart';
 import 'data/onboarding_repository.dart';
 import 'design/tokens.dart';
@@ -196,8 +197,15 @@ class _DashboardShellState extends State<DashboardShell> {
                   packageName: packageName,
                   won: won,
                   appState: widget.appState,
-                  onDone: () =>
-                      Navigator.of(context).popUntil((r) => r.isFirst),
+                  onDone: () {
+                    // Return to the blocked app. The native overlay
+                    // will re-evaluate: allowed (win) dismisses it,
+                    // locked (loss) shows the timer.
+                      Navigator.of(context).popUntil((r) => r.isFirst);
+                    // Move Sonder to the back so the blocked app
+                    // (or home) is in the foreground.
+                      SystemNavigator.pop();
+                    },
                 ),
               ),
             );

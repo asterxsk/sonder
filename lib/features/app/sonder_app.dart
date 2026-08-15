@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../blackjack/blackjack_screen.dart';
 import '../blackjack/result_screen.dart';
 import '../gate/gate_screen.dart';
@@ -56,18 +57,12 @@ class _SonderAppState extends State<SonderApp> {
                               won: won,
                             );
                             if (!context.mounted) return;
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute<void>(
-                                builder: (_) => ResultScreen(
-                                  packageName: intercepted,
-                                  won: won,
-                                  appState: widget.appState,
-                                  onDone: () => Navigator.of(
-                                    context,
-                                  ).popUntil((r) => r.isFirst),
-                                ),
-                              ),
-                            );
+                            // This flow was launched from the native overlay's action
+                            // (intercept). Automatically return to the blocked app
+                            // after applying the outcome rather than showing an
+                            // intermediate result button.
+                            Navigator.of(context).popUntil((r) => r.isFirst);
+                            SystemNavigator.pop();
                           },
                         ),
                       ),

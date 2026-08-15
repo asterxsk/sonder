@@ -74,11 +74,24 @@ class GateOverlayController(private val context: Context) {
 
     /**
      * Called when the foreground package changes. Removes overlay if the user
-     * has left the currently-gated target.
+     * has left the currently-gated target for a different app (not Sonder).
+     * When Sonder comes to the foreground (user tapped "Play Blackjack"),
+     * the overlay is hidden but state is preserved so it can re-evaluate
+     * when the blocked app returns to the foreground.
      */
     fun onForegroundPackageChanged(newPackageName: String?) {
         val key = currentTargetKey ?: return
         val gatedPackage = key.substringBefore("::")
+        val sonderPackage = normalizePackageId(context.packageName)
+        if (newPackageName == sonderPackage) {
+            // Sonder came to foreground for the blackjack game — hide the
+            // overlay so it doesn't cover Sonder's UI, but preserve state.
+            if (isShowing) {
+                Log.d(TAG, "Sonder came to foreground for gate, temporarily hiding overlay")
+                hideForSonder()
+            }
+            return
+        }
         if (newPackageName != gatedPackage) {
             Log.d(TAG, "Target left foreground ($gatedPackage -> $newPackageName), removing overlay")
             remove()
@@ -97,6 +110,23 @@ class GateOverlayController(private val context: Context) {
         currentTargetKey = null
         isShowing = false
         lastDecision = null
+    }
+
+    /**
+     * Hides the overlay view while preserving the current target key,
+     * so when the blocked app returns to the foreground the overlay can
+     * re-evaluate without treating it as a fresh intercept.
+     */
+    fun hideForSonder() {
+        val view = overlayView ?: return
+        try {
+            windowManager.removeView(view)
+        } catch (e: Exception) {
+            Log.w(TAG, "removeView failed during hideForSonder", e)
+        }
+        overlayView = null
+        isShowing = false
+        // Keep currentTargetKey and lastDecision so re-evaluation works.
     }
 
     private fun show(snapshot: EnforcementSnapshot, decision: AccessDecision) {
