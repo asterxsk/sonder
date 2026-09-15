@@ -29,6 +29,16 @@ class EnforcementCoordinator @Inject constructor(
     private var overlay: BlockOverlay? = null
     private var overlayShownFor: String? = null
 
+    /**
+     * Cooldown after the user backs out of a gate (BlockActivity finish). Without
+     * it, backing out of the blackjack table instantly re-triggers the overlay
+     * + gate for the same app — an inescapable loop that reads as a freeze.
+     */
+    @Volatile
+    private var gateCooldownUntil: Long = 0
+    @Volatile
+    private var gateCooldownPkg: String? = null
+
     /** Target package awaiting the blackjack gate (consumed by BlockActivity). */
     @Volatile
     var pendingTargetPackage: String? = null
@@ -62,16 +72,36 @@ class EnforcementCoordinator @Inject constructor(
 
             if (overlayShownFor == pkg) return@launch // already gated this app
 
+            // Just-backed-out cooldown: let the user leave (home, back) without
+            // being instantly re-gated. Next FRESH open of the app re-gates.
+            if (pkg == gateCooldownPkg && now < gateCooldownUntil) return@launch
+
             val lockoutRemaining = repository.lockoutRemainingMillis(pkg, now)
             showOverlay(pkg, lockoutRemaining)
             launchGate(pkg)
         }
     }
 
+    /** Called by BlockActivity when the user backs out without winning. */
+    fun onGateDismissed(pkg: String?) {
+        gateCooldownPkg = pkg
+        gateCooldownUntil = System.currentTimeMillis() + GATE_DISMISS_COOLDOWN_MILLIS
+        dismissOverlay()
+    }
+
     fun launchGate(pkg: String) {
         pendingTargetPackage = pkg
         val intent = Intent(context, BlockActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            // NEW_TASK: we start from a service context.
+            // CLEAR_TOP|SINGLE_TOP: reuse/replace any existing gate on top.
+            // NEVER CLEAR_TASK — it would destroy MainActivity, leaving Sonder's
+            // task empty so any later back/finish dumps the user on the launcher
+            // (the "app disappeared / can't go home" bug).
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
             putExtra(BlockActivity.EXTRA_TARGET_PACKAGE, pkg)
         }
         context.startActivity(intent)
@@ -103,5 +133,10 @@ class EnforcementCoordinator @Inject constructor(
         overlay?.dismiss()
         overlay = null
         overlayShownFor = null
+    }
+
+    companion object {
+        /** Grace period after backing out of a gate before re-gating the same app. */
+        const val GATE_DISMISS_COOLDOWN_MILLIS = 30_000L
     }
 }

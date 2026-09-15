@@ -7,6 +7,7 @@ captures/
 
 # CWD-local tooling & caches (never commit)
 /tools/
+/android-sdk/
 /.android/
 *.log
 

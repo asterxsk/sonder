@@ -38,9 +38,17 @@ fun SonderRoot(onboardingComplete: Boolean?) {
 
         else -> {
             val backStack = rememberNavBackStack(Main)
+
+            // One guarded pop for every path back: system gesture, in-screen
+            // arrows, and DONE buttons all share it. Never pops the root —
+            // popping Main renders nothing and looks like a freeze.
+            val popBack: () -> Unit = {
+                if (backStack.size > 1) backStack.removeLastOrNull()
+            }
+
             NavDisplay(
                 backStack = backStack,
-                onBack = { backStack.removeLastOrNull() },
+                onBack = popBack,
                 entryProvider = entryProvider {
                     entry<Main> {
                         HomeScreen(
@@ -50,13 +58,13 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                         )
                     }
                     entry<Targets> {
-                        TargetsScreen(onBack = { backStack.removeLastOrNull() })
+                        TargetsScreen(onBack = popBack)
                     }
                     entry<Stats> {
-                        StatsScreen(onBack = { backStack.removeLastOrNull() })
+                        StatsScreen(onBack = popBack)
                     }
                     entry<Settings> {
-                        SettingsScreen(onBack = { backStack.removeLastOrNull() })
+                        SettingsScreen(onBack = popBack)
                     }
                 },
             )

@@ -19,12 +19,14 @@ class BlockActivity : ComponentActivity() {
 
     @Inject lateinit var coordinator: EnforcementCoordinator
 
+    private var targetPkg: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         coordinator.onGateShown()
 
-        val targetPkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
+        targetPkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
             ?: coordinator.pendingTargetPackage
             ?: ""
 
@@ -37,13 +39,23 @@ class BlockActivity : ComponentActivity() {
                 )
             }
         }
+
+        // BACK gesture/button on the gate = leave (with re-gate cooldown), never loop.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    finish()
+                }
+            },
+        )
     }
 
     override fun onDestroy() {
-        // If the user backed out of the gate without a grant, clear the pending target
-        // so the next window event re-gates cleanly.
+        // If the user backed out of the gate without a grant, start the re-gate
+        // cooldown so back doesn't loop straight back into the table.
         if (isFinishing) {
-            coordinator.dismissOverlay()
+            coordinator.onGateDismissed(targetPkg)
         }
         super.onDestroy()
     }

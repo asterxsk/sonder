@@ -57,12 +57,20 @@ fun PixelButton(
             .offset(x = offset, y = offset)
             .background(if (enabled) fill else PixelPalette.Panel)
             .border(2.dp, if (enabled) border else PixelPalette.BorderDark)
-            .padding(end = if (showShadow) 4.dp else 0.dp, bottom = if (showShadow) 4.dp else 0.dp)
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick),
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                // Shadow padding is OUTSIDE the text box; clickable covers the
+                // whole button including the shadow strip, so edge taps register.
+                .padding(end = if (showShadow) 4.dp else 0.dp, bottom = if (showShadow) 4.dp else 0.dp),
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.material3.Text(

@@ -32,7 +32,7 @@ class SonderAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val pkg = event?.packageName?.toString() ?: return
         if (pkg == packageName) return // never react to ourselves
-        if (pkg in IGNORED_PACKAGES) return
+        if (isIgnored(pkg)) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
         // Offload DB work off the main thread.
@@ -56,7 +56,22 @@ class SonderAccessibilityService : AccessibilityService() {
             "com.android.launcher3",
             "com.google.android.apps.nexuslauncher",
             "com.android.systemui.navigationbar",
+            "com.google.android.apps.nova.launcher",
+            "com.sec.android.app.launcher",
+            "com.miui.home",
+            "com.huawei.android.launcher",
+            "com.android.quicksearchbox",
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.inputmethod.latin",
+            "com.android.inputmethod.latin",
+            "com.android.inputmethod.pinyin",
         )
+
+        /** Any package whose id contains one of these substrings is a launcher/IME. */
+        val IGNORED_HINTS = listOf("launcher", "inputmethod", "ime", "systemui")
+
+        fun isIgnored(pkg: String): Boolean =
+            pkg in IGNORED_PACKAGES || IGNORED_HINTS.any { pkg.contains(it, ignoreCase = true) }
     }
 }
 

@@ -25,12 +25,22 @@ class BlockOverlay(
     private val onTap: () -> Unit,
 ) {
     private var view: View? = null
+    private val mainHandler = android.os.Handler(context.mainLooper)
+
+    /**
+     * Hard safety: the overlay MUST never trap the user. If the gate activity
+     * hasn't taken over within this window, the overlay removes itself —
+     * a stuck full-screen overlay swallows touches system-wide (including the
+     * home gesture), which reads as "the whole phone is frozen".
+     */
+    private val autoDismissRunnable = Runnable { dismiss() }
 
     fun show(): Boolean = try {
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -41,6 +51,7 @@ class BlockOverlay(
         params.gravity = Gravity.CENTER
 
         view = buildView().also { wm.addView(it, params) }
+        mainHandler.postDelayed(autoDismissRunnable, MAX_OVERLAY_MILLIS)
         true
     } catch (_: Exception) {
         // No overlay permission or window token issue: BlockActivity launch still proceeds.
@@ -48,12 +59,18 @@ class BlockOverlay(
     }
 
     fun dismiss() {
+        mainHandler.removeCallbacks(autoDismissRunnable)
         try {
             view?.let { (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(it) }
         } catch (_: Exception) {
             // already removed
         }
         view = null
+    }
+
+    companion object {
+        /** Overlay never outlives this. The gate normally replaces it in <1s. */
+        const val MAX_OVERLAY_MILLIS = 4_000L
     }
 
     private fun buildView(): View {
