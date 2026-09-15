@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sonder</string>
+    <string name="accessibility_service_label">Sonder Enforcement</string>
+    <string name="accessibility_service_description">Sonder watches which app is in the foreground so it can gate the apps you chose behind a hand of blackjack. It reads only the foreground window package and never collects or sends any data.</string>
+</resources>

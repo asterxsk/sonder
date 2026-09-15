@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Pixel spade motif for Sonder notifications -->
+    <path
+        android:fillColor="#FFB827"
+        android:pathData="M12,2 L18,10 L14,10 L14,14 L10,14 L10,10 L6,10 Z" />
+    <path
+        android:fillColor="#FFB827"
+        android:pathData="M9,16 L15,16 L15,20 L9,20 Z" />
+</vector>
