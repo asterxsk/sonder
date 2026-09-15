@@ -6,20 +6,37 @@ blackjack. Win → 5 minutes of access. Lose → +10 minutes of lockout **debt**
 access. Walk away with debt and you're locked out until it's served. Leave a
 granted app for more than 60 seconds and access is revoked, time remaining or not.
 
-**v2 is a full native rewrite of the Flutter v1** (which still lives at `android/`
-via `lib/` in this repo) using Jetpack Compose, Hilt, Room and WorkManager-free
-scheduling. It implements the Pixel UI v3 design system in `docs/design/`.
+**v2 is a full native rewrite of the Flutter v1** (which still lives at `lib/`
+and `android/` in the repo root) using Jetpack Compose, Hilt, and Room. It
+implements the Pixel UI v3 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
+Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v2.md).
 
 ## Build
 
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # domain rules tests
+./gradlew testDebugUnitTest    # domain rules tests (27 tests)
 ```
 
-Debug builds shorten timers (`ACCESS_WINDOW_MILLIS`, `ABSENCE_REVOKE_MILLIS` in
-`build.gradle.kts`) so enforcement rules can be verified on-device in seconds.
+Requires JDK 17 via `JAVA_HOME` and an Android SDK with platform 37. Gradle
+9.3.1 comes via the wrapper (SHA-256 pinned). The committed `gradle.properties`
+never pins a JDK path — set `JAVA_HOME` in your environment instead.
+
+Debug builds shorten timers (`ACCESS_WINDOW_MILLIS = 60_000`,
+`ABSENCE_REVOKE_MILLIS = 20_000` in `build.gradle.kts`) so enforcement rules
+can be verified on-device in seconds. `minSdk 26`, `targetSdk 36`.
+
+## Rules
+
+| Event | Result |
+| --- | --- |
+| Win with zero debt | +5:00 access |
+| Loss | +10:00 debt (cap 60:00) |
+| Win with debt | pays 10:00 of debt |
+| Push | free replay |
+| Walk away with debt | locked until served |
+| Absent >60 s during a grant | revoked |
 
 ## Architecture
 
@@ -59,7 +76,7 @@ links. No `QUERY_ALL_PACKAGES` — only launchable apps are visible.
 ## CI/CD
 
 `.github/workflows/android-v2.yml` builds and unit-tests every push to
-`sonder-v2`/`main`, uploads the debug APK, and on `sonder-v2` pushes builds a
-release APK — signed automatically when the `SONDER_KEYSTORE_B64`,
-`SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`, `SONDER_KEY_PASSWORD` secrets
-are configured (keystore as base64).
+`main`/`sonder-v2`, uploads the debug APK, and builds a release APK — signed
+automatically when the `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`,
+`SONDER_KEY_ALIAS`, `SONDER_KEY_PASSWORD` secrets are configured (keystore as
+base64). The release job fires on `sonder-v2` pushes.

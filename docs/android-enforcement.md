@@ -1,5 +1,11 @@
 # Sonder — Android Enforcement, Policy, and Review Notes
 
+> **⚠ LEGACY (v1, Flutter).** This document describes the original Flutter
+> implementation: hard 10-minute lockouts and 20-second grant revocation.
+> Those rules **differ from v2** (debt model, 60-minute cap, 60-second
+> revocation). Current enforcement notes:
+> [`android-native-v2.md`](android-native-v2.md). Kept for reference.
+
 This document is the **Job 05** deliverable for Sonder's Android enforcement
 bridge and Play Console review checklist. It is candid about limitations and
 actionable for QA. Read it before shipping or submitting for accessibility
