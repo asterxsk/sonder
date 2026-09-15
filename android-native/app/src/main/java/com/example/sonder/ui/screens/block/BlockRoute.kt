@@ -242,7 +242,9 @@ private fun PixelDivider() {
     )
 }
 
-/** White/off-white card face per §9 (readability first), pixel-framed, 2-frame flip feel. */
+/** White/off-white card face per §9 (readability first), pixel-framed.
+ *  Layout: suit (house) on top, rank on bottom — so two-digit ranks (10)
+ *  have their own line and never clip out of the card frame. */
 @Composable
 fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
     val rotation by animateFloatAsState(
@@ -250,6 +252,7 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
         animationSpec = snap(), // discrete flip, no spring
         label = "cardFlip",
     )
+    val suitColor = if (suit == Suit.HEARTS || suit == Suit.DIAMONDS) PixelPalette.Danger else PixelPalette.CardInk
     Box(
         modifier = Modifier
             .size(width = 52.dp, height = 74.dp)
@@ -259,9 +262,19 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         if (!faceDown) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxSize().padding(vertical = 6.dp),
+            ) {
                 androidx.compose.material3.Text(
-                    text = "${card.display}${suitGlyph(suit)}",
+                    text = suitGlyph(suit),
+                    style = PixelTypeScale.Badge,
+                    fontFamily = PixelFont,
+                    color = suitColor,
+                )
+                androidx.compose.material3.Text(
+                    text = card.display,
                     style = PixelTypeScale.CardFace,
                     fontFamily = PixelFont,
                     color = PixelPalette.CardInk,
