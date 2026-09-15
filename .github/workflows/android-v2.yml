@@ -34,10 +34,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug
+        run: bash ./gradlew assembleDebug
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest
+        run: bash ./gradlew testDebugUnitTest
 
       - name: Upload test results
         if: always()
@@ -80,14 +80,14 @@ jobs:
         run: |
           if [ -n "$SONDER_KEYSTORE_B64" ]; then
             echo "$SONDER_KEYSTORE_B64" | base64 -d > sonder-release.jks
-            ../gradlew assembleRelease \
+            bash ../gradlew assembleRelease \
               -Psonder.release.storeFile="$PWD/sonder-release.jks" \
               -Psonder.release.storePassword="$SONDER_KEYSTORE_PASSWORD" \
               -Psonder.release.keyAlias="$SONDER_KEY_ALIAS" \
               -Psonder.release.keyPassword="$SONDER_KEY_PASSWORD"
           else
             echo "No signing secrets configured — building unsigned release."
-            ../gradlew assembleRelease
+            bash ../gradlew assembleRelease
           fi
           rm -f sonder-release.jks
 
