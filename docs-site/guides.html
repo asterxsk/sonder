@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guides — Sonder Docs</title>
+<meta name="description" content="How-to guides: verify enforcement on-device, manage targets and debt, survive OEM battery managers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>GUIDES</h1>
+    <p class="lede">Task-oriented how-tos. Each one is short and does one thing.</p>
+
+    <h2 id="verify-enforcement">Verify enforcement on-device</h2>
+    <p>Debug builds shorten the timers so the whole loop fits in a minute:</p>
+    <table>
+      <thead><tr><th>Constant</th><th>Release</th><th>Debug</th></tr></thead>
+      <tbody>
+        <tr><td>Access window (win)</td><td>5 min</td><td>1 min</td></tr>
+        <tr><td>Absence revocation</td><td>&gt;60 s</td><td>&gt;20 s</td></tr>
+      </tbody>
+    </table>
+<pre data-copy="# with a debug APK installed:
+# 1. open a target app → gate appears
+# 2. win a hand → app opens with a 60s clock
+# 3. leave the app, return after 25s → grant revoked
+# 4. lose a hand, close the gate → lockout timer shows
+# 5. reopen the target → gate appears again (lockout) or debt screen"># with a debug APK installed:
+# 1. open a target app → gate appears
+# 2. win a hand → app opens with a 60s clock
+# 3. leave the app, return after 25s → grant revoked
+# 4. lose a hand, close the gate → lockout timer shows
+# 5. reopen the target → gate appears again (lockout) or debt screen</pre>
+    <p>Watch the state badges on Home: <span class="badge granted">✓ GRANTED</span>
+    <span class="badge playing">♠ PLAYING</span> <span class="badge locked">▣ LOCKED</span>
+    <span class="badge cooldown">⌛ COOLDOWN</span>.</p>
+
+    <h2 id="add-remove-targets">Add or remove targets</h2>
+    <ol>
+      <li>Open <strong>TARGETS</strong> from the dock.</li>
+      <li>Use the ALL / LIMITED tabs and the search field to find an app.</li>
+      <li>Tap the row to toggle. ON = opening requires a won hand.</li>
+    </ol>
+    <div class="panel">
+      <p class="panel-title">Sonder itself</p>
+      <p style="margin:0">Sonder excludes itself from the picker — you can't
+      gate the gatekeeper. The system launcher and settings are also ignored by
+      the detector so you can always reach the controls.</p>
+    </div>
+
+    <h2 id="debt">Work off debt (or don't)</h2>
+    <ul>
+      <li><strong>Keep gambling:</strong> each win removes 10 minutes. Fastest route back in.</li>
+      <li><strong>Walk away:</strong> the debt becomes a lockout that ticks down in real time.</li>
+      <li><strong>Cap:</strong> debt maxes at 60 minutes. Extra losses at the cap change nothing — the cap is a mercy, not a magnet.</li>
+    </ul>
+    <p>Exact arithmetic: <a href="rules.html#debt-model">Access rules → debt model</a>.</p>
+
+    <h2 id="oem">Survive OEM battery managers</h2>
+    <p>Xiaomi, Samsung, Huawei, and friends suspend background services. If the
+    gate stops appearing after a day or two:</p>
+    <ol>
+      <li>Exclude Sonder from battery optimization
+      (Settings → Apps → Sonder → Battery → Unrestricted).</li>
+      <li>Disable "battery optimization" for the accessibility service if your
+      OEM splits it out.</li>
+      <li>Lock Sonder in the recents screen where supported.</li>
+      <li>After any Sonder update, re-check
+      <a href="getting-started.html#onboard">accessibility</a> — Android may
+      have dropped it.</li>
+    </ol>
+
+    <h2 id="reset">Reset Sonder state</h2>
+    <p>Debt, grants, lockouts, and hand history live in a local Room database.
+    To start over: Android Settings → Apps → Sonder → Storage → Clear data.
+    That's also the honest way to cheat — which is why targets are chosen once
+    and meant to be kept.</p>
+
+    <footer class="footer">
+      <span>Related: <a href="rules.html">access rules</a> · <a href="enforcement.html">enforcement internals</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

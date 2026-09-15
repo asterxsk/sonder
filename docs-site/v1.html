@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v1 (Flutter) — Sonder Docs</title>
+<meta name="description" content="The legacy Flutter implementation of Sonder: what it did, how it differs from v2, and why it was replaced.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>V1 — THE FLUTTER APP</h1>
+    <p class="lede">Sonder v1 lives on <code>main</code>'s history and in the repo root: a Flutter implementation with native Android enforcement plugins.</p>
+
+    <div class="panel">
+      <p class="panel-title">Legacy</p>
+      <p style="margin:0">v1 is preserved but not developed further. Its rules
+      differ from v2 (hard lockout after losses, 20-second revocation, no debt
+      model) — don't apply v2's rules to it or vice versa.</p>
+    </div>
+
+    <h2 id="what-it-did">What it did</h2>
+    <ul>
+      <li>Flutter UI over a Kotlin platform channel: accessibility detection,
+      overlay, and lockout enforcement in native code.</li>
+      <li>Blackjack gate with the same core idea — win to enter — but a
+      simpler economy: each loss added hard lockout time, each win granted a
+      fixed access window.</li>
+      <li>Shorts/Reels surface detection in some OEM builds
+      (see <a href="https://github.com/asterxsk/sonder/blob/main/docs/android-enforcement.md">docs/android-enforcement.md</a>).</li>
+    </ul>
+
+    <h2 id="differences">How v2 differs</h2>
+    <table>
+      <thead><tr><th>Aspect</th><th>v1 (Flutter)</th><th>v2 (Kotlin + Compose)</th></tr></thead>
+      <tbody>
+        <tr><td>Economy</td><td>Hard lockout on loss</td><td>Debt, capped at 60 min, pay-down wins</td></tr>
+        <tr><td>Revocation</td><td>20 s absence</td><td>60 s absence (20 s in debug)</td></tr>
+        <tr><td>Access window</td><td>Fixed</td><td>5 min (1 min debug)</td></tr>
+        <tr><td>Push</td><td>—</td><td>Free replay</td></tr>
+        <tr><td>UI</td><td>Flutter widgets</td><td>Compose PixelKit (design_v3)</td></tr>
+        <tr><td>State</td><td>App-scoped</td><td>Absolute-epoch timers, reboot/Doze-safe</td></tr>
+        <tr><td>Tests</td><td>Manual</td><td>27 unit tests on the rules engine</td></tr>
+        <tr><td>CI</td><td>—</td><td>Build + test + release APK workflow</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="why-rewrote">Why the rewrite</h2>
+    <p>Flutter's UI costs — the engine's startup latency on a gate that must
+    appear in milliseconds, plus the friction of keeping platform-channel
+    enforcement code and Dart state in sync — pushed v2 native. Compose let
+    the pixel design system (hard frames, stepped shadows, <code>steps()</code>
+    motion) be expressed directly, and the rules engine moved into pure Kotlin
+    where it can be unit-tested without a device.</p>
+
+    <footer class="footer">
+      <span>Related: <a href="architecture.html">v2 architecture</a> · <a href="enforcement.html">v2 enforcement</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonder — Documentation</title>
+<meta name="description" content="Sonder docs: pixel-art screen-time blocking for Android. Win a hand of blackjack to unlock your limited apps.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <section class="hero">
+      <h1>SONDER DOCS</h1>
+      <p class="tagline">Limits are earned back one hand at a time.</p>
+    </section>
+
+    <p>Sonder is an Android screen-time app with a twist. You pick the apps you
+    want to limit. When you open one, Sonder steps in front of it and deals you
+    a hand of blackjack:</p>
+
+    <div class="rules-row">
+      <span class="badge granted">✓ WIN → +5:00 ACCESS</span>
+      <span class="badge locked">▣ LOSS → +10:00 DEBT</span>
+      <span class="badge cooldown">⌛ DEBT CAP → 60:00</span>
+      <span class="badge playing">♠ ABSENT 60s → REVOKED</span>
+    </div>
+
+    <p>Losing doesn't just cost the hand — it adds <strong>lockout debt</strong>.
+    You can keep gambling to pay it off, or walk away and serve the wait. Leave
+    a granted app for more than 60 seconds and access is revoked, even with
+    time on the clock.</p>
+
+    <div class="grid2">
+      <section class="panel amber">
+        <h2 class="panel-title">PLAYING CARD</h2>
+        <div class="cards-demo" aria-hidden="true">
+          <div class="playing-card">A♠</div>
+          <div class="playing-card">K♥</div>
+          <div class="playing-card">Q♣</div>
+          <div class="playing-card back">☾S</div>
+        </div>
+        <p style="margin:0; color:var(--muted); font-size:13px;">Dealer stands on
+        all 17s. Natural blackjack is an instant win. A push is a free replay.
+        No chips, no wagers, no money — the stake is your time.</p>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">START HERE</h2>
+        <ol style="margin:0; padding-left:20px;">
+          <li><a href="getting-started.html">Install &amp; set up</a> — APK, permissions, first target</li>
+          <li><a href="rules.html">Learn the rules</a> — the exact debt arithmetic</li>
+          <li><a href="guides.html">Verify on-device</a> — debug timers make the loop fast</li>
+        </ol>
+      </section>
+    </div>
+
+    <h2 id="two-versions">Two versions, one repo</h2>
+    <table>
+      <thead><tr><th></th><th>v2 — current</th><th>v1 — legacy</th></tr></thead>
+      <tbody>
+        <tr><td>Stack</td><td>Kotlin + Jetpack Compose</td><td>Flutter</td></tr>
+        <tr><td>Loss rule</td><td>+10 min debt (cap 60)</td><td>Flat 10-min lockout</td></tr>
+        <tr><td>Revocation</td><td>Absent &gt; 60 s</td><td>Absent ≥ 20 s</td></tr>
+        <tr><td>Location</td><td><code>android-native/</code></td><td><code>lib/</code>, <code>android/</code></td></tr>
+        <tr><td>Docs</td><td><a href="enforcement.html">Enforcement internals</a></td><td><a href="v1.html">v1 page</a></td></tr>
+      </tbody>
+    </table>
+
+    <footer class="footer">
+      <span>Sonder docs — built with the v3 pixel design system</span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

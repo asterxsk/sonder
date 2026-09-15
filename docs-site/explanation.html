@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why blackjack? — Sonder Docs</title>
+<meta name="description" content="The design rationale behind Sonder's friction gate: why a card game beats a timer, and what the debt model borrows from behavioral economics.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>WHY BLACKJACK?</h1>
+    <p class="lede">Sonder's premise: the cost of opening a distracting app should be paid in attention, not in money or in a notification you can swipe away.</p>
+
+    <h2 id="friction">Friction as a feature</h2>
+    <p>Most screen-time tools rely on willpower at the moment of temptation —
+    the exact moment you have the least of it. Sonder moves the cost earlier:
+    to get in, you must play a hand. Losing doesn't just fail to reward you;
+    it <em>raises the price</em>. The 5-minute access window then forces a
+    deliberate re-entry each time, converting "one quick scroll" into a
+    conscious decision that costs a win per five minutes.</p>
+
+    <h2 id="debt">Why debt instead of hard lockout</h2>
+    <p>A hard lockout after a loss is a dead end: it teaches nothing and
+    invites uninstalling. The debt model (v2's design) keeps the door
+    visibly open — every win pays 10 minutes back, so recovery is always
+    1–6 hands away. This mirrors commitment devices in behavioral
+    economics: punishment that's escapable through effort sustains
+    motivation, while punishment that's escapable only by quitting the tool
+    destroys it. The 60-minute cap exists for the same reason — it bounds
+    the spiral.</p>
+
+    <h2 id="chance">Why chance, not a quiz or a hold</h2>
+    <ul>
+      <li><strong>Quizzes</strong> become speed-runnable; you pattern-match the answers in three days.</li>
+      <li><strong>Timed holds</strong> are pure dead time; you wait them out on the lock screen and the habit loop stays intact.</li>
+      <li><strong>A hand of chance</strong> can't be grooved into muscle memory. Each gate session is genuinely uncertain, so the "maybe I'll just lose and be locked out" calculus stays honest.</li>
+    </ul>
+    <p>Blackjack specifically is fast (~10 seconds per hand), has clean
+    rules that fit a phone screen, and — unlike loot-box mechanics — the
+    stakes are time, never money. That distinction matters for both ethics
+    and Play Store review: nothing here is wagered, purchased, or won of
+    monetary value.</p>
+
+    <h2 id="honesty">The honesty problem</h2>
+    <p>No enforcement app can survive a determined user — clear data, disable
+    accessibility, uninstall. Sonder doesn't pretend otherwise. The design
+    target is the <em>middle of the night</em> version of you: enough
+    friction that auto-pilot doesn't get through, without requiring
+    heroics from the morning version who has to set it up. Targets are
+    chosen once, on purpose, and the reset procedure is documented
+    (<a href="guides.html#reset">guides → reset</a>) precisely so the
+    honest path is as easy as the dishonest one.</p>
+
+    <footer class="footer">
+      <span>Related: <a href="rules.html">access rules</a> · <a href="getting-started.html">getting started</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

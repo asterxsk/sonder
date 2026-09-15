@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI/CD — Sonder Docs</title>
+<meta name="description" content="Sonder v2 CI/CD reference: workflow triggers, jobs, artifacts, and release signing.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>CI/CD</h1>
+    <p class="lede">GitHub Actions workflow <code>.github/workflows/android-v2.yml</code> builds, tests, and packages every push. Latest status: <a href="https://github.com/asterxsk/sonder/actions">actions tab</a>.</p>
+
+    <h2 id="triggers">Triggers</h2>
+    <table>
+      <thead><tr><th>Push to</th><th>What runs</th></tr></thead>
+      <tbody>
+        <tr><td><code>main</code></td><td>build-test job (compile + unit tests + APK artifact)</td></tr>
+        <tr><td><code>sonder-v2</code></td><td>build-test <strong>and</strong> release job (signed if secrets present)</td></tr>
+        <tr><td>pull requests</td><td>build-test job</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="jobs">Jobs</h2>
+    <ul>
+      <li><strong>build-test</strong> — JDK 17, Gradle wrapper (pinned 9.3.1, SHA-verified), runs
+      <code>assembleDebug</code> + <code>test</code>. Uploads the debug APK as a
+      workflow artifact you can sideload directly.</li>
+      <li><strong>release</strong> — <code>assembleRelease</code>. Produces a signed APK when the
+      four secrets are configured; otherwise the unsigned APK is still uploaded.</li>
+    </ul>
+
+    <h2 id="secrets">Release signing secrets</h2>
+    <p>Add these under repo Settings → Secrets and variables → Actions:</p>
+<pre>SONDER_KEYSTORE_B64        # base64 of your .jks keystore
+SONDER_KEYSTORE_PASSWORD   # keystore password
+SONDER_KEY_ALIAS           # key alias
+SONDER_KEY_PASSWORD        # key password</pre>
+    <p>Generate a keystore locally with:</p>
+<pre data-copy="keytool -genkeypair -v -keystore sonder.jks -keyalg RSA
+  -keysize 2048 -validity 10000 -alias sonder">keytool -genkeypair -v -keystore sonder.jks -keyalg RSA
+  -keysize 2048 -validity 10000 -alias sonder</pre>
+    <p>Base64 it for the secret:</p>
+<pre data-copy="base64 -w0 sonder.jks    # Linux/macOS
+base64 sonder.jks         # macOS (alternative)
+certutil -encode sonder.jks encoded.txt   # Windows">base64 -w0 sonder.jks    # Linux/macOS
+base64 sonder.jks         # macOS (alternative)
+certutil -encode sonder.jks encoded.txt   # Windows</pre>
+
+    <h2 id="caveats">Notes and gotchas</h2>
+    <ul>
+      <li>The workflow uses <code>bash ./gradlew</code> — Windows git often strips
+      the exec bit, which CI fixed via <code>git update-index --chmod=+x</code>.</li>
+      <li><code>gradle.properties</code> in the repo deliberately contains no
+      machine-specific <code>org.gradle.java.home</code> — both dev machines and
+      runners supply <code>JAVA_HOME</code>.</li>
+      <li>The release job's trigger is <code>sonder-v2</code>. Since <code>main</code>
+      is now the default branch, tag a release or push to <code>sonder-v2</code>
+      to produce release APKs.</li>
+    </ul>
+
+    <footer class="footer">
+      <span>Related: <a href="architecture.html">architecture</a> · <a href="getting-started.html#install">install the APK</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

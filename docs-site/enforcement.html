@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enforcement internals — Sonder Docs</title>
+<meta name="description" content="How Sonder v2 detects app opens, shows the gate, and revokes access — accessibility events, overlays, and absolute-epoch timers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>ENFORCEMENT INTERNALS</h1>
+    <p class="lede">The full path from "user taps TikTok" to "Sonder shows a card table" — and back.</p>
+
+    <h2 id="flow">The detection → gate flow</h2>
+<pre>1. Target app launches; its window appears
+2. SonderAccessibilityService receives TYPE_WINDOW_STATE_CHANGED
+   (filtered: targets only, self/system/notification sources ignored,
+   debounced against event floods)
+3. EnforcementCoordinator queries EnforcementRepository:
+   is this package enabled AND not currently granted?
+4. If blocked: BlockOverlay raises a full-screen SYSTEM_ALERT_WINDOW
+   instantly (covers the target's first frame)
+5. BlockActivity (the blackjack gate) starts on top
+6. Hand played → result settles into AccessPolicy
+   · win at zero debt → grant written (endAt = now + 5 min)
+   · loss             → debt += 10 min (cap 60) or lockout written
+7. Overlay drops; gate stays until closed or access granted
+8. Accessibility events keep refreshing lastSeenMillis while the
+   granted app is foreground — a gap >60 s revokes the grant</pre>
+
+    <h2 id="why-overlay">Why the overlay layer exists</h2>
+    <p>Starting an activity from the background is restricted on modern
+    Android, and even a fast Activity launch shows a frame or two of the
+    target app first. The overlay is drawn the instant the blocked window is
+    detected — before the target's content is meaningfully visible — and the
+    gate activity replaces it. If the overlay permission is missing, Sonder
+    degrades gracefully to the gate activity alone.</p>
+
+    <h2 id="permissions">Why each permission is needed</h2>
+    <table>
+      <thead><tr><th>Permission</th><th>Used for</th><th>If missing</th></tr></thead>
+      <tbody>
+        <tr><td>Accessibility</td><td>Window-state detection (the trigger for everything)</td><td>No enforcement at all</td></tr>
+        <tr><td>Display over other apps</td><td>Instant shield while the gate loads</td><td>Target flashes visible briefly</td></tr>
+        <tr><td>Usage access</td><td>Backup detection path</td><td>Detection relies on a11y alone</td></tr>
+        <tr><td>Notifications (13+)</td><td>Lockout/expiry reminders</td><td>Silent lockouts</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="audit">The 10-second permission audit</h2>
+    <p>Accessibility can be "on" in Settings yet not yet connected when an app
+    cold-starts — a well-known Android quirk. Sonder schedules its audit
+    <strong>10 seconds after launch</strong>, not at launch: by then the service
+    binding has settled, so the check reflects reality. Missing pieces raise a
+    pixel-styled popup with deep links straight into each Settings page, and
+    the audit re-runs when you return from Settings.</p>
+
+    <h2 id="time">Why absolute epoch millis</h2>
+    <p>Every timer — grant end, lockout end, debt, last-seen — is stored as an
+    absolute instant, never a countdown. Consequences:</p>
+    <ul>
+      <li>Force-kill Sonder mid-hand? Timers keep running.</li>
+      <li>Reboot? <code>BootReceiver</code> reschedules expiry alarms from the same instants.</li>
+      <li>Doze? AlarmManager with <code>setExactAndAllowWhileIdle</code> still fires.</li>
+    </ul>
+
+    <h2 id="limits">Known limitations</h2>
+    <ul>
+      <li>Whole-app granularity — no per-feature (e.g. Shorts-only) gating in v2.</li>
+      <li>Absence detection is event-driven: it notices when the app's window
+      stops appearing, not literally every second.</li>
+      <li>Aggressive OEM battery managers can suspend the service —
+      <a href="guides.html#oem">survival guide</a>.</li>
+      <li>Release APKs are unsigned until signing secrets are added.</li>
+    </ul>
+
+    <footer class="footer">
+      <span>Related: <a href="rules.html">access rules</a> · <a href="architecture.html">architecture</a> · <a href="guides.html#oem">OEM battery guide</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

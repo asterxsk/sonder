@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — Sonder Docs</title>
+<meta name="description" content="Sonder v2 architecture reference: module map, key classes, data schema, and platform integrations.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>ARCHITECTURE</h1>
+    <p class="lede">Kotlin + Jetpack Compose, one Activity, MVVM with Hilt. Rules live in a pure domain layer; Android glue lives under <code>platform/</code>.</p>
+
+    <h2 id="layers">Layers</h2>
+<pre>UI (Compose, PixelKit) ─ ViewModels
+        │
+Domain (pure Kotlin): BlackjackRules · AccessPolicy
+        │                          models · snapshots
+Data:  Room (SonderDatabase) · DataStore (settings)
+Platform: AccessibilityService · BlockOverlay · BlockActivity
+          PermissionAudit · GrantExpiryScheduler · BootReceiver</pre>
+
+    <h2 id="map">Map of key classes</h2>
+    <table>
+      <thead><tr><th>Path (under <code>app/src/main/java/com/example/sonder/</code>)</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>domain/BlackjackRules.kt</code></td><td>Pure table rules: deck, deal, dealer AI, outcomes</td></tr>
+        <tr><td><code>domain/AccessPolicy.kt</code></td><td>Pure debt model: win/loss/push → grants &amp; lockout</td></tr>
+        <tr><td><code>domain/model/Models.kt</code></td><td>Card, Hand, DealtHand, outcome enums</td></tr>
+        <tr><td><code>data/db/</code></td><td>Room entities + DAOs (targets, grants, lockouts, hand history)</td></tr>
+        <tr><td><code>data/repo/EnforcementRepository.kt</code></td><td>Central coordinator: point lookups, settle results, revoke</td></tr>
+        <tr><td><code>data/settings/SettingsRepository.kt</code></td><td>DataStore: onboarding flag, debug flags</td></tr>
+        <tr><td><code>platform/accessibility/SonderAccessibilityService.kt</code></td><td>Window-state detector (debounced)</td></tr>
+        <tr><td><code>platform/enforcement/EnforcementCoordinator.kt</code></td><td>Event router: detection → overlay → gate</td></tr>
+        <tr><td><code>platform/enforcement/BlockOverlay.kt</code></td><td>Instant SYSTEM_ALERT_WINDOW shield while the gate loads</td></tr>
+        <tr><td><code>platform/block/BlockActivity.kt</code></td><td>Blackjack gate activity</td></tr>
+        <tr><td><code>platform/permissions/PermissionAudit.kt</code></td><td>10-second delayed audit + deep-link prompts</td></tr>
+        <tr><td><code>platform/scheduling/GrantExpiryScheduler.kt</code></td><td>AlarmManager expiry, Doze-safe</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="data">Data schema</h2>
+    <ul>
+      <li><strong>TargetEntity</strong> — package, enabled flag, added-at</li>
+      <li><strong>GrantEntity</strong> — package, <code>endAtMillis</code>, <code>lastSeenMillis</code></li>
+      <li><strong>LockoutEntity</strong> — package, <code>untilMillis</code>, <code>debtMillis</code></li>
+      <li><strong>HandHistoryEntity</strong> — timestamp, result, debt delta (Stats screen)</li>
+    </ul>
+    <p>All times are absolute epoch millis — timers keep running across process
+    death, reboots, and Doze.</p>
+
+    <h2 id="detection">Detection and the absence rule</h2>
+    <p>The accessibility service watches window-state changes only
+    (TYPE_WINDOW_STATE_CHANGED), filtered to target packages, self, system
+    dialogs, and notifications. Events are debounced; each accepted event
+    updates <code>lastSeenMillis</code> for the package. A window event after a
+    gap longer than the absence threshold triggers revocation
+    (<a href="rules.html#timers">rules → timers</a>).</p>
+
+    <h2 id="toolchain">Toolchain</h2>
+    <table>
+      <thead><tr><th>Component</th><th>Version</th></tr></thead>
+      <tbody>
+        <tr><td>AGP</td><td>9.1.0</td></tr>
+        <tr><td>Gradle</td><td>9.3.1 (wrapper-pinned, SHA-verified)</td></tr>
+        <tr><td>Kotlin</td><td>2.3.20 (KSP)</td></tr>
+        <tr><td>Compose</td><td>ui 1.10.6 · material3 1.4.0 (pinned)</td></tr>
+        <tr><td>JDK</td><td>17 (any machine JDK; no path pinned)</td></tr>
+        <tr><td>minSdk / target</td><td>26 / 36</td></tr>
+      </tbody>
+    </table>
+
+    <footer class="footer">
+      <span>Related: <a href="enforcement.html">enforcement internals</a> · <a href="ci.html">CI/CD</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

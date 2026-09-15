@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access rules — Sonder Docs</title>
+<meta name="description" content="The exact Sonder v2 rules: debt model, blackjack table rules, timer constants, state machine.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>ACCESS RULES</h1>
+    <p class="lede">The complete contract between you and the machine. These rules are implemented in pure Kotlin and enforced by 27 unit tests.</p>
+
+    <h2 id="outcomes">Hand outcomes</h2>
+    <table>
+      <thead><tr><th>Result</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Win</strong></td><td>+5:00 access to the target app, or −10:00 debt if you owe any</td></tr>
+        <tr><td><strong>Loss</strong></td><td>+10:00 lockout debt (capped at 60:00)</td></tr>
+        <tr><td><strong>Push</strong></td><td>Free replay — no effect, hand re-dealt</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="blackjack">Table rules</h2>
+    <ul>
+      <li>Single 52-card deck, reshuffled before each hand.</li>
+      <li>Dealer stands on all 17s <em>including soft 17</em>.</li>
+      <li>Blackjack on the deal (natural) = instant win, no play needed.</li>
+      <li>HIT and STAND only — no double, split, or surrender. Deliberately austere.</li>
+    </ul>
+
+    <h2 id="debt-model">The debt model</h2>
+    <p>Debt is a negative bank you carry between hands. It exists so that a bad
+    streak is recoverable rather than a wall:</p>
+    <ul>
+      <li>Each <strong>win</strong> while in debt removes 10 minutes.</li>
+      <li>A win at <strong>zero debt</strong> grants 5 minutes of access.</li>
+      <li>Debt is <strong>capped at 60 minutes</strong> — further losses change nothing.</li>
+    </ul>
+
+    <div class="panel">
+      <p class="panel-title">Worked example</p>
+      <p style="margin:0">Three losses, two wins in a row: 10+10+10 = 30:00 debt,
+      then 30−10 = 20:00, then 20−10 = 10:00. You still owe 10 minutes and remain
+      locked out. You'd need one more win to reach 0 and a further win after that
+      to get in — a six-hand session total.</p>
+    </div>
+
+    <h2 id="timers">Timers and revocation</h2>
+    <table>
+      <thead><tr><th>Rule</th><th>Release</th><th>Debug</th></tr></thead>
+      <tbody>
+        <tr><td>Access granted by a win</td><td>5 min</td><td>1 min</td></tr>
+        <tr><td>Absent from granted app → access revoked</td><td>&gt;60 s</td><td>&gt;20 s</td></tr>
+        <tr><td>Debt cap</td><td>60 min</td><td>60 min</td></tr>
+        <tr><td>Lockout when you walk away with debt</td><td>= debt remaining</td><td>= debt remaining</td></tr>
+      </tbody>
+    </table>
+    <p>All timers are stored as absolute epoch milliseconds, so they survive
+    process death, reboots, and Doze. Revoke also fires if the granted app's
+    window closes for longer than the absence threshold — even with minutes
+    still on the clock.</p>
+
+    <h2 id="state-machine">State machine</h2>
+<pre>            ┌─────────┐   open target    ┌─────────┐
+            │  IDLE   │ ───────────────▶ │  GATE   │ (BlockActivity)
+            └─────────┘                  └────┬────┘
+                 ▲              win     lose  │ keep gambling
+                 │ +5min        ┌──────┐ ┌────▼─────┐
+                 │              │GRANT │ │  DEBT    │◀───┐
+            ┌────┴─────┐        └──┬───┘ └────┬─────┘    │ loss
+            │ IN APP   │◀───────────┘          │ walk away│
+            │ (timer)  │   absent >60s         ┌──▼──────┐  │
+            └──────────┘ ─────────▶IDLE        │ LOCKOUT │──┘
+                                               └─────────┘</pre>
+    <p>Any timer expiring or revocation event returns the machine to
+    <strong>IDLE</strong>; the gate reappears the next time the target is
+    opened. Source of truth:
+    <code>domain/AccessPolicy.kt</code> + <code>domain/BlackjackRules.kt</code>.</p>
+
+    <footer class="footer">
+      <span>Related: <a href="enforcement.html">enforcement internals</a> · <a href="explanation.html">why blackjack?</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

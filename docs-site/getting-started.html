@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started — Sonder Docs</title>
+<meta name="description" content="Install Sonder v2, grant the four permissions, pick your first target, and play your first gate hand.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230b0906'/%3E%3Cpath fill='%23ffb827' d='M12 3l6 7h-4v4h-4v-4H6z'/%3E%3Crect fill='%23ffb827' x='9' y='16' width='6' height='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <button class="sidebar-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="glyph">♠</span><span class="word">SONDER</span></a>
+  <div class="spacer"></div>
+  <div class="searchbox">
+    <span class="mag" aria-hidden="true">⌕</span>
+    <input type="search" placeholder="Search docs…" aria-label="Search documentation">
+    <div class="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <button class="theme-toggle" aria-label="Switch theme">☀</button>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation">
+    <div class="group">
+      <p class="group-title">START</p>
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Getting started</a>
+    </div>
+    <div class="group">
+      <p class="group-title">HOW-TO</p>
+      <a href="guides.html">Guides</a>
+    </div>
+    <div class="group">
+      <p class="group-title">REFERENCE</p>
+      <a href="rules.html">Access rules</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="ci.html">CI/CD</a>
+    </div>
+    <div class="group">
+      <p class="group-title">EXPLANATION</p>
+      <a href="enforcement.html">Enforcement internals</a>
+      <a href="explanation.html">Why blackjack?</a>
+      <a href="v1.html">v1 (Flutter)</a>
+    </div>
+  </nav>
+
+  <main class="content" id="main">
+    <h1>GETTING STARTED</h1>
+    <p class="lede">From zero to your first gated app in about five minutes.</p>
+
+    <h2 id="get-apk">1. Get the APK</h2>
+    <p><strong>Easiest — grab it from CI.</strong> Open the
+    <a href="https://github.com/asterxsk/sonder/actions/workflows/android-v2.yml">android-v2 CI workflow</a>
+    → click the latest successful run → download the
+    <code>sonder-v2-debug-apk</code> artifact → unzip and you have
+    <code>app-debug.apk</code>.</p>
+    <p><strong>Or build it yourself</strong> (JDK 17 + Android SDK platform 37):</p>
+<pre data-copy="cd android-native
+./gradlew assembleDebug
+# APK: android-native/app/build/outputs/apk/debug/app-debug.apk">cd android-native
+./gradlew assembleDebug</pre>
+
+    <h2 id="install">2. Install</h2>
+    <p>Copy the APK to your phone and open it. Android will ask you to allow
+    installs from that source once — approve it, continue, install.</p>
+
+    <h2 id="onboard">3. Onboard (four permissions)</h2>
+    <p>Sonder needs four permissions to enforce anything. Onboarding walks you
+    through all of them with a one-line "why" and a button that deep-links
+    straight to the right settings page:</p>
+    <table>
+      <thead><tr><th>Permission</th><th>Why it's needed</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Accessibility</strong></td><td>Knows which app just came to the foreground. Reads the package name only — never screen content.</td></tr>
+        <tr><td><strong>Display over other apps</strong></td><td>Shows the block screen the instant a limited app opens.</td></tr>
+        <tr><td><strong>Usage access</strong></td><td>Powers the app picker and stats.</td></tr>
+        <tr><td><strong>Notifications</strong></td><td>Tells you when access expires or a lockout ends.</td></tr>
+      </tbody>
+    </table>
+    <div class="panel amber">
+      <p class="panel-title">FINICKY ACCESSIBILITY?</p>
+      <p style="margin:0">Accessibility state can lag right after you enable it.
+      Sonder waits <strong>10 seconds after each app open</strong> before
+      checking — if something is still missing, a pixel-styled popup appears
+      with direct links. Grant, come back, done.</p>
+    </div>
+
+    <h2 id="first-target">4. Pick your first target</h2>
+    <p>Open <strong>TARGETS</strong> in the bottom dock, search for an app
+    (YouTube is a classic first victim), and tap its row to flip it
+    <strong>ON</strong>. Toggling on means: opening that app now requires
+    winning a hand of blackjack.</p>
+
+    <h2 id="first-hand">5. Play your first hand</h2>
+    <p>Leave Sonder, open the target app. The block screen appears immediately —
+    tap it to enter the gate:</p>
+    <ol>
+      <li><strong>DEAL HAND</strong> — you get two cards, dealer shows one.</li>
+      <li><strong>HIT</strong> to draw, <strong>STAND</strong> to hold.</li>
+      <li>Beat the dealer without busting → <strong>CONTINUE</strong> → you're
+      dropped straight into the app with a 5-minute clock.</li>
+    </ol>
+    <p>Lose, and you're sitting on 10 minutes of debt. Deal again — a win pays
+    10 minutes off. Win at zero debt and you're in. Full arithmetic:
+    <a href="rules.html">Access rules</a>.</p>
+
+    <h2 id="verify">6. Verify it's enforcing</h2>
+    <p>While you're in the granted app, press home, make a coffee, come back
+    after more than a minute — Sonder should have revoked the grant and the
+    gate is waiting again. That's the absence rule. A quick app-switch back
+    within 60 seconds keeps your clock running.</p>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <div class="panel red">
+      <p class="panel-title">GATE DIDN'T APPEAR</p>
+      <p style="margin:0">Check Settings → all four permissions OK? Then check
+      your OEM's battery manager hasn't suspended Sonder (see the
+      <a href="guides.html#oem">battery manager guide</a>). Re-check after any
+      Sonder update — Android sometimes disables accessibility services on
+      app updates.</p>
+    </div>
+    <div class="panel">
+      <p class="panel-title">NO BLOCK OVERLAY, ONLY A DELAYED GATE</p>
+      <p style="margin:0">The overlay permission is off. The gate still works,
+      just slower. Fix it in onboarding or Settings.</p>
+    </div>
+
+    <footer class="footer">
+      <span>Next: <a href="rules.html">the exact rules</a> · <a href="guides.html">guides</a></span>
+      <a href="https://github.com/asterxsk/sonder">GitHub</a>
+    </footer>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
