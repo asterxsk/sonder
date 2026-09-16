@@ -52,15 +52,16 @@
 
   <main class="content" id="main">
     <h1>CI/CD</h1>
-    <p class="lede">GitHub Actions workflow <code>.github/workflows/android-v2.yml</code> builds, tests, and packages every push. Latest status: <a href="https://github.com/asterxsk/sonder/actions">actions tab</a>.</p>
+    <p class="lede">GitHub Actions workflows: <code>.github/workflows/android-v2.yml</code> builds, tests, and packages every push, and <code>.github/workflows/release-v2.yml</code> publishes a release APK on <code>v*</code> tags. Latest status: <a href="https://github.com/asterxsk/sonder/actions">actions tab</a>.</p>
 
     <h2 id="triggers">Triggers</h2>
     <table>
       <thead><tr><th>Push to</th><th>What runs</th></tr></thead>
       <tbody>
         <tr><td><code>main</code></td><td>build-test job (compile + unit tests + APK artifact)</td></tr>
-        <tr><td><code>sonder-v2</code></td><td>build-test <strong>and</strong> release job (signed if secrets present)</td></tr>
+        <tr><td><code>sonder-v2</code></td><td>build-test <strong>and</strong> release job (keystore-signed if secrets present, debug key otherwise)</td></tr>
         <tr><td>pull requests</td><td>build-test job</td></tr>
+        <tr><td><code>v*</code> tag, or manual run of <code>release-v2.yml</code></td><td>unit tests, release build, verifier, GitHub Release</td></tr>
       </tbody>
     </table>
 
@@ -69,8 +70,20 @@
       <li><strong>build-test</strong> — JDK 17, Gradle wrapper (pinned 9.3.1, SHA-verified), runs
       <code>assembleDebug</code> + <code>test</code>. Uploads the debug APK as a
       workflow artifact you can sideload directly.</li>
-      <li><strong>release</strong> — <code>assembleRelease</code>. Produces a signed APK when the
-      four secrets are configured; otherwise the unsigned APK is still uploaded.</li>
+      <li><strong>release</strong> — <code>assembleRelease</code>. Signed with the
+      keystore when the four secrets are configured, with the Android debug key
+      otherwise — the APK installs for sideloading either way, but a
+      debug-signed one can't be published to Play.</li>
+      <li><strong>release-v2.yml / release</strong> — on <code>v*</code> tags or a
+      manual run. Runs the unit tests as a gate, then builds with
+      <code>-Psonder.version.name</code> and <code>-Psonder.version.code</code>
+      (tag without the <code>v</code>, and the workflow run number — a
+      monotonic <code>versionCode</code> lets each release install over the
+      previous one). Verifies the APK's <code>versionName</code>,
+      <code>versionCode</code>, and signer with <code>aapt2</code> +
+      <code>apksigner</code> before publishing it as
+      <code>sonder-v2-&lt;version&gt;.apk</code> on a GitHub Release with
+      generated release notes.</li>
     </ul>
 
     <h2 id="secrets">Release signing secrets</h2>
@@ -100,6 +113,13 @@ certutil -encode sonder.jks encoded.txt   # Windows</pre>
       <li>The release job's trigger is <code>sonder-v2</code>. Since <code>main</code>
       is now the default branch, tag a release or push to <code>sonder-v2</code>
       to produce release APKs.</li>
+      <li>A <code>v*</code> tag fires two workflows: <code>release-v2.yml</code>
+      (this app) and the legacy <code>release.yml</code> (Flutter). They share a
+      concurrency group keyed on the tag, so they queue instead of racing to
+      create the same release.</li>
+      <li>Keystore properties are optional. Without them the release build falls
+      back to the Android debug key, so <code>assembleRelease</code> still
+      produces an installable APK locally and in CI.</li>
     </ul>
 
     <footer class="footer">

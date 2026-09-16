@@ -79,4 +79,10 @@ links. No `QUERY_ALL_PACKAGES` — only launchable apps are visible.
 `main`/`sonder-v2`, uploads the debug APK, and builds a release APK — signed
 automatically when the `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`,
 `SONDER_KEY_ALIAS`, `SONDER_KEY_PASSWORD` secrets are configured (keystore as
-base64). The release job fires on `sonder-v2` pushes.
+base64) — the Android debug key otherwise, which installs for sideloading but
+isn't publishable to Play. The release job fires on `sonder-v2` pushes.
+
+`.github/workflows/release-v2.yml` publishes that release APK as a GitHub
+Release on `v*` tags or a manual run: it gates on the unit tests, takes
+`versionName` from the tag (`versionCode` from the workflow run number), checks
+the built APK's version and signer, then uploads `sonder-v2-<version>.apk`.

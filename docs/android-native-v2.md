@@ -126,8 +126,11 @@ cd android-native && ./gradlew testDebugUnitTest
   naturals, deal order, dealer stands on hard and soft 17, settlement
 
 CI (`.github/workflows/android-v2.yml`) runs the same suite on every push to
-`main`/`sonder-v2` plus a release build (signed when the four
-`SONDER_KEYSTORE_*` secrets exist).
+`main`/`sonder-v2` plus a release build — signed with the keystore when the four
+`SONDER_KEYSTORE_*` secrets exist, with the Android debug key otherwise.
+`.github/workflows/release-v2.yml` runs the same suite on `v*` tags, builds with
+the tag as `versionName` and the run number as `versionCode`, verifies both plus
+the signer, and publishes `sonder-v2-<version>.apk` as a GitHub Release.
 
 ## 7. Known limitations
 
@@ -141,7 +144,8 @@ CI (`.github/workflows/android-v2.yml`) runs the same suite on every push to
   the inexact expiry alarm (grant may outlive its window by a few minutes in
   extreme Doze — acceptable tradeoff, no exact-alarm permission)
 - Splits/doubles are out of scope; the table is HIT/STAND by design
-- Release builds are unsigned until signing secrets are configured
+- Release builds fall back to the Android debug key until signing secrets are
+  configured — fine for sideloading, not accepted by Play
 
 ## 8. Play-review notes
 

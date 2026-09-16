@@ -86,7 +86,7 @@ jobs:
               -Psonder.release.keyAlias="$SONDER_KEY_ALIAS" \
               -Psonder.release.keyPassword="$SONDER_KEY_PASSWORD"
           else
-            echo "No signing secrets configured — building unsigned release."
+            echo "No signing secrets configured — signing with the debug key (not Play-publishable)."
             bash ./gradlew assembleRelease
           fi
           rm -f sonder-release.jks
