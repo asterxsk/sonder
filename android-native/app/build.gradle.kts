@@ -8,10 +8,12 @@ plugins {
 
 // The CD workflow (.github/workflows/release-v2.yml) passes the version and, when
 // the keystore secrets are configured, the signing config in as -P properties.
-// Without them these fall back to the local defaults below.
-val releaseStoreFile = providers.gradleProperty("sonder.release.storeFile").orNull
-val releaseVersionName = providers.gradleProperty("sonder.version.name").orNull
-val releaseVersionCode = providers.gradleProperty("sonder.version.code").orNull
+// Without them these fall back to the local defaults below. A blank property
+// counts as absent, so `-Psonder.version.name=` can't ship an empty versionName.
+val releaseStoreFile = providers.gradleProperty("sonder.release.storeFile").orNull?.takeIf(String::isNotBlank)
+val releaseVersionName = providers.gradleProperty("sonder.version.name").orNull?.takeIf(String::isNotBlank)
+val releaseVersionCode = providers.gradleProperty("sonder.version.code").orNull?.takeIf(String::isNotBlank)
+val hasReleaseKeystore = releaseStoreFile != null
 
 android {
     namespace = "com.example.sonder"
@@ -31,9 +33,9 @@ android {
     signingConfigs {
         // Only defined when a keystore is supplied, so the release build can fall
         // back to the debug key (see buildTypes.release) instead of failing.
-        if (releaseStoreFile != null) {
+        releaseStoreFile?.let { storePath ->
             create("release") {
-                storeFile = file(releaseStoreFile)
+                storeFile = file(storePath)
                 storePassword = providers.gradleProperty("sonder.release.storePassword").orNull
                 keyAlias = providers.gradleProperty("sonder.release.keyAlias").orNull
                 keyPassword = providers.gradleProperty("sonder.release.keyPassword").orNull
@@ -47,7 +49,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Debug key keeps assembleRelease producing an installable APK locally;
             // the CD workflow overrides it with the real keystore via -P properties.
-            signingConfig = if (releaseStoreFile != null) {
+            signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

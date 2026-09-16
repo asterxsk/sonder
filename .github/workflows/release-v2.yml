@@ -1,6 +1,10 @@
 # Builds the Sonder v2 (android-native) release APK and publishes it as a
-# GitHub Release. Triggered by version tags: v1.0.0, v1.0.0+12, ...
-# Can also be run by hand from the Actions tab with an explicit version.
+# GitHub Release. Triggered by version tags (v1.0.0) or by hand from the
+# Actions tab. ANOTHER workflow (.github/workflows/release.yml) also fires on
+# v* tags — it publishes the legacy Flutter app, not this one.
+#
+# The tag supplies versionName only. versionCode is the workflow run number,
+# which is monotonic and lets each release install over the previous one.
 
 name: Release Android APK (v2)
 
@@ -12,14 +16,14 @@ on:
     inputs:
       version:
         description: "Version name for this build, e.g. 1.0.0"
-        required: false
-        default: ""
+        required: true
 
 # The release job needs write access to create the release and upload the APK.
 permissions:
   contents: write
 
-# Serialize runs per ref so two tag pushes can't race each other.
+# Re-running the same tag queues behind itself rather than racing it.
+# Different tags keep their own group and run concurrently.
 concurrency:
   group: release-v2-${{ github.ref }}
   cancel-in-progress: false
@@ -47,30 +51,44 @@ jobs:
       - name: Set up Gradle (cached)
         uses: gradle/actions/setup-gradle@v4
 
-      # Tag v1.0.0 -> version 1.0.0. Manual runs use the `version` input, or
-      # 0.0.0 when it is left blank so an unversioned run is obvious.
+      # Tag v1.0.0 -> version 1.0.0; manual runs take the required `version` input.
       # versionCode comes from the run number: Android refuses to install an
       # update whose versionCode isn't higher than the installed one.
+      # Inputs reach the shell through env, never through ${{ }} inside `run`,
+      # which would splice the value straight into the script text.
       - name: Resolve version
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            VERSION="$INPUT_VERSION"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="0.0.0"
+            VERSION="$INPUT_VERSION"
           fi
           echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      # Gate the release on the existing JVM suites (AccessPolicy, BlackjackRules,
+      # ...) so a tag pushed on a broken commit can't produce a release.
+      - name: Run unit tests
+        run: bash ./gradlew testDebugUnitTest
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-unit-test-results
+          path: app/build/test-results/testDebugUnitTest/
+          if-no-files-found: error
 
       # Signing secrets are optional. Without them the release build falls back
       # to the debug key: the APK installs for sideloading but cannot be
       # published to Play.
       - name: Assemble release APK
         env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
           SONDER_KEYSTORE_B64: ${{ secrets.SONDER_KEYSTORE_B64 }}
           SONDER_KEYSTORE_PASSWORD: ${{ secrets.SONDER_KEYSTORE_PASSWORD }}
           SONDER_KEY_ALIAS: ${{ secrets.SONDER_KEY_ALIAS }}
@@ -89,8 +107,8 @@ jobs:
             echo "No signing secrets configured — signing with the debug key."
           fi
           bash ./gradlew assembleRelease \
-            -Psonder.version.name="${{ steps.version.outputs.name }}" \
-            -Psonder.version.code="${{ steps.version.outputs.code }}" \
+            -Psonder.version.name="$VERSION_NAME" \
+            -Psonder.version.code="$VERSION_CODE" \
             "${SIGNING_ARGS[@]}"
           rm -f sonder-release.jks
 
@@ -98,10 +116,11 @@ jobs:
       # a descriptive one: sonder-v2-1.0.0.apk
       - name: Stage APK
         working-directory: .
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
         run: |
-          VERSION="${{ steps.version.outputs.name }}"
           cp "android-native/app/build/outputs/apk/release/app-release.apk" \
-            "sonder-v2-${VERSION}.apk"
+            "sonder-v2-${VERSION_NAME}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
