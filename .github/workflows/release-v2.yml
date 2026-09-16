@@ -22,10 +22,12 @@ on:
 permissions:
   contents: write
 
-# Re-running the same tag queues behind itself rather than racing it.
-# Different tags keep their own group and run concurrently.
+# Same group name as release.yml (the legacy Flutter publisher), which also
+# fires on v* tags: the two workflows queue instead of racing to create the
+# same release. Re-runs of one tag queue behind each other; different tags
+# keep their own group and run concurrently.
 concurrency:
-  group: release-v2-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 defaults:
@@ -113,6 +115,31 @@ jobs:
             -Psonder.version.code="$VERSION_CODE" \
             "${SIGNING_ARGS[@]}"
           rm -f sonder-release.jks
+
+      # The release action only checks that a file exists. Verify what is
+      # actually in it: the tagged version, and which key signed it — a
+      # misspelled signing secret would otherwise publish a debug-signed APK
+      # behind a green run.
+      - name: Verify APK
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          EXPECT_RELEASE_KEY: ${{ secrets.SONDER_KEYSTORE_B64 != '' }}
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
+          BADGING=$("$BUILD_TOOLS/aapt2" dump badging "$APK")
+          echo "$BADGING" | grep -q "versionName='${VERSION_NAME}'" \
+            || { echo "versionName is not ${VERSION_NAME}"; exit 1; }
+          echo "$BADGING" | grep -q "versionCode='${VERSION_CODE}'" \
+            || { echo "versionCode is not ${VERSION_CODE}"; exit 1; }
+          CERTS=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK")
+          echo "$CERTS"
+          if [ "$EXPECT_RELEASE_KEY" = "true" ] && echo "$CERTS" | grep -qi "Android Debug"; then
+            echo "Keystore secrets are configured but the APK is debug-signed."
+            exit 1
+          fi
 
       # The release action uploads assets under their file name, so give the APK
       # a descriptive one: sonder-v2-1.0.0.apk
