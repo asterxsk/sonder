@@ -79,7 +79,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-unit-test-results
-          path: app/build/test-results/testDebugUnitTest/
+          # Workspace-relative: defaults.run.working-directory applies to `run`
+          # steps only, never to `uses` steps.
+          path: android-native/app/build/test-results/testDebugUnitTest/
           if-no-files-found: error
 
       # Signing secrets are optional. Without them the release build falls back
