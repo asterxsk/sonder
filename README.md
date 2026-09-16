@@ -97,8 +97,14 @@ Enforcement internals, edge cases, and the QA checklist:
   uploads both as artifacts
 - **Release** — builds a release APK; **signed automatically** when the
   `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`,
-  `SONDER_KEY_PASSWORD` secrets are configured (keystore as base64), unsigned
-  otherwise
+  `SONDER_KEY_PASSWORD` secrets are configured (keystore as base64). Without
+  them it falls back to the Android **debug key** — installable for sideloading,
+  but not publishable to Play
+
+`.github/workflows/release-v2.yml` on `v*` tags or a manual run: gates on the
+unit tests, builds the release APK with the tag as `versionName` and the
+workflow run number as `versionCode`, verifies both plus the signer, and
+publishes it as a GitHub Release (`sonder-v2-<version>.apk`).
 
 ### First-run setup
 
