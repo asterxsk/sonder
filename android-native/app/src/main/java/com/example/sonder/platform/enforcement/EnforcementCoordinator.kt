@@ -1,142 +1,189 @@
 package com.example.sonder.platform.enforcement
 
-import android.accessibilityservice.AccessibilityService
 import android.content.Context
-import android.content.Intent
+import android.util.Log
+import com.example.sonder.BuildConfig
 import com.example.sonder.data.repo.EnforcementRepository
-import com.example.sonder.platform.accessibility.SonderAccessibilityService
-import com.example.sonder.platform.block.BlockActivity
+import com.example.sonder.domain.ForegroundSurface
+import com.example.sonder.domain.GateDecision
+import com.example.sonder.domain.GateDecider
+import com.example.sonder.domain.model.GrantSnapshot
+import com.example.sonder.domain.model.LockoutSnapshot
+import com.example.sonder.platform.foreground.ForegroundResolver
+import com.example.sonder.platform.overlay.GateOverlayHost
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Receives foreground window events from the accessibility service and decides:
- * 1. Is the user returning to a granted app after an absence? → revoke if >60s.
- * 2. Is the app a blocked target without an active grant? → instant overlay + gate.
- * 3. Is the target locked out? → lockout overlay.
+ * Turns foreground window events into blocker actions.
+ *
+ * The blocker is a service-owned system overlay window (see [GateOverlayHost]),
+ * never an Activity: the detox app's task is never involved, so the blocked app
+ * can never be reached through Recents, Back, or the detox app's own UI.
+ *
+ * Rules:
+ *  - transient surfaces (shade, IME, keyguard, our own overlay window) never
+ *    disturb the blocker
+ *  - home/recents and the detox app itself release it
+ *  - a real app is gated only if it is an enabled target without an active grant
+ *  - any app that is not a blocked target releases the blocker
+ *
+ * Events are serialized on a single-threaded dispatcher and read the warm
+ * in-memory snapshot, so a decision lands ~tens of milliseconds after the app
+ * reaches the foreground. Because the event stream can arrive slightly out of
+ * order during launch transitions, releasing the blocker is verified against the
+ * real foreground package and re-applied if the app is in fact still blocked.
  */
 @Singleton
 class EnforcementCoordinator @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: EnforcementRepository,
+    private val overlayHost: GateOverlayHost,
+    private val foregroundResolver: ForegroundResolver,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var overlay: BlockOverlay? = null
-    private var overlayShownFor: String? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
+    private val ownPackage: String = context.packageName
 
-    /**
-     * Cooldown after the user backs out of a gate (BlockActivity finish). Without
-     * it, backing out of the blackjack table instantly re-triggers the overlay
-     * + gate for the same app — an inescapable loop that reads as a freeze.
-     */
-    @Volatile
-    private var gateCooldownUntil: Long = 0
-    @Volatile
-    private var gateCooldownPkg: String? = null
+    /** Pending post-release re-check; superseded by every fresh app event. */
+    private var verifyJob: Job? = null
 
-    /** Target package awaiting the blackjack gate (consumed by BlockActivity). */
-    @Volatile
-    var pendingTargetPackage: String? = null
-        private set
-
-    fun onWindowEvent(pkg: String, service: AccessibilityService) {
+    fun onForeground(pkg: String, surface: ForegroundSurface, className: String? = null) {
         scope.launch {
-            val now = System.currentTimeMillis()
+            when (surface) {
+                // Our own overlay window reports our package with a non-app class
+                // name; ignoring it is what stops the blocker from dismissing itself.
+                ForegroundSurface.TRANSIENT -> return@launch
 
-            // 1) User back inside a granted app: absence check first, then touch last-seen.
-            if (repository.hasActiveGrant(pkg, now)) {
-                val revoked = repository.evaluateAbsence(pkg, now)
-                if (revoked) {
-                    // Absence >60s: access revoked — fall through to blocking logic below.
-                    repository.recordLastSeen(pkg, now)
-                } else {
-                    repository.recordLastSeen(pkg, now)
-                    dismissOverlayIfFor(pkg)
+                ForegroundSurface.HOME, ForegroundSurface.OWN -> {
+                    overlayHost.dismiss(reason = "surface=$surface pkg=$pkg")
+                    // The launcher's event can trail the app's own event during a
+                    // launch, so confirm what is really on screen shortly after.
+                    scheduleForegroundVerification()
                     return@launch
                 }
+
+                ForegroundSurface.APP -> Unit
             }
 
-            // 2) Not a target (or disabled): make sure no stale overlay is up.
-            if (!repository.isTargetEnabled(pkg)) {
-                dismissOverlayIfFor(pkg)
-                return@launch
-            }
-
-            // 3) Granted apps pass; everything else gets gated or locked out.
-            if (repository.hasActiveGrant(pkg, now)) return@launch
-
-            if (overlayShownFor == pkg) return@launch // already gated this app
-
-            // Just-backed-out cooldown: let the user leave (home, back) without
-            // being instantly re-gated. Next FRESH open of the app re-gates.
-            if (pkg == gateCooldownPkg && now < gateCooldownUntil) return@launch
-
-            val lockoutRemaining = repository.lockoutRemainingMillis(pkg, now)
-            showOverlay(pkg, lockoutRemaining)
-            launchGate(pkg)
+            evaluate(pkg = pkg, surface = surface, className = className, cancelVerification = true)
         }
     }
 
-    /** Called by BlockActivity when the user backs out without winning. */
-    fun onGateDismissed(pkg: String?) {
-        gateCooldownPkg = pkg
-        gateCooldownUntil = System.currentTimeMillis() + GATE_DISMISS_COOLDOWN_MILLIS
-        dismissOverlay()
-    }
+    /**
+     * The single decision path, shared by live events and the after-release
+     * verification pass.
+     */
+    private suspend fun evaluate(
+        pkg: String,
+        surface: ForegroundSurface,
+        className: String?,
+        cancelVerification: Boolean,
+    ) {
+        if (cancelVerification) {
+            verifyJob?.cancel()
+            verifyJob = null
+        }
 
-    fun launchGate(pkg: String) {
-        pendingTargetPackage = pkg
-        val intent = Intent(context, BlockActivity::class.java).apply {
-            // NEW_TASK: we start from a service context.
-            // CLEAR_TOP|SINGLE_TOP: reuse/replace any existing gate on top.
-            // NEVER CLEAR_TASK — it would destroy MainActivity, leaving Sonder's
-            // task empty so any later back/finish dumps the user on the launcher
-            // (the "app disappeared / can't go home" bug).
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        val now = System.currentTimeMillis()
+
+        // Housekeeping: purge an expired grant row so enforcement resumes.
+        repository.cachedGrant(pkg)?.takeIf { it.endAtMillis <= now }?.let {
+            repository.revokeGrant(pkg, reason = "expired")
+        }
+
+        val target = repository.enabledTarget(pkg)
+        val decision = GateDecider.decide(
+            targetEnabled = target != null,
+            grant = repository.cachedGrant(pkg)?.let {
+                GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis)
+            },
+            lockout = repository.cachedLockout(pkg)?.let {
+                LockoutSnapshot(it.packageName, it.untilMillis, 0L)
+            },
+            nowMillis = now,
+        )
+
+        val label = target?.label?.takeIf { it.isNotBlank() }
+            ?: pkg.substringAfterLast('.').uppercase()
+
+        when (decision) {
+            GateDecision.PASS -> overlayHost.dismiss(reason = "not a target: $pkg")
+
+            GateDecision.GRANTED -> {
+                repository.recordLastSeen(pkg, now)
+                overlayHost.dismiss(reason = "granted: $pkg")
+            }
+
+            GateDecision.REVOKE -> {
+                repository.revokeGrant(pkg, reason = "absence")
+                overlayHost.showGate(pkg, label)
+            }
+
+            GateDecision.LOCKOUT -> overlayHost.showLockout(
+                pkg = pkg,
+                label = label,
+                remainingMillis = repository.lockoutRemainingMillis(pkg, now),
             )
-            putExtra(BlockActivity.EXTRA_TARGET_PACKAGE, pkg)
-        }
-        context.startActivity(intent)
-    }
 
-    private fun showOverlay(pkg: String, lockoutRemainingMillis: Long) {
-        dismissOverlay()
-        val o = BlockOverlay(context, pkg, lockoutRemainingMillis) {
-            // Overlay tap = open the gate activity (BAL-exempt: overlay is visible).
-            launchGate(pkg)
+            GateDecision.GATE -> overlayHost.showGate(pkg, label)
         }
-        if (o.show()) {
-            overlay = o
-            overlayShownFor = pkg
+
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "pkg=$pkg surface=$surface class=$className decision=$decision " +
+                    "blocker=${overlayHost.shownForPackage}",
+            )
         }
     }
 
-    /** Called by BlockActivity once it is in front — overlay has done its instant-block job. */
-    fun onGateShown() {
-        dismissOverlay()
+    /**
+     * Ask the OS what is really in the foreground a moment after releasing the
+     * blocker. If a blocked target is still on screen (because the release came
+     * from a trailing launcher/self event), the blocker comes back.
+     */
+    private fun scheduleForegroundVerification() {
+        verifyJob?.cancel()
+        verifyJob = scope.launch {
+            delay(VERIFY_DELAY_MILLIS)
+            val foreground = foregroundResolver.currentForegroundPackage() ?: return@launch
+            if (foreground == ownPackage) return@launch // our own UI: nothing to block
+
+            if (BuildConfig.DEBUG) Log.d(TAG, "verification: foreground=$foreground")
+            evaluate(
+                pkg = foreground,
+                surface = ForegroundSurface.classify(foreground, ownPackage),
+                className = null,
+                cancelVerification = false,
+            )
+        }
     }
 
-    fun dismissOverlayIfFor(pkg: String) {
-        if (overlayShownFor == pkg) dismissOverlay()
+    /** Screen off: never leave the blocker covering the keyguard. */
+    fun onScreenOff() {
+        verifyJob?.cancel()
+        verifyJob = null
+        overlayHost.dismiss(reason = "screen off")
     }
 
-    @Synchronized
-    fun dismissOverlay() {
-        overlay?.dismiss()
-        overlay = null
-        overlayShownFor = null
+    /** Service torn down / unbound: the blocker must not outlive it. */
+    fun onServiceStopped() {
+        verifyJob?.cancel()
+        verifyJob = null
+        overlayHost.dismiss(reason = "service stopped")
     }
 
-    companion object {
-        /** Grace period after backing out of a gate before re-gating the same app. */
-        const val GATE_DISMISS_COOLDOWN_MILLIS = 30_000L
+    private companion object {
+        const val TAG = "SonderGate"
+
+        /** Long enough for the OS to settle on the real foreground, short enough to feel instant. */
+        const val VERIFY_DELAY_MILLIS = 400L
     }
 }

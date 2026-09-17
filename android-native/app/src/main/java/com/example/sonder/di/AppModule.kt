@@ -14,7 +14,15 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Qualifier
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ApplicationScope
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -32,6 +40,11 @@ object AppModule {
     @Provides fun provideDebtDao(db: SonderDatabase): DebtDao = db.debtDao()
     @Provides fun provideLockoutDao(db: SonderDatabase): LockoutDao = db.lockoutDao()
     @Provides fun provideHandDao(db: SonderDatabase): HandDao = db.handDao()
+
+    @Provides
+    @Singleton
+    @ApplicationScope
+    fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Provides
     @Singleton

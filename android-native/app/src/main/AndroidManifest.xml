@@ -39,14 +39,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Full-screen blackjack gate shown when a blocked app is opened. -->
-        <activity
-            android:name=".platform.block.BlockActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:launchMode="singleTop"
-            android:showWhenLocked="false"
-            android:turnScreenOn="false" />
+        <!-- The blocker is NOT an activity: it is a TYPE_APPLICATION_OVERLAY window
+             owned by SonderAccessibilityService (platform/overlay/GateOverlayHost).
+             Keeping it out of the activity/task graph is what makes it behave like a
+             system-level block instead of a screen inside this app. -->
 
         <!-- Pixel-styled permission reminder, shown 10s after open if a permission is off. -->
         <activity

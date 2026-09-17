@@ -9,19 +9,31 @@ import com.example.sonder.data.db.HandEntity
 import com.example.sonder.data.db.LockoutDao
 import com.example.sonder.data.db.LockoutEntity
 import com.example.sonder.data.db.TargetDao
+import com.example.sonder.data.db.TargetEntity
+import com.example.sonder.di.ApplicationScope
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.LockoutSnapshot
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 
 /**
  * Central enforcement coordinator: the single place that mutates grants, debt,
  * lockouts and hand history. Domain policy stays pure; this class persists results.
+ *
+ * Keeps a warm in-memory snapshot of the enforcement state (targets + grants +
+ * lockouts, refreshed on every mutation) so the accessibility hot path can make
+ * its decision without Room round-trips. Room remains the source of truth; this
+ * cache is only a read-through accelerator and is rebuilt from flows on start.
  */
 @Singleton
 class EnforcementRepository @Inject constructor(
@@ -30,7 +42,33 @@ class EnforcementRepository @Inject constructor(
     private val debtDao: DebtDao,
     private val lockoutDao: LockoutDao,
     private val handDao: HandDao,
+    @ApplicationScope private val externalScope: CoroutineScope,
 ) {
+    private val _targets = MutableStateFlow<Map<String, TargetEntity>>(emptyMap())
+    private val _grants = MutableStateFlow<Map<String, GrantEntity>>(emptyMap())
+    private val _lockouts = MutableStateFlow<Map<String, LockoutEntity>>(emptyMap())
+    private var cacheStarted = false
+
+    /** Rebuild the cache from Room flows; idempotent, cheap after the first call. */
+    fun start() {
+        if (cacheStarted) return
+        cacheStarted = true
+        targetDao.observeAll()
+            .onEach { rows -> _targets.value = rows.associateBy { it.packageName } }
+            .launchIn(externalScope)
+        grantDao.observeAll()
+            .onEach { rows -> _grants.value = rows.associateBy { it.packageName } }
+            .launchIn(externalScope)
+        lockoutDao.observeAll()
+            .onEach { rows -> _lockouts.value = rows.associateBy { it.packageName } }
+            .launchIn(externalScope)
+    }
+
+    fun enabledTarget(pkg: String): TargetEntity? = _targets.value[pkg]?.takeIf { it.enabled }
+
+    fun cachedGrant(pkg: String): GrantEntity? = _grants.value[pkg]
+
+    fun cachedLockout(pkg: String): LockoutEntity? = _lockouts.value[pkg]
 
     /** Observe the enforcement state of one package. */
     fun observeState(packageName: String): Flow<EnforcementState> =

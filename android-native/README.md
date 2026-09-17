@@ -51,15 +51,17 @@ app/src/main/java/com/example/sonder/
 │   ├── repo/          EnforcementRepository (single mutation point)
 │   └── settings/      DataStore (onboarding flag)
 ├── platform/
-│   ├── accessibility/ foreground detection (window-state events only)
-│   ├── block/         BlockActivity — the blackjack gate
-│   ├── enforcement/   coordinator + instant SYSTEM_ALERT_WINDOW overlay
+│   ├── accessibility/ foreground detection + surface classification
+│   ├── foreground/    authoritative foreground re-check (usage access)
+│   ├── overlay/       GateOverlayHost — the blocker window hosting the gate
+│   ├── enforcement/   coordinator: decisions → show/hide the blocker
 │   ├── notifications/ channels + expiry notifications
 │   ├── permissions/   audit + 10-second delayed on-open check + deep links
 │   └── scheduling/    boot receiver, grant-expiry alarms
 └── ui/
+    ├── gate/          the blackjack gate: state machine + composable UI
     ├── kit/           PixelKit: panels, buttons, tabs, timer, badges, toasts
-    └── screens/       onboarding, home, targets, blackjack, stats, settings
+    └── screens/       onboarding, home, targets, stats, settings
 ```
 
 Timers are absolute epoch millis everywhere: grants, lockouts and debt survive

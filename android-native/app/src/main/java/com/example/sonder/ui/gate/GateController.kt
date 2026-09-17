@@ -1,24 +1,24 @@
-package com.example.sonder.ui.screens.blackjack
+package com.example.sonder.ui.gate
 
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.repo.EnforcementRepository
+import com.example.sonder.di.ApplicationScope
 import com.example.sonder.domain.BlackjackRules
 import com.example.sonder.domain.DealtHand
 import com.example.sonder.domain.model.Card
 import com.example.sonder.domain.model.Hand
 import com.example.sonder.domain.model.HandOutcome
-import com.example.sonder.domain.model.Rank
-import com.example.sonder.domain.model.Suit
-import dagger.hilt.android.lifecycle.HiltViewModel
+import com.example.sonder.platform.scheduling.GrantExpiryScheduler
 import javax.inject.Inject
-import kotlin.random.Random
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-/** One round of table state visible to the UI. */
+/** One round of table state visible to the gate UI. */
 data class TableState(
     val targetPackage: String = "",
     val phase: Phase = Phase.IDLE,
@@ -33,23 +33,39 @@ data class TableState(
     enum class Phase { IDLE, DEALING, PLAYER_TURN, DEALER_TURN, RESOLVED }
 }
 
-@HiltViewModel
-class BlackjackViewModel @Inject constructor(
+/**
+ * The blackjack gate's state machine, owned by the process (not an Activity) so
+ * the blocker can live in a service-hosted overlay window. Previously this logic
+ * sat in a ViewModel behind BlockActivity, which dragged the blocker into the
+ * detox app's task.
+ */
+@Singleton
+class GateController @Inject constructor(
     private val repository: EnforcementRepository,
-    private val expiryScheduler: com.example.sonder.platform.scheduling.GrantExpiryScheduler,
-) : ViewModel() {
-
+    private val expiryScheduler: GrantExpiryScheduler,
+    @ApplicationScope private val scope: CoroutineScope,
+) {
     private val _state = MutableStateFlow(TableState())
     val state: StateFlow<TableState> = _state
+
+    /** Emits the package when the user earns access and dismisses the blocker. */
+    private val _unlocked = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val unlocked: SharedFlow<String> = _unlocked
 
     private var deck: List<Card> = emptyList()
     private var dealt: DealtHand? = null
 
-    fun start(targetPackage: String) {
-        if (_state.value.targetPackage == targetPackage && _state.value.phase != TableState.Phase.IDLE) return
-        viewModelScope.launch {
+    /** Point the table at a target. Re-entering the same app keeps an in-progress hand. */
+    fun begin(targetPackage: String) {
+        if (_state.value.targetPackage == targetPackage) return
+        deck = emptyList()
+        dealt = null
+        _state.value = TableState(targetPackage = targetPackage)
+        scope.launch {
             val debt = repository.currentDebt(targetPackage)
-            _state.value = TableState(targetPackage = targetPackage, debtMinutes = debt / 60_000)
+            if (_state.value.targetPackage == targetPackage) {
+                _state.value = _state.value.copy(debtMinutes = debt / 60_000)
+            }
         }
     }
 
@@ -60,15 +76,10 @@ class BlackjackViewModel @Inject constructor(
         dealt = BlackjackRules.deal(deck)
         deck = dealt!!.remainingDeck
 
-        val player = dealt!!.player
-        val dealerUp = dealt!!.dealerUp
-
-        // Natural check happens only when the player stands on the natural;
-        // the player may still draw to 21 (no bust risk at 21).
         _state.value = _state.value.copy(
             phase = TableState.Phase.PLAYER_TURN,
-            playerHand = player,
-            dealerUp = dealerUp,
+            playerHand = dealt!!.player,
+            dealerUp = dealt!!.dealerUp,
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
@@ -106,9 +117,32 @@ class BlackjackViewModel @Inject constructor(
         standInternal()
     }
 
+    fun playAgain() {
+        // "Play again" resets the table without leaving the blocker.
+        _state.value = _state.value.copy(
+            phase = TableState.Phase.IDLE,
+            playerHand = null,
+            dealerUp = null,
+            dealerFull = null,
+            showResult = false,
+            lastOutcome = null,
+            message = "",
+        )
+    }
+
+    /** User earned access: release the gate and reset the table for next time. */
+    fun releaseAccess() {
+        val pkg = _state.value.targetPackage
+        if (pkg.isEmpty()) return
+        _state.value = TableState(targetPackage = pkg)
+        deck = emptyList()
+        dealt = null
+        _unlocked.tryEmit(pkg)
+    }
+
     private fun standInternal() {
         val d = dealt ?: return
-        viewModelScope.launch {
+        scope.launch {
             delay(600) // 2-frame dealer reveal beat
             val playerHand = _state.value.playerHand ?: return@launch
 
@@ -138,30 +172,19 @@ class BlackjackViewModel @Inject constructor(
 
     private fun settle(outcome: HandOutcome) {
         val pkg = _state.value.targetPackage
-        viewModelScope.launch {
+        scope.launch {
             val grantedUntil = repository.onHandResult(pkg, outcome)
             if (grantedUntil != null) {
                 expiryScheduler.scheduleExpiry(pkg, grantedUntil)
             }
             val debt = repository.currentDebt(pkg)
-            _state.value = _state.value.copy(
-                debtMinutes = debt / 60_000,
-                showResult = true,
-                lastOutcome = outcome,
-            )
+            if (_state.value.targetPackage == pkg) {
+                _state.value = _state.value.copy(
+                    debtMinutes = debt / 60_000,
+                    showResult = true,
+                    lastOutcome = outcome,
+                )
+            }
         }
-    }
-
-    fun continueAfterResult() {
-        // "Play again" resets the table without leaving the gate.
-        _state.value = _state.value.copy(
-            phase = TableState.Phase.IDLE,
-            playerHand = null,
-            dealerUp = null,
-            dealerFull = null,
-            showResult = false,
-            lastOutcome = null,
-            message = "",
-        )
     }
 }

@@ -67,9 +67,10 @@ UI (Compose) ─ ViewModels (Hilt) ─ Domain (pure, unit-tested)
 Room (targets, grants, debt, lockouts, hands) + DataStore (settings)
         │
 Platform
-  ├─ AccessibilityService   foreground detection (window-state events only)
-  ├─ BlockOverlay           instant SYSTEM_ALERT_WINDOW block
-  ├─ BlockActivity          the blackjack gate
+  ├─ AccessibilityService   foreground detection + surface classification
+  ├─ ForegroundResolver     authoritative foreground re-check (usage access)
+  ├─ GateOverlayHost        the blocker: a service-owned SYSTEM_ALERT_WINDOW
+  │                         overlay window hosting the blackjack gate
   ├─ PermissionAudit        checks + 10-second delayed on-open prompt
   └─ Scheduling             boot receiver, grant-expiry alarms
 ```

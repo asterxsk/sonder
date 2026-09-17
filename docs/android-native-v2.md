@@ -55,23 +55,35 @@ in about a minute.
 blocked app reaches foreground
   │
   ▼
-SonderAccessibilityService (TYPE_WINDOW_STATE_CHANGED only, debounced 800 ms)
-  │  ignores: our own package, systemui, settings, launchers
+SonderAccessibilityService (TYPE_WINDOW_STATE_CHANGED only, 50 ms delivery)
+  │  classifies the surface: TRANSIENT / HOME / OWN / APP
   ▼
-EnforcementCoordinator (on a background scope)
+EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
+  ├─ TRANSIENT (shade, IME, own overlay window) → ignore, blocker untouched
+  ├─ HOME / OWN → release the blocker, then re-verify the real foreground
   ├─ active grant? → absence check (now − lastSeen > 60 s ⇒ revoke) → touch lastSeen
-  ├─ not an enabled target? → dismiss any stale overlay, stop
-  ├─ lockout active? → overlay only ("WAIT IT OUT")
-  └─ otherwise → BlockOverlay (instant) + BlockActivity (the gate)
+  ├─ not an enabled target? → release the blocker
+  ├─ lockout active? → lockout blocker only ("WAIT IT OUT")
+  └─ otherwise → GateOverlayHost.showGate (the blackjack table)
 ```
 
-- **`BlockOverlay`** is a `TYPE_APPLICATION_OVERLAY` window shown the moment a
-  target surfaces — before the activity can finish launching. Besides instant
-  blocking, a visible overlay makes Sonder "visible" for background-activity-
-  launch purposes on API 29+, which is what lets the gate start reliably.
-- **`BlockActivity`** hosts the blackjack table. It dismisses the overlay the
-  moment it is in front (`onGateShown`). Backing out without a grant leaves
-  state untouched — the next window event re-gates.
+- **`GateOverlayHost`** is the blocker: a single `TYPE_APPLICATION_OVERLAY`
+  window owned by the accessibility service — never an Activity. Because it is a
+  window and not an Activity it belongs to no task, so it cannot appear as a
+  screen inside the detox app, cannot be reached from Recents, and is unaffected
+  by the app's navigation. It is opaque and touchable, so it swallows touches
+  before they reach the blocked app underneath.
+- **Compose in the overlay** is hosted with the blocker's own view-tree owners
+  (see `OverlayLifecycleOwner`), since a Service has no Activity lifecycle to
+  borrow. The gate's state machine (`GateController`) is process-owned rather
+  than a ViewModel behind an Activity.
+- **`ForegroundResolver`** re-checks the real foreground app (usage access, not
+  content) after every release: during app launches the launcher emits its own
+  window event *after* the target app's, which would otherwise release the
+  blocker immediately. The same pass re-applies a blocker that was dropped.
+- **Self-events are ignored**: the blocker's own window reports the detox app's
+  package, so the classifier only treats the app's *Activities* as "the detox app
+  opened" — otherwise the blocker would dismiss itself the moment it appears.
 - Absence tracking: `lastSeenMillis` is updated on every window event for a
   granted package. Absence is only *detected* on the next event (e.g. the user
   returning), which is exactly when revocation matters.
