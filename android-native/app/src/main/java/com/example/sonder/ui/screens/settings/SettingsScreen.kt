@@ -4,52 +4,77 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.sonder.platform.permissions.PermissionAudit
 import com.example.sonder.platform.permissions.SonderPermission
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
-import com.example.sonder.ui.kit.BadgeTone
+import kotlinx.coroutines.flow.MutableStateFlow
 
-/** Settings: permission health with deep links (mirror of onboarding, always reachable). */
+/**
+ * Settings: permission health with deep links (mirror of onboarding, always reachable).
+ * The dock, background, and system insets come from the shared [PaddingValues].
+ */
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val context = LocalContext.current
-    val audit = remember { PermissionAudit(context.applicationContext) }
-    var missing by remember { mutableStateOf(audit.missingPermissions()) }
+    val audit = remember(context) { PermissionAudit(context.applicationContext) }
+
+    // One published screen state. The audit runs on an explicit lifecycle event —
+    // ON_RESUME, which includes coming back from Android Settings — and on RE-CHECK.
+    // Ordinary recomposition never re-audits.
+    val missingState = remember(audit) { MutableStateFlow(audit.missingPermissions()) }
+    val missing by missingState.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, audit) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) missingState.value = audit.missingPermissions()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(PixelPalette.Bg)
-            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(contentPadding)
+            // Scrolls inside the safe area, so large font scales can never push a row
+            // under the dock or the system bars.
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -76,7 +101,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Text(
@@ -90,7 +115,9 @@ fun SettingsScreen(
                             PixelButton(
                                 text = "FIX",
                                 onClick = { openPermission(context, p); },
-                                minHeight = 40.dp,
+                                // "FIX" alone reads the same four times in TalkBack; name the row.
+                                modifier = Modifier.semantics { contentDescription = "FIX ${p.label}" },
+                                minHeight = 48.dp,
                             )
                         }
                     }
@@ -102,10 +129,9 @@ fun SettingsScreen(
         PixelButton(
             text = "RE-CHECK",
             style = PixelButtonStyle.SECONDARY,
-            onClick = { missing = audit.missingPermissions() },
+            onClick = { missingState.value = audit.missingPermissions() },
         )
         Spacer(Modifier.height(16.dp))
-        PixelButton(text = "← BACK", onClick = onBack, style = PixelButtonStyle.SECONDARY)
     }
 }
 

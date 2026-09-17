@@ -46,7 +46,6 @@
       <p class="group-title">EXPLANATION</p>
       <a href="enforcement.html">Enforcement internals</a>
       <a href="explanation.html">Why blackjack?</a>
-      <a href="v1.html">v1 (Flutter)</a>
     </div>
   </nav>
 
@@ -95,18 +94,6 @@
         </ol>
       </section>
     </div>
-
-    <h2 id="two-versions">Two versions, one repo</h2>
-    <table>
-      <thead><tr><th></th><th>v2 — current</th><th>v1 — legacy</th></tr></thead>
-      <tbody>
-        <tr><td>Stack</td><td>Kotlin + Jetpack Compose</td><td>Flutter</td></tr>
-        <tr><td>Loss rule</td><td>+10 min debt (cap 60)</td><td>Flat 10-min lockout</td></tr>
-        <tr><td>Revocation</td><td>Absent &gt; 60 s</td><td>Absent ≥ 20 s</td></tr>
-        <tr><td>Location</td><td><code>android-native/</code></td><td><code>lib/</code>, <code>android/</code></td></tr>
-        <tr><td>Docs</td><td><a href="enforcement.html">Enforcement internals</a></td><td><a href="v1.html">v1 page</a></td></tr>
-      </tbody>
-    </table>
 
     <footer class="footer">
       <span>Sonder docs — built with the v3 pixel design system</span>

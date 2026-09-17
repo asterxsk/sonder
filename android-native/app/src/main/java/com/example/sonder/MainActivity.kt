@@ -4,8 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.sonder.data.settings.SettingsRepository
 import com.example.sonder.platform.permissions.PermissionAudit
 import com.example.sonder.theme.SonderTheme
@@ -28,8 +28,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SonderTheme {
-                // Observed continuously so finishing onboarding flips straight to Main.
-                val onboarded by settings.isOnboardingDone.collectAsState(initial = null)
+                // Lifecycle-aware, so the DataStore flow is only collected while the UI
+                // is STARTED; finishing onboarding still flips straight to Main.
+                val onboarded by settings.isOnboardingDone
+                    .collectAsStateWithLifecycle(initialValue = null)
                 SonderRoot(onboardingComplete = onboarded)
             }
         }

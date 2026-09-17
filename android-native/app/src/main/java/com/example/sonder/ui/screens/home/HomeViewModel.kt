@@ -5,20 +5,17 @@ import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.db.GrantDao
 import com.example.sonder.data.db.LockoutDao
 import com.example.sonder.data.db.TargetDao
-import com.example.sonder.domain.model.EnforcementState
+import com.example.sonder.domain.model.GrantSnapshot
+import com.example.sonder.domain.model.LockoutSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
-
-data class TargetUi(
-    val packageName: String,
-    val label: String,
-    val state: EnforcementState,
-    val remainingText: String,
-)
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -27,39 +24,37 @@ class HomeViewModel @Inject constructor(
     lockoutDao: LockoutDao,
 ) : ViewModel() {
 
-    val targets: StateFlow<List<TargetUi>> =
-        combine(targetDao.observeAll(), grantDao.observeAll(), lockoutDao.observeAll()) { ts, gs, ls ->
-            val now = System.currentTimeMillis()
-            ts.map { t ->
-                val grant = gs.find { it.packageName == t.packageName }
-                val lockout = ls.find { it.packageName == t.packageName }
-                val state = com.example.sonder.domain.AccessPolicy.stateFor(
-                    packageName = t.packageName,
-                    enabled = t.enabled,
-                    grant = grant?.let {
-                        com.example.sonder.domain.model.GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis)
-                    },
-                    lockout = lockout?.let {
-                        com.example.sonder.domain.model.LockoutSnapshot(it.packageName, it.untilMillis, 0)
-                    },
-                    nowMillis = now,
-                )
-                val remaining = when (state) {
-                    EnforcementState.GRANTED -> grant?.endAtMillis?.minus(now)
-                    EnforcementState.LOCKED -> lockout?.untilMillis?.minus(now)
-                    else -> null
-                }
-                TargetUi(
-                    packageName = t.packageName,
-                    label = t.label,
-                    state = state,
-                    remainingText = remaining?.takeIf { it > 0 }?.let { format(it) } ?: "",
-                )
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private fun format(millis: Long): String {
-        val totalSec = millis / 1000
-        return String.format("%02d:%02d", totalSec / 60, totalSec % 60)
+    /** One tick per second. Cold, so it only runs while [state] has a subscriber. */
+    private val clock: Flow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(1_000L)
+        }
     }
+
+    /**
+     * Home's panel and rows. `null` is the Loading presentation: Room has not emitted
+     * yet, so there is nothing truthful to draw. The clock joins the combine so an
+     * active countdown keeps ticking instead of freezing until the next Room emission.
+     */
+    val state: StateFlow<HomeState?> =
+        combine(
+            targetDao.observeAll(),
+            grantDao.observeAll(),
+            lockoutDao.observeAll(),
+            clock,
+        ) { targets, grants, lockouts, nowMillis ->
+            mapHomeState(
+                targets = targets,
+                grants = grants.map { GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis) },
+                lockouts = lockouts.map { LockoutSnapshot(it.packageName, it.untilMillis, 0L) },
+                nowMillis = nowMillis,
+            )
+        }.stateIn(
+            viewModelScope,
+            // No stop timeout: the ticker runs only while Home has a subscriber, and
+            // HomeScreen collects lifecycle-aware, so it stops when Home is off-screen.
+            SharingStarted.WhileSubscribed(),
+            null,
+        )
 }

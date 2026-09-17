@@ -10,20 +10,27 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.sonder.domain.model.Card
 import com.example.sonder.domain.model.Hand
 import com.example.sonder.ui.screens.blackjack.BlackjackViewModel
 import com.example.sonder.domain.model.HandOutcome
@@ -39,6 +46,7 @@ import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.TimerTone
+import java.util.Locale
 
 /**
  * The gate (design_v3 §10–12): blocked-app frame, blackjack table per §9,
@@ -51,18 +59,34 @@ fun BlockRoute(
     onDismiss: () -> Unit,
     viewModel: BlackjackViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(targetPackage) { viewModel.start(targetPackage) }
+
+    // Cards are resolved into flat slots so each hand renders from a lazy row.
+    val dealerSlots = state.dealerUp?.let { up ->
+        val full = state.dealerFull
+        if (full != null) {
+            // Full dealer hand once revealed.
+            full.cards.map { CardSlot(it, faceDown = false) }
+        } else {
+            listOf(
+                CardSlot(up.cards.first(), faceDown = false),
+                CardSlot(Card(Rank.TWO, Suit.SPADES), faceDown = true), // card back
+            )
+        }
+    } ?: emptyList()
+    val playerSlots = state.playerHand?.cards?.map { CardSlot(it, faceDown = false) } ?: emptyList()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(PixelPalette.Bg)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
 
         // §14 status badge row
         when {
@@ -74,7 +98,7 @@ fun BlockRoute(
                 PixelStatusBadge(BadgeTone.PLAYING)
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         PixelPanel(modifier = Modifier.fillMaxWidth()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -93,7 +117,7 @@ fun BlockRoute(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         // §9 blackjack table
         PixelPanel(
@@ -101,75 +125,50 @@ fun BlockRoute(
             fillColor = PixelPalette.Panel,
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                // Dealer row
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.Text(
-                        "DEALER",
-                        style = PixelTypeScale.Badge,
-                        fontFamily = PixelFont,
-                        color = PixelPalette.Muted,
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    state.dealerUp?.let { up ->
-                        PlayingCard(up.cards.first(), faceDown = false)
-                        if (state.dealerFull != null) {
-                            // Full dealer hand once revealed.
-                            state.dealerFull!!.cards.drop(1).forEach { PlayingCard(it, faceDown = false) }
-                        } else {
-                            PlayingCard(Rank.TWO, Suit.SPADES, faceDown = true) // card back
-                        }
-                    }
-                    state.dealerFull?.let {
-                        Spacer(Modifier.size(8.dp))
-                        androidx.compose.material3.Text(
-                            "${it.total}",
-                            style = PixelTypeScale.SectionTitle,
-                            fontFamily = PixelFont,
-                            color = PixelPalette.Text,
-                        )
-                    }
-                }
+                // Dealer hand — label and total stay pinned, cards scroll lazily.
+                HandRow(label = "DEALER", cards = dealerSlots, total = state.dealerFull?.total)
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(14.dp))
                 PixelDivider()
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(14.dp))
 
-                // Player row
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.Text(
-                        "YOU",
-                        style = PixelTypeScale.Badge,
-                        fontFamily = PixelFont,
-                        color = PixelPalette.Muted,
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    state.playerHand?.cards?.forEach { PlayingCard(it, faceDown = false) }
-                    state.playerHand?.let {
-                        Spacer(Modifier.size(8.dp))
+                // Player hand — same pinned label/total, lazy card strip.
+                HandRow(label = "YOU", cards = playerSlots, total = state.playerHand?.total)
+
+                Spacer(Modifier.height(14.dp))
+
+                // Message line — the table's one line of result copy, so it keeps the
+                // frame and the colour while everything around it stays a hairline.
+                if (state.message.isNotEmpty()) {
+                    val messageColor = when {
+                        state.showResult && state.lastOutcome == HandOutcome.WIN -> PixelPalette.Success
+                        state.showResult && state.lastOutcome == HandOutcome.LOSE -> PixelPalette.Danger
+                        else -> PixelPalette.Primary
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(PixelPalette.Bg)
+                            .border(2.dp, messageColor)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         androidx.compose.material3.Text(
-                            "${it.total}",
-                            style = PixelTypeScale.SectionTitle,
-                            fontFamily = PixelFont,
-                            color = PixelPalette.Text,
+                            text = state.message,
+                            style = MonoTypeScale.Body,
+                            color = messageColor,
+                            textAlign = TextAlign.Center,
                         )
                     }
                 }
-
-                Spacer(Modifier.height(20.dp))
-
-                // Message line
-                androidx.compose.material3.Text(
-                    text = state.message,
-                    style = MonoTypeScale.Body,
-                    color = PixelPalette.Primary,
-                )
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         // Controls: IDLE → DEAL, PLAYER_TURN → HIT/STAND, RESOLVED → CONTINUE
         when (state.phase) {
@@ -218,17 +217,17 @@ fun BlockRoute(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
 
         // §13 mini timer for debt
         if (state.debtMinutes > 0) {
             com.example.sonder.ui.kit.PixelTimer(
-                timeText = String.format("%02d:00", state.debtMinutes),
+                timeText = String.format(Locale.ROOT, "%02d:00", state.debtMinutes),
                 caption = "LOCKOUT DEBT — WIN TO PAY IT OFF",
                 tone = TimerTone.LOCKED,
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -240,6 +239,42 @@ private fun PixelDivider() {
             .height(2.dp)
             .background(PixelPalette.BorderDark),
     )
+}
+
+/** One slot on the table: a card plus whether it is still face down. */
+private data class CardSlot(val card: Card, val faceDown: Boolean)
+
+/**
+ * A labelled hand. The label and total stay pinned while the cards sit in a lazy
+ * row, so a hand wider than the viewport stays reachable and off-screen cards are
+ * never composed (§9).
+ */
+@Composable
+private fun HandRow(label: String, cards: List<CardSlot>, total: Int?) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Text(
+            label,
+            style = PixelTypeScale.Badge,
+            fontFamily = PixelFont,
+            color = PixelPalette.Muted,
+        )
+        Spacer(Modifier.size(8.dp))
+        LazyRow(modifier = Modifier.weight(1f)) {
+            items(cards) { slot -> PlayingCard(slot.card, faceDown = slot.faceDown) }
+        }
+        total?.let {
+            Spacer(Modifier.size(8.dp))
+            androidx.compose.material3.Text(
+                "$it",
+                style = PixelTypeScale.SectionTitle,
+                fontFamily = PixelFont,
+                color = PixelPalette.Text,
+            )
+        }
+    }
 }
 
 /** White/off-white card face per §9 (readability first), pixel-framed.

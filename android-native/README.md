@@ -6,9 +6,8 @@ blackjack. Win → 5 minutes of access. Lose → +10 minutes of lockout **debt**
 access. Walk away with debt and you're locked out until it's served. Leave a
 granted app for more than 60 seconds and access is revoked, time remaining or not.
 
-**v2 is a full native rewrite of the Flutter v1** (which still lives at `lib/`
-and `android/` in the repo root) using Jetpack Compose, Hilt, and Room. It
-implements the Pixel UI v3 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
+Built with Jetpack Compose, Hilt, and Room. It implements the Pixel UI v3
+design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
 Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v2.md).
 
 ## Build
@@ -75,14 +74,17 @@ links. No `QUERY_ALL_PACKAGES` — only launchable apps are visible.
 
 ## CI/CD
 
-`.github/workflows/android-v2.yml` builds and unit-tests every push to
-`main`/`sonder-v2`, uploads the debug APK, and builds a release APK — signed
-automatically when the `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`,
-`SONDER_KEY_ALIAS`, `SONDER_KEY_PASSWORD` secrets are configured (keystore as
-base64) — the Android debug key otherwise, which installs for sideloading but
-isn't publishable to Play. The release job fires on `sonder-v2` pushes.
+`.github/workflows/android-v2.yml` builds and unit-tests every push/PR touching
+`android-native/` on `main`/`sonder-v2`: it assembles the debug APK, runs the
+unit tests, compiles the release variant as a smoke check (no artifact), and
+uploads the debug APK as the `sonder-v2-debug-apk` artifact.
 
-`.github/workflows/release-v2.yml` publishes that release APK as a GitHub
-Release on `v*` tags or a manual run: it gates on the unit tests, takes
-`versionName` from the tag (`versionCode` from the workflow run number), checks
-the built APK's version and signer, then uploads `sonder-v2-<version>.apk`.
+`.github/workflows/release-v2.yml` is the only workflow that builds the signed
+release APK. On `v*` tags or a manual run it gates on the unit tests, builds
+with the tag (or the manual `version` input) as `versionName` and the workflow
+run number as `versionCode`, verifies both plus the signer, and publishes it as
+a GitHub Release (`sonder-v2-<version>.apk`). It is signed automatically when
+the `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`, and
+`SONDER_KEY_PASSWORD` secrets are configured (keystore as base64) — the Android
+debug key otherwise, which installs for sideloading but isn't publishable to
+Play.

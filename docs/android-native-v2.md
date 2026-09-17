@@ -1,8 +1,7 @@
 # Sonder v2 — Android Enforcement Notes
 
 Implementation notes for the native (Kotlin + Compose) Sonder. Read alongside
-[`android-native/README.md`](../android-native/README.md). For the legacy
-Flutter implementation, see [`android-enforcement.md`](android-enforcement.md).
+[`android-native/README.md`](../android-native/README.md).
 
 ## 1. Rules engine
 
@@ -12,7 +11,7 @@ carry the product rules. No Android imports; 27 unit tests cover them.
 **`BlackjackRules.kt`**
 
 - Single 52-card deck, reshuffled every hand
-- Player actions: HIT / STAND only (no splits or doubles in v1 scope)
+- Player actions: HIT / STAND only (no splits or doubles in scope)
 - Dealer reveals the hole card and draws until 17+, standing on **all 17s**
   including soft 17
 - Natural blackjack (ace + ten-value on the first two cards) is an instant
@@ -125,17 +124,18 @@ cd android-native && ./gradlew testDebugUnitTest
 - `BlackjackRulesTest` (15 tests): hard/soft totals, ace degradation, bust,
   naturals, deal order, dealer stands on hard and soft 17, settlement
 
-CI (`.github/workflows/android-v2.yml`) runs the same suite on every push to
-`main`/`sonder-v2` plus a release build — signed with the keystore when the four
-`SONDER_KEYSTORE_*` secrets exist, with the Android debug key otherwise.
-`.github/workflows/release-v2.yml` runs the same suite on `v*` tags, builds with
-the tag as `versionName` and the run number as `versionCode`, verifies both plus
-the signer, and publishes `sonder-v2-<version>.apk` as a GitHub Release.
+CI (`.github/workflows/android-v2.yml`) runs the same suite on every push/PR
+touching `android-native/`, plus a release-variant compile check (no artifact,
+no signing). `.github/workflows/release-v2.yml` is the only workflow that builds
+the signed release APK: on `v*` tags or a manual run it runs the same suite,
+builds with the tag as `versionName` and the run number as `versionCode`,
+verifies both plus the signer, and publishes `sonder-v2-<version>.apk` as a
+GitHub Release.
 
 ## 7. Known limitations
 
-- Whole-app enforcement only — no Shorts/Reels surface detection in v2 (v1
-  had best-effort support; the reliable path in both versions is whole-app)
+- Whole-app enforcement only — no Shorts/Reels surface detection. Whole-app
+  targets are the reliable path.
 - Absence revocation is event-driven: if the user stays inside the granted
   app, nothing needs to fire; revocation lands when they return or the window
   changes. Grant end is alarm-driven, not absence-driven

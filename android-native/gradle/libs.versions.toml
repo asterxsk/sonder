@@ -17,7 +17,6 @@ ksp = "2.3.12"
 hilt = "2.60.1"
 room = "2.8.5"
 datastore = "1.1.7"
-work = "2.10.5"
 hiltNavigationCompose = "1.4.0"
 composeUi = "1.10.6"
 composeMaterial3 = "1.4.0"
@@ -51,7 +50,6 @@ androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
-androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

@@ -6,24 +6,20 @@ Sonder is an Android screen-time app with a twist: when you open an app you've
 decided to limit, you must win a hand of blackjack to get in. Losing doesn't
 just cost the hand — it adds lockout **debt** you have to play off or wait out.
 
-**Two implementations live in this repo:**
-
-| | v2 (current, `main`) | v1 (legacy) |
-| --- | --- | --- |
-| Stack | Native Kotlin + Jetpack Compose | Flutter |
-| Location | [`android-native/`](android-native/) | `lib/` + `android/` |
-| Rules | **Debt model** (below) | Hard lockout, 20 s revoke |
-| Docs | [`docs/android-native-v2.md`](docs/android-native-v2.md) | [`docs/android-enforcement.md`](docs/android-enforcement.md) |
+Sonder is a single native Android app — Kotlin and Jetpack Compose in
+[`android-native/`](android-native/). An earlier Flutter prototype was replaced
+by the native implementation so foreground detection and the block gate run as
+one native platform process.
 
 ---
 
-## Sonder v2 — native Android (Kotlin + Compose)
+## Native Android (Kotlin + Compose)
 
 Pixel-art UI (amber on brown-black, Press Start 2P + DM Mono, hard frames,
 stepped shadows) implementing the design system in
 [`docs/design/design_v3.md`](docs/design/design_v3.md).
 
-### Access rules (v2)
+### Access rules
 
 All timestamps are absolute UTC epoch millis; rules live in
 [`android-native/.../domain/AccessPolicy.kt`](android-native/app/src/main/java/com/example/sonder/domain/AccessPolicy.kt).
@@ -93,18 +89,19 @@ Enforcement internals, edge cases, and the QA checklist:
 
 `.github/workflows/android-v2.yml` on every push/PR touching `android-native/`:
 
-- **Build + unit tests** — assembles the debug APK, runs the test suite,
-  uploads both as artifacts
-- **Release** — builds a release APK; **signed automatically** when the
-  `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`,
-  `SONDER_KEY_PASSWORD` secrets are configured (keystore as base64). Without
-  them it falls back to the Android **debug key** — installable for sideloading,
-  but not publishable to Play
+- **Build + unit tests** — assembles the debug APK, runs the test suite, and
+  compiles the release variant as a smoke check (no artifact). Uploads the debug
+  APK as the `sonder-v2-debug-apk` artifact.
 
-`.github/workflows/release-v2.yml` on `v*` tags or a manual run: gates on the
-unit tests, builds the release APK with the tag as `versionName` and the
-workflow run number as `versionCode`, verifies both plus the signer, and
-publishes it as a GitHub Release (`sonder-v2-<version>.apk`).
+`.github/workflows/release-v2.yml` on `v*` tags or a manual run: the only
+workflow that builds the release APK. Gates on the unit tests, builds it with
+the tag (or the manual `version` input) as `versionName` and the workflow run
+number as `versionCode`, verifies both plus the signer, and publishes it as a
+GitHub Release (`sonder-v2-<version>.apk`). **Signed automatically** when the
+`SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`,
+`SONDER_KEY_PASSWORD` secrets are configured (keystore as base64). Without
+them it falls back to the Android **debug key** — installable for sideloading,
+but not publishable to Play.
 
 ### First-run setup
 
@@ -116,28 +113,12 @@ publishes it as a GitHub Release (`sonder-v2-<version>.apk`).
 
 ---
 
-## Sonder v1 — Flutter (legacy)
-
-The original Flutter implementation is kept for reference in `lib/`,
-`android/`, `ios/`, and `macos/`, with its own tests under `test/`.
-
-- Rules differ from v2: a loss is a flat 10-minute lockout, and leaving a
-  granted app for 20 consecutive seconds revokes it.
-- Includes best-effort YouTube Shorts / Instagram Reels surface detection;
-  whole-app targets are the reliable path.
-- Quick start: `flutter pub get && flutter analyze && flutter test && flutter run`
-  (application ID `app.sonder.sonder`).
-- Enforcement, permissions, and Play-review notes:
-  [`docs/android-enforcement.md`](docs/android-enforcement.md).
-
-v1 receives maintenance only; new work happens in v2.
-
 ## Privacy
 
-Both versions store targets, onboarding state, and enforcement timestamps
-locally. No network service, account, or analytics SDK. The accessibility
-service reads only the foreground window package — never screen content, URLs,
-or view-tree text.
+Sonder stores targets, onboarding state, and enforcement timestamps locally.
+No network service, account, or analytics SDK. The accessibility service reads
+only the foreground window package — never screen content, URLs, or view-tree
+text.
 
 ## License
 

@@ -11,8 +11,7 @@
     { href: "architecture.html", title: "Architecture" },
     { href: "enforcement.html", title: "Enforcement" },
     { href: "explanation.html", title: "Why blackjack?" },
-    { href: "ci.html", title: "CI/CD" },
-    { href: "v1.html", title: "v1 (Flutter)" }
+    { href: "ci.html", title: "CI/CD" }
   ];
 
   /* ---------- theme ---------- */

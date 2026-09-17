@@ -10,10 +10,18 @@ plugins {
 // the keystore secrets are configured, the signing config in as -P properties.
 // Without them these fall back to the local defaults below. A blank property
 // counts as absent, so `-Psonder.version.name=` can't ship an empty versionName.
+// The same rule applies to the signing properties: a half-configured secret set
+// falls back to the debug key rather than building a release with an empty
+// password. The workflow's Verify step is what catches that loudly, since it
+// fails on a debug-signed APK whenever the keystore blob secret is set.
 val releaseStoreFile = providers.gradleProperty("sonder.release.storeFile").orNull?.takeIf(String::isNotBlank)
+val releaseStorePassword = providers.gradleProperty("sonder.release.storePassword").orNull?.takeIf(String::isNotBlank)
+val releaseKeyAlias = providers.gradleProperty("sonder.release.keyAlias").orNull?.takeIf(String::isNotBlank)
+val releaseKeyPassword = providers.gradleProperty("sonder.release.keyPassword").orNull?.takeIf(String::isNotBlank)
 val releaseVersionName = providers.gradleProperty("sonder.version.name").orNull?.takeIf(String::isNotBlank)
 val releaseVersionCode = providers.gradleProperty("sonder.version.code").orNull?.takeIf(String::isNotBlank)
-val hasReleaseKeystore = releaseStoreFile != null
+val hasReleaseKeystore =
+  listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }
 
 android {
     namespace = "com.example.sonder"
@@ -31,21 +39,26 @@ android {
     }
 
     signingConfigs {
-        // Only defined when a keystore is supplied, so the release build can fall
-        // back to the debug key (see buildTypes.release) instead of failing.
-        releaseStoreFile?.let { storePath ->
+        // Only defined when the full keystore set is supplied, so the release build
+        // can fall back to the debug key (see buildTypes.release) instead of failing.
+        if (hasReleaseKeystore) {
             create("release") {
-                storeFile = file(storePath)
-                storePassword = providers.gradleProperty("sonder.release.storePassword").orNull
-                keyAlias = providers.gradleProperty("sonder.release.keyAlias").orNull
-                keyPassword = providers.gradleProperty("sonder.release.keyPassword").orNull
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 minification plus resource shrinking, which this buildType never ran
+            // before. Hilt, Room, Lifecycle and Compose ship their own consumer rules;
+            // proguard-rules.pro carries the one app-side guard for the reflective
+            // nav-key lookup that R8 cannot see.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Debug key keeps assembleRelease producing an installable APK locally;
             // the CD workflow overrides it with the real keystore via -P properties.
@@ -132,7 +145,4 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   ksp(libs.androidx.room.compiler)
   implementation(libs.androidx.datastore.preferences)
-
-  // Background work (periodic permission audit)
-  implementation(libs.androidx.work.runtime.ktx)
 }

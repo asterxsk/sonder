@@ -7,16 +7,17 @@ import com.example.sonder.platform.permissions.PermissionAudit
 import com.example.sonder.platform.permissions.SonderPermission
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
  * Onboarding state machine (plan §4): a real wizard. One permission per step,
- * explained in pixel-dialogue copy. Permission states are polled every second
- * while the wizard is alive, so returning from Settings flips the step to
- * granted automatically — no manual RE-CHECK pressing.
+ * explained in pixel-dialogue copy. The screen drives [refresh] while it is
+ * lifecycle-active, so returning from Settings flips the step to granted
+ * automatically — no manual RE-CHECK pressing. Nothing polls on its own: this
+ * ViewModel is never cleared (the wizard renders outside the nav graph), so a
+ * self-scheduled loop would outlive the wizard for the rest of the session.
  */
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
@@ -36,21 +37,23 @@ class OnboardingViewModel @Inject constructor(
     val totalSteps: Int = SonderPermission.entries.size
 
     init {
-        // Poll while the wizard is on screen. Cheap checks; stops when cleared.
-        viewModelScope.launch {
-            while (true) {
-                _missing.value = audit.missingPermissions()
-                _currentStep.value = _missing.value
-                    .minOfOrNull { SonderPermission.entries.indexOf(it) }
-                    ?: SonderPermission.entries.size // all granted
-                delay(1_000)
-            }
-        }
+        // One audit up front so the very first frame is truthful. Without it the
+        // screen's first composition reads the emptySet() default and paints the
+        // all-granted completion card before the lifecycle-scoped loop can land —
+        // a tap on BEGIN in that window would finish onboarding with nothing
+        // granted. This is a one-shot, not a loop: nothing here reschedules itself.
+        refresh()
     }
 
     fun refresh() {
         _missing.value = audit.missingPermissions()
+        _currentStep.value = currentStepOf(_missing.value)
     }
+
+    /** First not-yet-granted index, or entries.size when everything is granted. */
+    private fun currentStepOf(missing: Set<SonderPermission>): Int =
+        missing.minOfOrNull { SonderPermission.entries.indexOf(it) }
+            ?: SonderPermission.entries.size // all granted
 
     fun completeOnboarding(onDone: () -> Unit) {
         viewModelScope.launch {

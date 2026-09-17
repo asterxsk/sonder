@@ -13,14 +13,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +31,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.sonder.platform.permissions.SonderPermission
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
@@ -35,6 +42,7 @@ import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
+import kotlinx.coroutines.delay
 
 /**
  * First-launch wizard (plan §4): one permission per step, deep-linked, with a
@@ -46,10 +54,23 @@ fun OnboardingScreen(
     onDone: () -> Unit,
     viewModel: OnboardingViewModel = hiltViewModel(),
 ) {
-    val missing by viewModel.missing.collectAsState()
-    val currentStep by viewModel.currentStep.collectAsState()
+    val missing by viewModel.missing.collectAsStateWithLifecycle()
+    val currentStep by viewModel.currentStep.collectAsStateWithLifecycle()
     val total = viewModel.totalSteps
     val context = LocalContext.current
+
+    // Poll only while this screen is lifecycle-active. The wizard renders outside
+    // the nav graph, so the ViewModel is never cleared — scoping the loop here is
+    // what makes the work actually stop when the wizard leaves the screen.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, viewModel) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                viewModel.refresh()
+                delay(1_000)
+            }
+        }
+    }
 
     val allGranted = missing.isEmpty()
     val stepAlpha by animateFloatAsState(
@@ -62,6 +83,9 @@ fun OnboardingScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(PixelPalette.Bg)
+            // Full-screen flow outside the nav scaffold, so it owns its own insets:
+            // the wizard must never slide under the status bar or the nav bar.
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
