@@ -37,3 +37,7 @@ captures/
 /graft/.cache/ask-index.json
 /graft/.cache/extract.*.json
 /graft/.cache/fingerprint.*.json
+
+# If a bare `/graft/` rule reappears below this line, delete it: it would hide
+# newly generated cards from git status and let the committed graph go stale
+# without anything reporting it.
