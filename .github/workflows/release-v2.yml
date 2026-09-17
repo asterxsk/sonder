@@ -1,7 +1,6 @@
 # Builds the Sonder v2 (android-native) release APK and publishes it as a
 # GitHub Release. Triggered by version tags (v1.0.0) or by hand from the
-# Actions tab. ANOTHER workflow (.github/workflows/release.yml) also fires on
-# v* tags — it publishes the legacy Flutter app, not this one.
+# Actions tab. This is the only workflow that publishes on v* tags.
 #
 # The tag supplies versionName only. versionCode is the workflow run number,
 # which is monotonic and lets each release install over the previous one.
@@ -22,10 +21,10 @@ on:
 permissions:
   contents: write
 
-# Same group name as release.yml (the legacy Flutter publisher), which also
-# fires on v* tags: the two workflows queue instead of racing to create the
-# same release. Re-runs of one tag queue behind each other; different tags
-# keep their own group and run concurrently.
+# One group per tag: re-runs of the same tag queue instead of racing to
+# create the same release, while different tags keep their own group and run
+# concurrently. The group name is kept as-is so a run already queued under it
+# is unaffected.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -58,6 +57,12 @@ jobs:
       # update whose versionCode isn't higher than the installed one.
       # Inputs reach the shell through env, never through ${{ }} inside `run`,
       # which would splice the value straight into the script text.
+      #
+      # The resolved version is validated against a strict charset before it is
+      # used anywhere, because it flows into $GITHUB_OUTPUT, into the staged APK
+      # file name and into a grep pattern in the Verify step: newlines (which
+      # would inject extra output lines), `/` and `..` (path traversal) and
+      # regex metacharacters all have to be rejected up front.
       - name: Resolve version
         id: version
         env:
@@ -65,11 +70,32 @@ jobs:
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            # A tag ref is the only source of the version on that path. If the
+            # operator also typed a `version`, it would be discarded silently and
+            # the run would publish the tag's release while they believe they
+            # shipped a different version — refuse instead.
+            if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$VERSION" ]; then
+              echo "::error::This run was dispatched on tag ${GITHUB_REF_NAME}, which supplies version ${VERSION}; the 'version' input (${INPUT_VERSION}) is ignored. Re-run the workflow against the branch to release ${INPUT_VERSION}."
+              exit 1
+            fi
           else
             VERSION="$INPUT_VERSION"
           fi
-          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          # Operator-typed value: letters, digits, dot, underscore, plus and
+          # hyphen only, starting with a letter or digit. Matched against the
+          # whole string — `grep -qE` would return 0 as soon as any single line
+          # matched, letting an embedded newline through. `%q` in the message
+          # keeps a rejected value from starting a new workflow command line.
+          if [[ ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
+            echo "::error::Invalid version: allowed characters are letters, digits, dot, underscore, plus and hyphen, and it must start with a letter or digit (e.g. 1.0.0). Got: $(printf '%q' "$VERSION")"
+            exit 1
+          fi
+          {
+            echo "name<<SONDER_VERSION_EOF"
+            echo "$VERSION"
+            echo "SONDER_VERSION_EOF"
+            echo "code=${GITHUB_RUN_NUMBER}"
+          } >> "$GITHUB_OUTPUT"
 
       # Gate the release on the existing JVM suites (AccessPolicy, BlackjackRules,
       # ...) so a tag pushed on a broken commit can't produce a release.
@@ -84,7 +110,7 @@ jobs:
           # Workspace-relative: defaults.run.working-directory applies to `run`
           # steps only, never to `uses` steps.
           path: android-native/app/build/test-results/testDebugUnitTest/
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       # Signing secrets are optional. Without them the release build falls back
       # to the debug key: the APK installs for sideloading but cannot be
@@ -100,9 +126,16 @@ jobs:
         run: |
           SIGNING_ARGS=()
           if [ -n "$SONDER_KEYSTORE_B64" ]; then
-            echo "$SONDER_KEYSTORE_B64" | base64 -d > sonder-release.jks
+            # Decode outside the checked-out workspace: RUNNER_TEMP is the runner's
+            # own scratch dir, so the private key can never be picked up by an
+            # artifact upload. The trap matters because a gradle failure under
+            # `set -e` would otherwise abort past a plain `rm` at the end of the
+            # step and leave the key on disk for every later step.
+            KEYSTORE_PATH="$RUNNER_TEMP/sonder-release.jks"
+            trap 'rm -f "$KEYSTORE_PATH"' EXIT
+            echo "$SONDER_KEYSTORE_B64" | base64 -d > "$KEYSTORE_PATH"
             SIGNING_ARGS+=(
-              -Psonder.release.storeFile="$PWD/sonder-release.jks"
+              -Psonder.release.storeFile="$KEYSTORE_PATH"
               -Psonder.release.storePassword="$SONDER_KEYSTORE_PASSWORD"
               -Psonder.release.keyAlias="$SONDER_KEY_ALIAS"
               -Psonder.release.keyPassword="$SONDER_KEY_PASSWORD"
@@ -114,7 +147,6 @@ jobs:
             -Psonder.version.name="$VERSION_NAME" \
             -Psonder.version.code="$VERSION_CODE" \
             "${SIGNING_ARGS[@]}"
-          rm -f sonder-release.jks
 
       # The release action only checks that a file exists. Verify what is
       # actually in it: the tagged version, and which key signed it — a
@@ -130,9 +162,9 @@ jobs:
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
           BADGING=$("$BUILD_TOOLS/aapt2" dump badging "$APK")
-          echo "$BADGING" | grep -q "versionName='${VERSION_NAME}'" \
+          echo "$BADGING" | grep -qF -- "versionName='${VERSION_NAME}'" \
             || { echo "versionName is not ${VERSION_NAME}"; exit 1; }
-          echo "$BADGING" | grep -q "versionCode='${VERSION_CODE}'" \
+          echo "$BADGING" | grep -qF -- "versionCode='${VERSION_CODE}'" \
             || { echo "versionCode is not ${VERSION_CODE}"; exit 1; }
           CERTS=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK")
           echo "$CERTS"

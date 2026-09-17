@@ -46,7 +46,6 @@
       <p class="group-title">EXPLANATION</p>
       <a href="enforcement.html">Enforcement internals</a>
       <a href="explanation.html">Why blackjack?</a>
-      <a href="v1.html">v1 (Flutter)</a>
     </div>
   </nav>
 
@@ -59,7 +58,7 @@
       <thead><tr><th>Push to</th><th>What runs</th></tr></thead>
       <tbody>
         <tr><td><code>main</code></td><td>build-test job (compile + unit tests + APK artifact)</td></tr>
-        <tr><td><code>sonder-v2</code></td><td>build-test <strong>and</strong> release job (keystore-signed if secrets present, debug key otherwise)</td></tr>
+        <tr><td><code>sonder-v2</code></td><td>build-test job — debug APK artifact, plus a release-variant compile check (no artifact)</td></tr>
         <tr><td>pull requests</td><td>build-test job</td></tr>
         <tr><td><code>v*</code> tag, or manual run of <code>release-v2.yml</code></td><td>unit tests, release build, verifier, GitHub Release</td></tr>
       </tbody>
@@ -67,19 +66,21 @@
 
     <h2 id="jobs">Jobs</h2>
     <ul>
-      <li><strong>build-test</strong> — JDK 17, Gradle wrapper (pinned 9.3.1, SHA-verified), runs
-      <code>assembleDebug</code> + <code>test</code>. Uploads the debug APK as a
-      workflow artifact you can sideload directly.</li>
-      <li><strong>release</strong> — <code>assembleRelease</code>. Signed with the
-      keystore when the four secrets are configured, with the Android debug key
-      otherwise — the APK installs for sideloading either way, but a
-      debug-signed one can't be published to Play.</li>
+      <li><strong>build-test</strong> — JDK 17, Gradle wrapper (pinned 9.3.1, SHA-verified). Builds the
+      debug APK, runs the unit tests, then compiles the release variant as a smoke
+      check (no artifact). Uploads the debug APK as the
+      <code>sonder-v2-debug-apk</code> workflow artifact you can sideload directly.</li>
       <li><strong>release-v2.yml / release</strong> — on <code>v*</code> tags or a
-      manual run. Runs the unit tests as a gate, then builds with
-      <code>-Psonder.version.name</code> and <code>-Psonder.version.code</code>
-      (tag without the <code>v</code>, and the workflow run number — a
-      monotonic <code>versionCode</code> lets each release install over the
-      previous one). Verifies the APK's <code>versionName</code>,
+      manual run. The only workflow that builds the signed release APK, and the
+      only one that sets <code>versionCode</code>. Runs the unit tests as a gate,
+      then builds with <code>-Psonder.version.name</code> and
+      <code>-Psonder.version.code</code> (the version name is the tag without the
+      <code>v</code>, or the <code>version</code> input on a manual run; the code
+      is the workflow run number — since nothing else sets <code>versionCode</code>,
+      its monotonic run number lets each release install over the previous one).
+      Signs with the keystore when the four secrets are configured, and with the
+      Android debug key otherwise (installable for sideloading, but not
+      Play-publishable). Verifies the APK's <code>versionName</code>,
       <code>versionCode</code>, and signer with <code>aapt2</code> +
       <code>apksigner</code> before publishing it as
       <code>sonder-v2-&lt;version&gt;.apk</code> on a GitHub Release with
@@ -96,12 +97,16 @@ SONDER_KEY_PASSWORD        # key password</pre>
 <pre data-copy="keytool -genkeypair -v -keystore sonder.jks -keyalg RSA
   -keysize 2048 -validity 10000 -alias sonder">keytool -genkeypair -v -keystore sonder.jks -keyalg RSA
   -keysize 2048 -validity 10000 -alias sonder</pre>
-    <p>Base64 it for the secret:</p>
-<pre data-copy="base64 -w0 sonder.jks    # Linux/macOS
-base64 sonder.jks         # macOS (alternative)
-certutil -encode sonder.jks encoded.txt   # Windows">base64 -w0 sonder.jks    # Linux/macOS
-base64 sonder.jks         # macOS (alternative)
-certutil -encode sonder.jks encoded.txt   # Windows</pre>
+    <p>Base64 it for the secret — one unwrapped line, no header or footer:</p>
+<pre data-copy="base64 -w0 sonder.jks                    # Linux (GNU coreutils)
+base64 sonder.jks | tr -d '\n'         # macOS (no -w flag)
+[Convert]::ToBase64String([IO.File]::ReadAllBytes(&quot;sonder.jks&quot;)) | Set-Content -NoNewline encoded.txt   # Windows (PowerShell)">base64 -w0 sonder.jks                    # Linux (GNU coreutils)
+base64 sonder.jks | tr -d '\n'         # macOS (no -w flag)
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("sonder.jks")) | Set-Content -NoNewline encoded.txt   # Windows (PowerShell)</pre>
+    <p>Paste the <strong>entire</strong> file into <code>SONDER_KEYSTORE_B64</code>:
+    a single unwrapped line with no <code>-----BEGIN/END-----</code> header or
+    footer. Do not use <code>certutil -encode</code> — it emits PEM with a header
+    and 64-character wrapped body lines that <code>base64 -d</code> cannot decode.</p>
 
     <h2 id="caveats">Notes and gotchas</h2>
     <ul>
@@ -110,16 +115,14 @@ certutil -encode sonder.jks encoded.txt   # Windows</pre>
       <li><code>gradle.properties</code> in the repo deliberately contains no
       machine-specific <code>org.gradle.java.home</code> — both dev machines and
       runners supply <code>JAVA_HOME</code>.</li>
-      <li>The release job's trigger is <code>sonder-v2</code>. Since <code>main</code>
-      is now the default branch, tag a release or push to <code>sonder-v2</code>
-      to produce release APKs.</li>
-      <li>A <code>v*</code> tag fires two workflows: <code>release-v2.yml</code>
-      (this app) and the legacy <code>release.yml</code> (Flutter). They share a
-      concurrency group keyed on the tag, so they queue instead of racing to
-      create the same release.</li>
-      <li>Keystore properties are optional. Without them the release build falls
-      back to the Android debug key, so <code>assembleRelease</code> still
-      produces an installable APK locally and in CI.</li>
+      <li>Pushing to <code>sonder-v2</code> only produces the
+      <code>sonder-v2-debug-apk</code> artifact. To get a signed release APK,
+      push a <code>v*</code> tag or run <code>release-v2.yml</code> manually with
+      a <code>version</code> input.</li>
+      <li>Keystore properties are optional. Without them the
+      <code>release-v2.yml</code> build falls back to the Android debug key, so
+      <code>assembleRelease</code> still produces an installable APK locally and
+      on a tagged release.</li>
     </ul>
 
     <footer class="footer">

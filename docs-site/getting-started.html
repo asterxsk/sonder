@@ -46,7 +46,6 @@
       <p class="group-title">EXPLANATION</p>
       <a href="enforcement.html">Enforcement internals</a>
       <a href="explanation.html">Why blackjack?</a>
-      <a href="v1.html">v1 (Flutter)</a>
     </div>
   </nav>
 
@@ -64,6 +63,14 @@
     <a href="https://github.com/asterxsk/sonder/releases">Releases page</a> has
     the latest build as <code>sonder-v2-&lt;version&gt;.apk</code> — already
     signed, so it installs the same way.</p>
+    <div class="panel red">
+      <p class="panel-title">DON'T MIX CI AND RELEASE BUILDS</p>
+      <p style="margin:0">The CI debug APK and the Release APK may use different
+      signing keys — the Release APK is signed with the project keystore, the CI
+      one with the Android debug key. Android refuses to install one over the
+      other (<code>INSTALL_FAILED_UPDATE_INCOMPATIBLE</code>). Switching between
+      them requires uninstalling first, which deletes all app data.</p>
+    </div>
     <p><strong>Or build it yourself</strong> (JDK 17 + Android SDK platform 37):</p>
 <pre data-copy="cd android-native
 ./gradlew assembleDebug

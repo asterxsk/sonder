@@ -3,12 +3,16 @@
 build/
 local.properties
 *.apk.idsig
+# Signing keys — never commit a private key (see docs/android-native-v2.md).
+*.jks
+*.keystore
 captures/
 
 # CWD-local tooling & caches (never commit)
 /tools/
 /android-sdk/
 /.android/
+.omo/
 *.log
 
 # IDE
@@ -19,7 +23,5 @@ captures/
 # Client state
 /.freebuff/
 
-# Flutter (v1)
-.dart_tool/
-.flutter-plugins*
-pubspec.lock
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
