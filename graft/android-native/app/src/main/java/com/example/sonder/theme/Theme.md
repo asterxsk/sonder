@@ -1,0 +1,5 @@
+# android-native/app/src/main/java/com/example/sonder/theme/Theme.kt
+
+- PixelColorScheme · variable · L10-L26 — private val PixelColorScheme = darkColorScheme( primary = PixelPalette.Primary, onPrimary = PixelPalette.Bg, primaryContainer = PixelPalette.Primary, onPrimaryContainer = PixelPalette.Bg, secondary = PixelPalette.Border, onSecondary = PixelPalette.Bg, background = PixelPalette.Bg, onBackground = PixelPalette.Text, surface = PixelPalette.Surface, onSurface = PixelPalette.Text, surfaceVariant = PixelPalette.Panel, onSurfaceVariant = PixelPalette.Muted, outline = PixelPalette.Border, error = PixelPalette.Danger, onError = PixelPalette.Bg, )
+- PixelShapes · variable · L29-L35 — private val PixelShapes = Shapes( extraSmall = RoundedCornerShape(0.dp), small = RoundedCornerShape(0.dp), medium = RoundedCornerShape(0.dp), large = RoundedCornerShape(0.dp), extraLarge = RoundedCornerShape(0.dp), )
+- SonderTheme · function · L37-L45 — @Composable fun SonderTheme(content: @Composable () -> Unit)

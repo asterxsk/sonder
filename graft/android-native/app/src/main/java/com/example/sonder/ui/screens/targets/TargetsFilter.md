@@ -1,0 +1,21 @@
+# android-native/app/src/main/java/com/example/sonder/ui/screens/targets/TargetsFilter.kt
+
+- TargetsTab · enum · L10-L10 — enum class TargetsTab
+- TargetsListState · interface · L18-L22 — sealed interface TargetsListState
+- Loading · class · L19-L19 — data object Loading : TargetsListState
+- Loaded · class · L20-L20 — data class Loaded(val picks: List<TargetPickUi>) : TargetsListState
+- Failed · class · L21-L21 — data object Failed : TargetsListState
+- TargetsViewState · interface · L25-L43 — sealed interface TargetsViewState
+- Loading · class · L27-L27 — data object Loading : TargetsViewState
+- NoLaunchableApps · class · L30-L30 — data object NoLaunchableApps : TargetsViewState
+- LoadFailed · class · L33-L33 — data object LoadFailed : TargetsViewState
+- EmptyLimited · class · L36-L36 — data object EmptyLimited : TargetsViewState
+- NoResults · class · L39-L39 — data object NoResults : TargetsViewState
+- Rows · class · L42-L42 — data class Rows(val picks: List<TargetPickUi>) : TargetsViewState
+- TargetsUiState · class · L46-L50 — data class TargetsUiState( val tab: TargetsTab, val enabledCount: Int, val view: TargetsViewState, )
+- normalizeTargetsQuery · function · L53-L53 — fun normalizeTargetsQuery(raw: String): String
+- enabledTargetCount · function · L56-L56 — fun enabledTargetCount(picks: List<TargetPickUi>): Int
+- filterTargets · function · L63-L72 — fun filterTargets( picks: List<TargetPickUi>, tab: TargetsTab, normalizedQuery: String, ): List<TargetPickUi>
+- mergeTargetPicks · function · L75-L84 — fun mergeTargetPicks( apps: List<InstalledApp>, enabledByPackage: Map<String, Boolean>, ): List<TargetPickUi>
+- targetsUiState · function · L87-L107 — fun targetsUiState( list: TargetsListState, tab: TargetsTab, normalizedQuery: String, ): TargetsUiState
+- targetsUiFlow · function · L114-L124 — fun targetsUiFlow( list: Flow<TargetsListState>, tab: Flow<TargetsTab>, rawQuery: Flow<String>, ): Flow<TargetsUiState>

@@ -23,5 +23,17 @@ captures/
 # Client state
 /.freebuff/
 
-# graft's local graph cache — regenerable, not committed (run `graft build`).
-/graft/
+# graft graph output. The cards and the wiring graph are committed so a clone
+# needs no `graft build`. The two rules below are host state rather than repo
+# state: .cache/session/ records the raw agent query and session id for each
+# session that touched this repo, and change on every turn, while the telemetry
+# id identifies this checkout's registration.
+/graft/.cache/session/
+/graft/.cache/telemetry-repo-id.json
+
+# graft's derived search indexes. Regenerable with `graft build` and rewritten
+# on every sync, so tracking them would keep the working tree permanently dirty.
+/graft/.cache/stats.json
+/graft/.cache/ask-index.json
+/graft/.cache/extract.*.json
+/graft/.cache/fingerprint.*.json

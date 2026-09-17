@@ -1,0 +1,31 @@
+# android-native/app/src/main/java/com/example/sonder/data/db/Daos.kt
+
+- TargetDao · interface · L9-L28 — @Dao interface TargetDao
+- observeAll · method · L11-L12 — @Query("SELECT * FROM targets ORDER BY label") fun observeAll(): Flow<List<TargetEntity>>
+- observeEnabled · method · L14-L15 — @Query("SELECT * FROM targets WHERE enabled = 1") fun observeEnabled(): Flow<List<TargetEntity>>
+- get · method · L17-L18 — @Query("SELECT * FROM targets WHERE packageName = :pkg") suspend fun get(pkg: String): TargetEntity?
+- upsert · method · L20-L21 — @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(target: TargetEntity)
+- setEnabled · method · L23-L24 — @Query("UPDATE targets SET enabled = :enabled WHERE packageName = :pkg") suspend fun setEnabled(pkg: String, enabled: Boolean)
+- delete · method · L26-L27 — @Query("DELETE FROM targets WHERE packageName = :pkg") suspend fun delete(pkg: String)
+- GrantDao · interface · L30-L49 — @Dao interface GrantDao
+- get · method · L32-L33 — @Query("SELECT * FROM grants WHERE packageName = :pkg") suspend fun get(pkg: String): GrantEntity?
+- observeAll · method · L35-L36 — @Query("SELECT * FROM grants") fun observeAll(): Flow<List<GrantEntity>>
+- upsert · method · L38-L39 — @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(grant: GrantEntity)
+- touchLastSeen · method · L41-L42 — @Query("UPDATE grants SET lastSeenMillis = :seenMillis WHERE packageName = :pkg") suspend fun touchLastSeen(pkg: String, seenMillis: Long)
+- delete · method · L44-L45 — @Query("DELETE FROM grants WHERE packageName = :pkg") suspend fun delete(pkg: String)
+- purgeExpired · method · L47-L48 — @Query("DELETE FROM grants WHERE endAtMillis <= :nowMillis") suspend fun purgeExpired(nowMillis: Long)
+- DebtDao · interface · L51-L61 — @Dao interface DebtDao
+- get · method · L53-L54 — @Query("SELECT * FROM debt WHERE packageName = :pkg") suspend fun get(pkg: String): DebtEntity?
+- upsert · method · L56-L57 — @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(debt: DebtEntity)
+- clear · method · L59-L60 — @Query("DELETE FROM debt WHERE packageName = :pkg") suspend fun clear(pkg: String)
+- LockoutDao · interface · L63-L79 — @Dao interface LockoutDao
+- get · method · L65-L66 — @Query("SELECT * FROM lockouts WHERE packageName = :pkg") suspend fun get(pkg: String): LockoutEntity?
+- observeAll · method · L68-L69 — @Query("SELECT * FROM lockouts") fun observeAll(): Flow<List<LockoutEntity>>
+- upsert · method · L71-L72 — @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(lockout: LockoutEntity)
+- clear · method · L74-L75 — @Query("DELETE FROM lockouts WHERE packageName = :pkg") suspend fun clear(pkg: String)
+- purgeExpired · method · L77-L78 — @Query("DELETE FROM lockouts WHERE untilMillis <= :nowMillis") suspend fun purgeExpired(nowMillis: Long)
+- HandDao · interface · L81-L94 — @Dao interface HandDao
+- insert · method · L83-L84 — @Insert suspend fun insert(hand: HandEntity)
+- observeRecent · method · L86-L87 — @Query("SELECT * FROM hands ORDER BY playedAtMillis DESC LIMIT :limit") fun observeRecent(limit: Int = 50): Flow<List<HandEntity>>
+- observeWinCount · method · L89-L90 — @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'WIN'") fun observeWinCount(): Flow<Int>
+- observeLossCount · method · L92-L93 — @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'LOSE'") fun observeLossCount(): Flow<Int>
