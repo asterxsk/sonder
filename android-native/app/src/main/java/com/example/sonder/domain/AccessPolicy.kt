@@ -4,6 +4,8 @@ import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.LockoutSnapshot
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * Pure access policy — the debt model locked in with the user (plan §1):
@@ -24,34 +26,85 @@ object AccessPolicy {
     const val MAX_DEBT_MILLIS: Long = 60 * 60_000L        // user-locked cap: 60:00
     const val ABSENCE_REVOKE_MILLIS: Long = 60_000L       // >60s away revokes the grant
 
-    /** A win resolves debt first; access is only granted from a zero-debt state. */
+    /**
+     * A win resolves debt first; access is only granted from a zero-debt state.
+     *
+     * [grantedTodayMillis] is the total already granted to this package today; it
+     * only matters when [rules] carries a non-null daily cap. When the cap is spent
+     * a win grants nothing and returns a cap lockout until the next local midnight.
+     */
     fun onHandResult(
         outcome: HandOutcome,
         debtMillis: Long,
         nowMillis: Long,
+        rules: AccessRules = AccessRules(),
+        grantedTodayMillis: Long = 0L,
+        zoneId: ZoneId = ZoneId.systemDefault(),
     ): PolicyResult = when (outcome) {
         HandOutcome.PUSH -> PolicyResult(debtMillis = debtMillis, grantedUntil = null)
         HandOutcome.WIN -> {
-            val remainingDebt = (debtMillis - LOSS_DEBT_MILLIS).coerceAtLeast(0L)
+            val remainingDebt = (debtMillis - rules.lossDebtMillis).coerceAtLeast(0L)
             if (remainingDebt > 0L) {
                 // Debt paid down but not cleared: no access yet, keep gambling.
                 PolicyResult(debtMillis = remainingDebt, grantedUntil = null)
             } else {
-                PolicyResult(debtMillis = 0L, grantedUntil = nowMillis + WIN_GRANT_MILLIS)
+                grantForWin(rules, nowMillis, grantedTodayMillis, zoneId)
             }
         }
         HandOutcome.LOSE -> {
-            val newDebt = (debtMillis + LOSS_DEBT_MILLIS).coerceAtMost(MAX_DEBT_MILLIS)
+            val newDebt = (debtMillis + rules.lossDebtMillis).coerceAtMost(rules.maxDebtMillis)
             PolicyResult(debtMillis = newDebt, grantedUntil = null)
         }
+    }
+
+    /**
+     * Resolve a debt-free win. Without a cap this is the plain grant; with one the
+     * grant is clamped to the day's remaining allowance and the cap locks the app
+     * out until the next local midnight once it is spent.
+     */
+    private fun grantForWin(
+        rules: AccessRules,
+        nowMillis: Long,
+        grantedTodayMillis: Long,
+        zoneId: ZoneId,
+    ): PolicyResult {
+        val cap = rules.dailyCapMillis ?: return PolicyResult(debtMillis = 0L, grantedUntil = nowMillis + rules.winGrantMillis)
+        val remaining = cap - grantedTodayMillis
+        if (remaining <= 0L) {
+            return PolicyResult(
+                debtMillis = 0L,
+                grantedUntil = null,
+                capLockoutUntil = nextLocalMidnight(nowMillis, zoneId),
+            )
+        }
+        val granted = minOf(rules.winGrantMillis, remaining)
+        val capLockout = if (granted >= remaining) nextLocalMidnight(nowMillis, zoneId) else null
+        return PolicyResult(
+            debtMillis = 0L,
+            grantedUntil = nowMillis + granted,
+            capLockoutUntil = capLockout,
+        )
     }
 
     /** Lockout end when the user walks away carrying debt. */
     fun lockoutUntil(debtMillis: Long, nowMillis: Long): Long = nowMillis + debtMillis
 
     /** True if a fresh window event shows the user returned after too long an absence. */
-    fun shouldRevokeForAbsence(grant: GrantSnapshot, nowMillis: Long): Boolean =
-        nowMillis - grant.lastSeenMillis > ABSENCE_REVOKE_MILLIS
+    fun shouldRevokeForAbsence(
+        grant: GrantSnapshot,
+        nowMillis: Long,
+        rules: AccessRules = AccessRules(),
+    ): Boolean = nowMillis - grant.lastSeenMillis > rules.absenceRevokeMillis
+
+    /** Epoch millis of the next local midnight after [nowMillis]. */
+    fun nextLocalMidnight(nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long =
+        Instant.ofEpochMilli(nowMillis)
+            .atZone(zoneId)
+            .toLocalDate()
+            .plusDays(1)
+            .atStartOfDay(zoneId)
+            .toInstant()
+            .toEpochMilli()
 
     /** True if a grant is still valid at [nowMillis]. */
     fun isGrantActive(grant: GrantSnapshot, nowMillis: Long): Boolean = grant.endAtMillis > nowMillis
@@ -78,4 +131,6 @@ object AccessPolicy {
 data class PolicyResult(
     val debtMillis: Long,
     val grantedUntil: Long?,
+    /** Set when the daily cap is spent: locked out until this epoch millis. */
+    val capLockoutUntil: Long? = null,
 )

@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.ZoneId
 
 /** The debt-model policy tests — user's L,L,W,W,W example and every edge case. */
 class AccessPolicyTest {
@@ -127,5 +128,87 @@ class AccessPolicyTest {
             EnforcementState.IDLE,
             AccessPolicy.stateFor("p", enabled = true, grant = null, lockout = null, nowMillis = t0),
         )
+    }
+
+    // --- per-app rules and the daily cap ---
+
+    private val utc = ZoneId.of("UTC")
+
+    @Test
+    fun `null cap is identical to the global policy`() {
+        val plain = AccessPolicy.onHandResult(HandOutcome.WIN, 0, t0)
+        val ruled = AccessPolicy.onHandResult(HandOutcome.WIN, 0, t0, AccessRules(), 0L, utc)
+
+        assertEquals(plain, ruled)
+        assertNull(ruled.capLockoutUntil)
+    }
+
+    @Test
+    fun `per-app grant and debt sizes override the defaults`() {
+        val rules = AccessRules(winGrantMillis = 2 * 60_000L, lossDebtMillis = 3 * 60_000L, maxDebtMillis = 4 * 60_000L)
+
+        val win = AccessPolicy.onHandResult(HandOutcome.WIN, 0, t0, rules)
+        assertEquals(t0 + 2 * 60_000L, win.grantedUntil)
+
+        val loss = AccessPolicy.onHandResult(HandOutcome.LOSE, 0, t0, rules)
+        assertEquals(3 * 60_000L, loss.debtMillis)
+
+        val capped = AccessPolicy.onHandResult(HandOutcome.LOSE, 4 * 60_000L, t0, rules)
+        assertEquals(4 * 60_000L, capped.debtMillis) // 4 + 3 clamped to the per-app max
+    }
+
+    @Test
+    fun `cap allows a full win grant while there is room`() {
+        val rules = AccessRules(dailyCapMillis = 10 * 60_000L)
+        val r = AccessPolicy.onHandResult(HandOutcome.WIN, 0, t0, rules, grantedTodayMillis = 0L, zoneId = utc)
+
+        assertEquals(0, r.debtMillis)
+        assertEquals(t0 + win5, r.grantedUntil)
+        assertNull(r.capLockoutUntil)
+    }
+
+    @Test
+    fun `cap clamps the grant to the remaining allowance`() {
+        val remaining = 3 * 60_000L
+        val rules = AccessRules(dailyCapMillis = 10 * 60_000L)
+        val r = AccessPolicy.onHandResult(
+            HandOutcome.WIN, 0, t0, rules,
+            grantedTodayMillis = 10 * 60_000L - remaining, zoneId = utc,
+        )
+
+        assertEquals(t0 + remaining, r.grantedUntil) // min(5:00, 3:00)
+        assertEquals(86_400_000L, r.capLockoutUntil) // 1970-01-01 00:16:40Z → next UTC midnight
+    }
+
+    @Test
+    fun `cap spent grants nothing and locks until the next local midnight`() {
+        val rules = AccessRules(dailyCapMillis = 10 * 60_000L)
+        val r = AccessPolicy.onHandResult(
+            HandOutcome.WIN, 0, t0, rules,
+            grantedTodayMillis = 10 * 60_000L, zoneId = utc,
+        )
+
+        assertNull(r.grantedUntil)
+        assertEquals(86_400_000L, r.capLockoutUntil)
+        assertEquals(0, r.debtMillis)
+    }
+
+    @Test
+    fun `a win that clears debt bypasses the cap`() {
+        val rules = AccessRules(dailyCapMillis = 1 * 60_000L)
+        val r = AccessPolicy.onHandResult(
+            HandOutcome.WIN, 20 * 60_000L, t0, rules,
+            grantedTodayMillis = 10 * 60_000L, zoneId = utc,
+        )
+
+        assertEquals(10 * 60_000L, r.debtMillis) // 20 − 10, debt paid, no grant, no cap lockout
+        assertNull(r.grantedUntil)
+        assertNull(r.capLockoutUntil)
+    }
+
+    @Test
+    fun `nextLocalMidnight rolls to the following day`() {
+        assertEquals(86_400_000L, AccessPolicy.nextLocalMidnight(t0, utc))
+        assertEquals(2 * 86_400_000L, AccessPolicy.nextLocalMidnight(86_400_000L, utc))
     }
 }

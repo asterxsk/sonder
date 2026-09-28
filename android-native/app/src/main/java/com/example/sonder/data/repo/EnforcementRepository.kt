@@ -1,5 +1,7 @@
 package com.example.sonder.data.repo
 
+import com.example.sonder.data.db.DailyUsageDao
+import com.example.sonder.data.db.DailyUsageEntity
 import com.example.sonder.data.db.DebtDao
 import com.example.sonder.data.db.DebtEntity
 import com.example.sonder.data.db.GrantDao
@@ -9,13 +11,18 @@ import com.example.sonder.data.db.HandEntity
 import com.example.sonder.data.db.LockoutDao
 import com.example.sonder.data.db.LockoutEntity
 import com.example.sonder.data.db.TargetDao
+import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.domain.AccessPolicy
+import com.example.sonder.domain.AccessRules
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.LockoutSnapshot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,7 +37,103 @@ class EnforcementRepository @Inject constructor(
     private val debtDao: DebtDao,
     private val lockoutDao: LockoutDao,
     private val handDao: HandDao,
+    private val dailyUsageDao: DailyUsageDao,
 ) {
+
+    /**
+     * The raw per-app overrides as stored: a null field inherits the AccessPolicy default.
+     * Unlike [AccessRules], nothing is coalesced, so a screen can tell a chosen value that
+     * happens to equal the default from an inherited one.
+     *
+     * dailyCapMillis breaks that pattern: null there means unlimited, not inherit, so it is
+     * always a chosen state rather than an absence of choice.
+     */
+    data class TargetOverrides(
+        val winGrantMillis: Long? = null,
+        val lossDebtMillis: Long? = null,
+        val maxDebtMillis: Long? = null,
+        val absenceRevokeMillis: Long? = null,
+        val dailyCapMillis: Long? = null,
+    )
+
+    /** Effective per-app policy: row overrides, else the AccessPolicy defaults. */
+    suspend fun rulesFor(packageName: String): AccessRules =
+        targetDao.get(packageName).toRules()
+
+    /** Raw per-app overrides as stored, or an all-null (fully inherited) set when no row. */
+    suspend fun overridesFor(packageName: String): TargetOverrides =
+        targetDao.get(packageName).toOverrides()
+
+    /** Effective per-app policy, re-emitted whenever the target row changes. */
+    fun observeRules(packageName: String): Flow<AccessRules> =
+        targetDao.observeAll().map { targets -> targets.find { it.packageName == packageName }.toRules() }
+
+    /** Raw per-app overrides, re-emitted whenever the target row changes; null when no row. */
+    fun observeOverrides(packageName: String): Flow<TargetOverrides?> =
+        targetDao.observeAll().map { targets ->
+            targets.find { it.packageName == packageName }?.toOverrides()
+        }
+
+    /**
+     * Persist the raw per-app overrides. A null field is written as null, so a knob the
+     * user never touched keeps inheriting the AccessPolicy default — the CUSTOM/DEFAULT
+     * label reads that absence and would otherwise flip every untouched knob to CUSTOM
+     * the moment any one knob is edited. The target's label, enabled flag and creation
+     * time are left untouched.
+     *
+     * The settings screen is reachable from the ALL tab, where every launchable app has
+     * a row — including apps never enabled as targets, which have no stored row yet. A
+     * missing row therefore materialises here (disabled, so nothing becomes gated) rather
+     * than dropping the write, which is what "tapping a preset persists it" requires.
+     */
+    suspend fun updateOverrides(packageName: String, overrides: TargetOverrides) {
+        val target = targetDao.get(packageName) ?: TargetEntity(
+            packageName = packageName,
+            label = packageName,
+            enabled = false,
+            createdAtMillis = System.currentTimeMillis(),
+        )
+        targetDao.upsert(
+            target.copy(
+                winGrantMillis = overrides.winGrantMillis,
+                lossDebtMillis = overrides.lossDebtMillis,
+                maxDebtMillis = overrides.maxDebtMillis,
+                absenceRevokeMillis = overrides.absenceRevokeMillis,
+                dailyCapMillis = overrides.dailyCapMillis,
+            ),
+        )
+    }
+
+    /** Access already granted to [packageName] on the local day containing [nowMillis]. */
+    suspend fun dailyGrantedMillis(
+        packageName: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Long {
+        val usage = dailyUsageDao.get(packageName) ?: return 0L
+        return if (usage.epochDay == epochDay(nowMillis)) usage.grantedMillis else 0L
+    }
+
+    /** Today's granted millis for the package, resetting when the local day rolls over. */
+    fun observeDailyGrantedMillis(packageName: String): Flow<Long> =
+        dailyUsageDao.observe(packageName).map { usage ->
+            if (usage != null && usage.epochDay == epochDay(System.currentTimeMillis())) {
+                usage.grantedMillis
+            } else {
+                0L
+            }
+        }
+
+    /**
+     * Why the package is locked out: "DEBT" or "DAILY_CAP"; null when not locked.
+     * A row whose untilMillis is in the past is already over even if purgeExpired has not
+     * swept it yet, so it reports null rather than a stale reason. Rows written before
+     * reasons existed carry reason == null but can only ever have been debt lockouts, so
+     * a null reason on a live row reads as DEBT.
+     */
+    suspend fun lockoutReason(packageName: String): String? =
+        lockoutDao.get(packageName)
+            ?.takeIf { it.untilMillis > System.currentTimeMillis() }
+            ?.let { it.reason ?: LOCKOUT_REASON_DEBT }
 
     /** Observe the enforcement state of one package. */
     fun observeState(packageName: String): Flow<EnforcementState> =
@@ -102,7 +205,9 @@ class EnforcementRepository @Inject constructor(
         nowMillis: Long = System.currentTimeMillis(),
     ): Long? {
         val debtBefore = currentDebt(packageName)
-        val result = AccessPolicy.onHandResult(outcome, debtBefore, nowMillis)
+        val rules = rulesFor(packageName)
+        val grantedToday = dailyGrantedMillis(packageName, nowMillis)
+        val result = AccessPolicy.onHandResult(outcome, debtBefore, nowMillis, rules, grantedToday)
 
         debtDao.upsert(DebtEntity(packageName, result.debtMillis))
         handDao.insert(
@@ -115,7 +220,7 @@ class EnforcementRepository @Inject constructor(
         )
 
         if (result.grantedUntil != null) {
-            // Fresh access: clear any stale lockout, write the grant.
+            // Fresh access: clear any stale lockout, write the grant, record the day's usage.
             lockoutDao.clear(packageName)
             grantDao.upsert(
                 GrantEntity(
@@ -124,10 +229,16 @@ class EnforcementRepository @Inject constructor(
                     lastSeenMillis = nowMillis,
                 ),
             )
+            recordGrantedUsage(packageName, nowMillis, result.grantedUntil - nowMillis)
         } else if (outcome == HandOutcome.LOSE) {
             // Walking away after a loss means serving the full remaining debt.
             val lockoutUntil = AccessPolicy.lockoutUntil(result.debtMillis, nowMillis)
-            lockoutDao.upsert(LockoutEntity(packageName, lockoutUntil))
+            lockoutDao.upsert(LockoutEntity(packageName, lockoutUntil, reason = LOCKOUT_REASON_DEBT))
+        }
+
+        if (result.capLockoutUntil != null) {
+            // The day's allowance is spent: locked until the next local midnight.
+            lockoutDao.upsert(LockoutEntity(packageName, result.capLockoutUntil, reason = LOCKOUT_REASON_DAILY_CAP))
         }
         return result.grantedUntil
     }
@@ -148,7 +259,7 @@ class EnforcementRepository @Inject constructor(
             grantDao.delete(packageName)
             return false
         }
-        if (AccessPolicy.shouldRevokeForAbsence(snapshot, nowMillis)) {
+        if (AccessPolicy.shouldRevokeForAbsence(snapshot, nowMillis, rulesFor(packageName))) {
             grantDao.delete(packageName)
             return true
         }
@@ -166,6 +277,41 @@ class EnforcementRepository @Inject constructor(
         lockoutDao.purgeExpired(nowMillis)
     }
 
+    /** Add [grantedMillis] to the package's tally for the local day containing [nowMillis]. */
+    private suspend fun recordGrantedUsage(packageName: String, nowMillis: Long, grantedMillis: Long) {
+        val today = epochDay(nowMillis)
+        val existing = dailyUsageDao.get(packageName)
+        val priorMillis = if (existing != null && existing.epochDay == today) existing.grantedMillis else 0L
+        dailyUsageDao.upsert(DailyUsageEntity(packageName, today, priorMillis + grantedMillis))
+    }
+
+    private fun TargetEntity?.toOverrides(): TargetOverrides = TargetOverrides(
+        winGrantMillis = this?.winGrantMillis,
+        lossDebtMillis = this?.lossDebtMillis,
+        maxDebtMillis = this?.maxDebtMillis,
+        absenceRevokeMillis = this?.absenceRevokeMillis,
+        dailyCapMillis = this?.dailyCapMillis,
+    )
+
+    private fun TargetEntity?.toRules(): AccessRules = AccessRules(
+        winGrantMillis = this?.winGrantMillis ?: AccessPolicy.WIN_GRANT_MILLIS,
+        lossDebtMillis = this?.lossDebtMillis ?: AccessPolicy.LOSS_DEBT_MILLIS,
+        maxDebtMillis = this?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS,
+        absenceRevokeMillis = this?.absenceRevokeMillis ?: AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        dailyCapMillis = this?.dailyCapMillis,
+    )
+
+    private fun epochDay(nowMillis: Long): Long =
+        Instant.ofEpochMilli(nowMillis).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()
+
     private fun GrantEntity.toSnapshot() = GrantSnapshot(packageName, endAtMillis, lastSeenMillis)
     private fun LockoutEntity.toSnapshot() = LockoutSnapshot(packageName, untilMillis, debtMillis = 0L)
+
+    companion object {
+        /** LockoutEntity.reason written when the user is serving accumulated debt. */
+        const val LOCKOUT_REASON_DEBT = "DEBT"
+
+        /** LockoutEntity.reason written when the daily cap is spent. */
+        const val LOCKOUT_REASON_DAILY_CAP = "DAILY_CAP"
+    }
 }

@@ -1,5 +1,6 @@
 package com.example.sonder.ui.screens.targets
 
+import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -27,6 +28,7 @@ data class TargetPickUi(
     val packageName: String,
     val label: String,
     val enabled: Boolean,
+    val icon: Bitmap? = null,
 )
 
 @HiltViewModel
@@ -57,9 +59,15 @@ class TargetsViewModel @Inject constructor(
             when {
                 failed -> TargetsListState.Failed
                 apps == null -> TargetsListState.Loading
-                else -> TargetsListState.Loaded(
-                    mergeTargetPicks(apps, targets.associate { it.packageName to it.enabled }),
-                )
+                else -> {
+                    // mergeTargetPicks owns label and enabled only; the icon is attached
+                    // here by package name, where apps are already distinct by package.
+                    val iconsByPackage = apps.associate { it.packageName to it.icon }
+                    TargetsListState.Loaded(
+                        mergeTargetPicks(apps, targets.associate { it.packageName to it.enabled })
+                            .map { pick -> pick.copy(icon = iconsByPackage[pick.packageName]) },
+                    )
+                }
             }
         }.distinctUntilChanged()
 
@@ -114,14 +122,18 @@ class TargetsViewModel @Inject constructor(
 
     fun toggle(packageName: String, label: String, enabled: Boolean) {
         viewModelScope.launch {
-            targetDao.upsert(
-                TargetEntity(
+            // A copy of the stored row, not a fresh entity: upsert REPLACEs, so building
+            // from scratch would wipe the per-app overrides the settings screen saved.
+            // The label is refreshed from the launcher, since a row materialised by that
+            // screen before the app was ever enabled carries only the package id.
+            val row = targetDao.get(packageName)?.copy(label = label, enabled = enabled)
+                ?: TargetEntity(
                     packageName = packageName,
                     label = label,
                     enabled = enabled,
                     createdAtMillis = System.currentTimeMillis(),
-                ),
-            )
+                )
+            targetDao.upsert(row)
         }
     }
 }

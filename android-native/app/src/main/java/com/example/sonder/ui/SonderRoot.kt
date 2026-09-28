@@ -2,8 +2,10 @@ package com.example.sonder.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -11,13 +13,18 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import com.example.sonder.AppSettings
 import com.example.sonder.Main
 import com.example.sonder.Onboarding
 import com.example.sonder.Settings
 import com.example.sonder.Stats
 import com.example.sonder.Targets
+import com.example.sonder.theme.PanelDeep
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.ui.kit.PixelAppScaffold
+import com.example.sonder.ui.kit.PixelLoader
+import com.example.sonder.ui.screens.appsettings.AppSettingsScreen
 import com.example.sonder.ui.screens.home.HomeScreen
 import com.example.sonder.ui.screens.onboarding.OnboardingScreen
 import com.example.sonder.ui.screens.settings.SettingsScreen
@@ -33,9 +40,20 @@ import com.example.sonder.ui.screens.targets.TargetsScreen
 fun SonderRoot(onboardingComplete: Boolean?) {
     when (onboardingComplete) {
         null -> Box(
-            modifier = Modifier.fillMaxSize().background(PixelPalette.Bg),
+            modifier = Modifier.fillMaxSize().background(PanelDeep),
             contentAlignment = Alignment.Center,
-        ) { CircularProgressIndicator(color = PixelPalette.Primary) }
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.Text(
+                    text = "SONDER",
+                    style = com.example.sonder.theme.PixelTypeScale.SectionTitle,
+                    fontFamily = com.example.sonder.theme.PixelFont,
+                    color = PixelPalette.Primary,
+                )
+                Spacer(Modifier.height(PixelSpace.Base))
+                PixelLoader()
+            }
+        }
 
         false -> OnboardingScreen(onDone = { /* SettingsRepository flag already persisted */ })
 
@@ -70,9 +88,25 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                                 },
                             )
                         }
-                        entry<Targets> { TargetsScreen(contentPadding = contentPadding) }
+                        entry<Targets> {
+                            TargetsScreen(
+                                contentPadding = contentPadding,
+                                // The detail rides on top of Targets, so Back and the dock
+                                // both land on the list rather than dropping to Home.
+                                onOpenAppSettings = { packageName ->
+                                    applyBackStack(backStack.toList() + AppSettings(packageName))
+                                },
+                            )
+                        }
                         entry<Stats> { StatsScreen(contentPadding = contentPadding) }
                         entry<Settings> { SettingsScreen(contentPadding = contentPadding) }
+                        entry<AppSettings> { key ->
+                            AppSettingsScreen(
+                                packageName = key.packageName,
+                                contentPadding = contentPadding,
+                                onBack = { applyBackStack(NavPolicy.back(backStack)) },
+                            )
+                        }
                     },
                 )
             }

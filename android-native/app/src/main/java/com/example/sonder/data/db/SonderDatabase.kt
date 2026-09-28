@@ -10,8 +10,9 @@ import androidx.room.RoomDatabase
         DebtEntity::class,
         LockoutEntity::class,
         HandEntity::class,
+        DailyUsageEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class SonderDatabase : RoomDatabase() {
@@ -20,4 +21,5 @@ abstract class SonderDatabase : RoomDatabase() {
     abstract fun debtDao(): DebtDao
     abstract fun lockoutDao(): LockoutDao
     abstract fun handDao(): HandDao
+    abstract fun dailyUsageDao(): DailyUsageDao
 }

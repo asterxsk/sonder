@@ -10,6 +10,12 @@ data class TargetEntity(
     val label: String,
     val enabled: Boolean = true,
     val createdAtMillis: Long,
+    /** Per-app overrides; null inherits the AccessPolicy default (dailyCapMillis null = unlimited). */
+    val winGrantMillis: Long? = null,
+    val lossDebtMillis: Long? = null,
+    val maxDebtMillis: Long? = null,
+    val absenceRevokeMillis: Long? = null,
+    val dailyCapMillis: Long? = null,
 )
 
 /** One active access grant per package; absolute epoch end time. */
@@ -29,11 +35,22 @@ data class DebtEntity(
     val debtMillis: Long,
 )
 
-/** Active lockout window per package (serving debt). */
+/** Active lockout window per package (serving debt or a spent daily cap). */
 @Entity(tableName = "lockouts")
 data class LockoutEntity(
     @PrimaryKey val packageName: String,
     val untilMillis: Long,
+    /** "DEBT" | "DAILY_CAP"; null on rows written before reasons existed. */
+    val reason: String? = null,
+)
+
+/** Access granted per package per local day, so a daily cap can be enforced. */
+@Entity(tableName = "daily_usage")
+data class DailyUsageEntity(
+    @PrimaryKey val packageName: String,
+    /** java.time.LocalDate.toEpochDay() for the day the time was granted. */
+    val epochDay: Long,
+    val grantedMillis: Long,
 )
 
 /** One blackjack hand per record — powers the Stats screen. */

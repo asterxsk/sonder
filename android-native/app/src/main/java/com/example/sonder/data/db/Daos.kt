@@ -92,3 +92,15 @@ interface HandDao {
     @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'LOSE'")
     fun observeLossCount(): Flow<Int>
 }
+
+@Dao
+interface DailyUsageDao {
+    @Query("SELECT * FROM daily_usage WHERE packageName = :pkg")
+    suspend fun get(pkg: String): DailyUsageEntity?
+
+    @Query("SELECT * FROM daily_usage WHERE packageName = :pkg")
+    fun observe(pkg: String): Flow<DailyUsageEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(usage: DailyUsageEntity)
+}

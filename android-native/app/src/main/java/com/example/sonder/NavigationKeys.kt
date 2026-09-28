@@ -8,3 +8,6 @@ import kotlinx.serialization.Serializable
 @Serializable data object Targets : NavKey
 @Serializable data object Stats : NavKey
 @Serializable data object Settings : NavKey
+
+/** Per-app settings, reached from a row's arrow on the Targets list. */
+@Serializable data class AppSettings(val packageName: String) : NavKey
