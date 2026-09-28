@@ -1,9 +1,5 @@
 package com.example.sonder.ui.screens.settings
 
-import android.content.ComponentName
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,11 +26,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.sonder.platform.permissions.PermissionAudit
+import com.example.sonder.platform.permissions.PermissionHandoff
 import com.example.sonder.platform.permissions.SonderPermission
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
@@ -75,16 +74,18 @@ fun SettingsScreen(
             // Scrolls inside the safe area, so large font scales can never push a row
             // under the dock or the system bars.
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(PixelSpace.Room),
+        // Left-aligned, like Home, Targets and Stats. This screen used to centre its
+        // heading while every other screen starts flush left, which is the kind of
+        // one-screen difference that reads as a mistake rather than as a choice.
     ) {
         androidx.compose.material3.Text(
             "SETTINGS",
             style = PixelTypeScale.ScreenTitle,
             fontFamily = PixelFont,
             color = PixelPalette.Primary,
-            modifier = Modifier.padding(vertical = 16.dp),
         )
+        Spacer(Modifier.height(PixelSpace.Room))
 
         PixelPanel(modifier = Modifier.fillMaxWidth()) {
             Column {
@@ -94,13 +95,13 @@ fun SettingsScreen(
                     fontFamily = PixelFont,
                     color = PixelPalette.Text,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(PixelSpace.Base))
                 SonderPermission.entries.forEach { p ->
                     val granted = p !in missing
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp),
+                            .padding(vertical = PixelSpace.Snug),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -114,10 +115,10 @@ fun SettingsScreen(
                         } else {
                             PixelButton(
                                 text = "FIX",
-                                onClick = { openPermission(context, p); },
+                                onClick = { PermissionHandoff.request(context, p) },
                                 // "FIX" alone reads the same four times in TalkBack; name the row.
                                 modifier = Modifier.semantics { contentDescription = "FIX ${p.label}" },
-                                minHeight = 48.dp,
+                                minHeight = PixelSpace.Target,
                             )
                         }
                     }
@@ -125,33 +126,12 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(PixelSpace.Section))
         PixelButton(
             text = "RE-CHECK",
             style = PixelButtonStyle.SECONDARY,
             onClick = { missingState.value = audit.missingPermissions() },
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(PixelSpace.Room))
     }
-}
-
-private fun openPermission(context: android.content.Context, permission: SonderPermission) {
-    val intent = when (permission) {
-        SonderPermission.ACCESSIBILITY ->
-            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                putExtra(
-                    Intent.EXTRA_COMPONENT_NAME,
-                    ComponentName(context, "com.example.sonder.platform.accessibility.SonderAccessibilityService"),
-                )
-            }
-        SonderPermission.OVERLAY ->
-            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-        SonderPermission.USAGE_ACCESS ->
-            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-        SonderPermission.NOTIFICATIONS ->
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            }
-    }
-    runCatching { context.startActivity(intent) }
 }

@@ -55,13 +55,22 @@ This gives the product an emotional identity that fits its actual purpose.
 | `primary` | `#FFB827` | main action |
 | `primary-dark` | `#C88A16` | pixel shadow |
 | `text` | `#EAD7A1` | warm primary text |
-| `muted` | `#7F765F` | supporting text |
+| `muted` | `#8A8168` | supporting text (lifted from `#7F765F`, which fell below 4.5:1 on Panel — see §3 contrast note) |
 | `success` | `#22C55E` | access granted |
 | `danger` | `#EF4444` | lockout |
 | `info` | `#5A9AC8` | informational |
 | `purple` | `#8B5CF6` | special state only |
 
 **Amber is the brand accent.** Blue/purple must not compete with it.
+
+### Contrast
+
+Every text tone must clear 4.5:1 against the ground it is actually drawn on — Panel
+(`#221A12`) is the common case, not Bg. Measured: Text 11.9:1 on Panel, TextSoft 7.0:1,
+Muted 4.5:1. The original `muted` of `#7F765F` failed at 3.9:1 on Panel and 4.3:1 on
+Surface while carrying reading copy on the onboarding, stats, and Home screens, so it was
+lifted to `#8A8168`. Treat the tone as a floor, not a hue: a future value may move, but
+it does not go below 4.5:1 on Panel.
 
 ## 4. Typography
 

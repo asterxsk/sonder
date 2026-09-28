@@ -4,9 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -14,14 +12,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.theme.TextSoft
 
 /** Timer accent color: amber warning, green granted, red lockout (design_v3 §13). */
 enum class TimerTone { WARNING, GRANTED, LOCKED }
 
 /**
- * design_v3.md §13: the timer is a major branded element — pixel digits in a hard frame
- * with a caption. Digits colored by tone.
+ * design_v3.md §13: the timer is a major branded element — pixel digits in a hard
+ * shadowed frame with a caption. Digits colored by tone; the frame carries the app's
+ * shadow + stepped-corner grammar so the countdown reads as hardware, not a label.
  */
 @Composable
 fun PixelTimer(
@@ -39,8 +40,10 @@ fun PixelTimer(
         Box(
             modifier = Modifier
                 .background(PixelPalette.Surface)
-                .border(2.dp, PixelPalette.Border)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .pixelShadow()
+                .pixelSteppedCorners()
+                .border(PixelSpace.Stroke, digitColor)
+                .padding(horizontal = PixelSpace.Room, vertical = PixelSpace.Snug),
         ) {
             androidx.compose.material3.Text(
                 text = timeText,
@@ -52,8 +55,8 @@ fun PixelTimer(
         androidx.compose.material3.Text(
             text = caption,
             style = PixelTypeScale.Badge,
-            color = PixelPalette.Muted,
-            modifier = Modifier.padding(top = 6.dp),
+            color = TextSoft,
+            modifier = Modifier.padding(top = PixelSpace.Snug),
         )
     }
 }
@@ -72,18 +75,24 @@ fun PixelStatusBadge(
     modifier: Modifier = Modifier,
     labelOverride: String? = null,
 ) {
-    Row(
-        modifier = modifier
-            .background(PixelPalette.Surface)
-            .border(2.dp, tone.color)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    androidx.compose.material3.Surface(
+        color = PixelPalette.Surface,
+        contentColor = tone.color,
+        modifier = modifier,
     ) {
-        androidx.compose.material3.Text(
-            text = "${tone.glyph} ${labelOverride ?: tone.label}",
-            style = PixelTypeScale.Badge,
-            fontFamily = PixelFont,
-            color = tone.color,
-        )
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier
+                .background(PixelPalette.Surface)
+                .border(PixelSpace.Stroke, tone.color)
+                .padding(horizontal = PixelSpace.Snug, vertical = PixelSpace.Tight),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.material3.Text(
+                text = "${tone.glyph} ${labelOverride ?: tone.label}",
+                style = PixelTypeScale.Badge,
+                fontFamily = PixelFont,
+                color = tone.color,
+            )
+        }
     }
 }

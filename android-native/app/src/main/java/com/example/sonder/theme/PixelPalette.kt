@@ -15,7 +15,12 @@ object PixelPalette {
     val Primary = Color(0xFFFFB827)     // main action
     val PrimaryDark = Color(0xFFC88A16) // pixel shadow
     val Text = Color(0xFFEAD7A1)        // warm primary text
-    val Muted = Color(0xFF7F765F)       // supporting text
+    // v3 §3 pins this at #7F765F, which measures 3.9:1 on Panel and 4.3:1 on Surface —
+    // under the 4.5:1 body-text floor, and it is used for reading copy (onboarding
+    // reassurance, ghost-step titles, stats labels), not decoration. Lifted in the same
+    // hue family: 4.5:1 on Panel, 5.0:1 on Surface, 5.3:1 on Bg, still clearly quieter
+    // than Text and TextSoft. docs/design/design_v3.md §3 carries the new value.
+    val Muted = Color(0xFF8A8168)       // supporting text
     val Success = Color(0xFF22C55E)     // access granted
     val SuccessDark = Color(0xFF147D3C)
     val Danger = Color(0xFFEF4444)      // lockout

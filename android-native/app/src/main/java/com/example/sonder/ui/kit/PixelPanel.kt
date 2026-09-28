@@ -3,19 +3,21 @@ package com.example.sonder.ui.kit
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.BoxScope
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 
 /**
- * design_v3.md §5 frame language: 0px radius, 2–3px border, hard offset shadow,
- * no blur, no soft elevation. Stepped corner pixels are drawn via [PixelSteppedCorners].
+ * design_v3.md §5 frame language, drawn through the shared primitives: 0px radius,
+ * 2px border, hard offset shadow (no blur, no soft elevation) via [pixelShadow], and
+ * 4dp stepped corners via [pixelSteppedCorners] — the corner pixels the v3 doc
+ * specifies and the old implementation never drew.
  */
 @Composable
 fun PixelPanel(
@@ -23,16 +25,19 @@ fun PixelPanel(
     borderColor: Color = PixelPalette.Border,
     fillColor: Color = PixelPalette.Surface,
     shadowColor: Color = PixelPalette.ShadowPanel,
-    borderWidth: Dp = 2.dp,
-    shadowOffset: Dp = 4.dp,
+    borderWidth: Dp = PixelSpace.Stroke,
+    shadowOffset: Dp = PixelSpace.Tight,
+    steppedCorners: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(
         modifier = modifier
-            .shadow(elevation = shadowOffset, shape = androidx.compose.ui.graphics.RectangleShape, ambientColor = shadowColor, spotColor = shadowColor)
             .background(fillColor)
+            .pixelShadow(offset = shadowOffset, color = shadowColor)
             .border(borderWidth, borderColor)
-            .padding(12.dp),
+            // Nicks overpaint the border corners, so corners read as steps, not holes.
+            .pixelSteppedCorners()
+            .padding(PixelSpace.Base + (if (steppedCorners) SteppedCornerInset else 0.dp)),
         content = content,
     )
 }

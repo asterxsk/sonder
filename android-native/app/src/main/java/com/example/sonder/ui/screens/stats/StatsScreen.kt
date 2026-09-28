@@ -25,7 +25,9 @@ import com.example.sonder.data.db.HandEntity
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.PixelPanel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,18 +49,18 @@ fun StatsScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(contentPadding)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = PixelSpace.Room),
     ) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(PixelSpace.Room))
         androidx.compose.material3.Text(
             "STATS",
             style = PixelTypeScale.ScreenTitle,
             fontFamily = PixelFont,
             color = PixelPalette.Primary,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(PixelSpace.Room))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(PixelSpace.Base)) {
             SummaryPanel(
                 glyph = "✓",
                 label = "WINS",
@@ -75,14 +77,14 @@ fun StatsScreen(
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(PixelSpace.Section))
         androidx.compose.material3.Text(
             "RECENT HANDS",
             style = PixelTypeScale.SectionTitle,
             fontFamily = PixelFont,
             color = PixelPalette.Text,
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PixelSpace.Snug))
 
         when {
             // Room has not answered yet — say so rather than showing an empty ledger.
@@ -96,7 +98,7 @@ fun StatsScreen(
             )
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(PixelSpace.Snug),
             ) {
                 items(state.hands, key = { it.id }) { hand -> HandRow(hand, timeFmt) }
             }
@@ -156,7 +158,7 @@ private fun FramedNote(title: String, body: String) {
             androidx.compose.material3.Text(
                 body,
                 style = MonoTypeScale.Body,
-                color = PixelPalette.Muted,
+                color = TextSoft,
             )
         }
     }
@@ -179,7 +181,7 @@ private fun HandRow(hand: HandEntity, timeFmt: SimpleDateFormat) {
                 androidx.compose.material3.Text(
                     timeFmt.format(Date(hand.playedAtMillis)),
                     style = MonoTypeScale.PackageId,
-                    color = PixelPalette.Muted,
+                    color = TextSoft,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -200,7 +202,7 @@ private fun HandRow(hand: HandEntity, timeFmt: SimpleDateFormat) {
                 androidx.compose.material3.Text(
                     "debt ${hand.debtAfterMillis / 60_000}m",
                     style = MonoTypeScale.PackageId,
-                    color = PixelPalette.Muted,
+                    color = TextSoft,
                 )
             }
         }

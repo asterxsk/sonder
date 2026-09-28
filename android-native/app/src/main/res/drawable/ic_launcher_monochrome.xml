@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive-icon foreground: the Sonder cat, Primary (#FFB827), 10.9:1 on the
-     background. Drawn on a 12x12 pixel grid; the 4.5 cell at a 27,27 origin is the
-     largest that keeps the outermost ink inside the 66dp guaranteed-visible circle
-     on a circular-mask launcher, so the ear tips are not clipped. The two eye cells
-     are absent rects rather than a fill, which is what lets the monochrome layer be
-     the same geometry with nothing to lose. -->
+<!-- Adaptive-icon monochrome layer, drawn when the user turns on themed icons. The
+     launcher flattens this to one colour, so it must not depend on a second tone or a
+     border: it is the same 19 rects as the foreground, with the eye cells still absent.
+     Geometry and scale must stay identical to ic_launcher_foreground.xml. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -16,7 +14,7 @@
         android:scaleX="4.5"
         android:scaleY="4.5">
         <path
-            android:fillColor="#FFB827"
+            android:fillColor="#FFFFFF"
             android:fillType="nonZero"
             android:pathData="M2,0h1v1h-1zM9,0h1v1h-1zM2,1h2v1h-2zM8,1h2v1h-2zM2,2h3v1h-3zM7,2h3v1h-3zM2,3h8v1h-8zM1,4h10v1h-10zM0,5h3v1h-3zM4,5h4v1h-4zM9,5h3v1h-3zM0,6h3v1h-3zM4,6h4v1h-4zM9,6h3v1h-3zM0,7h12v1h-12zM1,8h10v1h-10zM2,9h8v1h-8zM3,10h6v1h-6zM4,11h4v1h-4z" />
     </group>

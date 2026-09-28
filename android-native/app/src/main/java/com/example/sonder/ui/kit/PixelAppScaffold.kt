@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
@@ -22,9 +23,10 @@ import com.example.sonder.ui.PixelTab
  * insets, the near-black background, and the single persistent dock — screens supply
  * only their own content and current tab.
  *
- * The [content] padding already clears the dock and the system bars, so a screen
- * applies it once and never fights a cutout or the gesture area. Onboarding and the
- * blackjack gate stay separate full-screen flows without this scaffold.
+ * The [content] padding already clears the dock, the system bars, and the keyboard,
+ * so a screen applies it once and never fights a cutout, the gesture area, or the
+ * Targets search field's IME. Onboarding and the blackjack gate stay separate
+ * full-screen flows without this scaffold.
  */
 @Composable
 fun PixelAppScaffold(
@@ -39,6 +41,9 @@ fun PixelAppScaffold(
     val insetEnd = insets.calculateEndPadding(layoutDirection)
     val insetTop = insets.calculateTopPadding()
     val insetBottom = insets.calculateBottomPadding()
+    // adjustResize keeps the window resized; translating the whole content up by the
+    // keyboard height keeps the dock planted at the bottom edge while the list clears it.
+    val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     Box(modifier = modifier.fillMaxSize().background(PixelPalette.Bg)) {
         content(
@@ -46,7 +51,7 @@ fun PixelAppScaffold(
                 start = insetStart,
                 top = insetTop,
                 end = insetEnd,
-                bottom = insetBottom + PixelDockHeight,
+                bottom = insetBottom + PixelDockHeight + imeBottom,
             ),
         )
         PixelDock(

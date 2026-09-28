@@ -1,0 +1,397 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sonder — Launcher Icon Candidates</title>
+<style>
+@font-face{font-family:"Press Start 2P";src:url("../../android-native/app/src/main/res/font/press_start_2p.ttf") format("truetype");font-display:block}
+@font-face{font-family:"DM Mono";src:url("../../android-native/app/src/main/res/font/dm_mono_regular.ttf") format("truetype");font-display:block}
+@font-face{font-family:"DM Mono";font-weight:500;src:url("../../android-native/app/src/main/res/font/dm_mono_medium.ttf") format("truetype");font-display:block}
+
+:root{
+  --bg:#0b0906; --s:#15100b; --p:#221a12; --b:#a68a52; --bd:#51452f;
+  --a:#ffb827; --ad:#c88a16; --t:#ead7a1; --m:#8a8168; --g:#22c55e; --r:#ef4444;
+  --soft:#b3a482; --wall:#d8d2c8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t);font-family:"DM Mono","Courier New",monospace;font-size:14px;line-height:1.55}
+main{max-width:1180px;margin:auto;padding:24px 16px 80px}
+h1,h2,h3{font-family:"Press Start 2P","Courier New",monospace;font-weight:normal}
+h1{font-size:22px;color:var(--a);line-height:1.4;margin:0 0 8px}
+h2{font-size:12px;color:var(--a);border-bottom:2px solid var(--bd);padding:0 0 10px;margin:44px 0 16px}
+h3{font-size:11px;color:var(--t);margin:0 0 4px;line-height:1.5}
+.lede{color:var(--soft);max-width:74ch;margin:0 0 8px}
+.panel{background:var(--s);border:2px solid var(--b);padding:16px;box-shadow:4px 4px 0 #332816;min-width:0}
+.note{background:var(--s);border-left:none;border:2px solid var(--bd);padding:14px 16px;margin:16px 0}
+.muted{color:var(--m);font-size:12px}
+.mono-sm{font-size:12px;color:var(--soft)}
+
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0 0}
+.ctl{background:var(--p);color:var(--soft);border:2px solid var(--bd);padding:8px 12px;font:inherit;font-size:12px;cursor:pointer}
+.ctl[aria-pressed="true"]{background:var(--a);color:var(--bg);border-color:var(--a)}
+.ctl:focus-visible{outline:2px solid var(--t);outline-offset:2px}
+.ctl-label{font-size:11px;color:var(--m);margin-right:4px}
+
+.tile{position:relative;width:108px;height:108px;background:#15100b;flex:none;outline:1px solid #2a2118}
+.tile svg{display:block;width:100%;height:100%}
+.maskwrap{position:absolute;inset:0;overflow:hidden}
+[data-mask="circle"] .maskwrap{clip-path:circle(50% at 50% 50%)}
+[data-mask="squircle"] .maskwrap{border-radius:30%}
+[data-mask="rounded"] .maskwrap{border-radius:16%}
+
+.sz96{width:96px;height:96px}
+.sz72{width:72px;height:72px}
+.sz48{width:48px;height:48px}
+.sz32{width:32px;height:32px}
+
+/* silhouette test: the mark flattened to one colour on a pale ground. If the shape
+   does not survive this, it is decoration rather than an icon. */
+.silhwrap{background:var(--wall);display:grid;place-items:center}
+.silhwrap svg{filter:brightness(0);width:100%;height:100%}
+
+.tile .safe{position:absolute;inset:0;pointer-events:none;display:none}
+[data-safe="on"] .tile .safe{display:block}
+.safe .sq{position:absolute;left:16.666%;top:16.666%;width:66.666%;height:66.666%;border:1px dashed rgba(234,215,161,.55)}
+.safe .ci{position:absolute;left:50%;top:50%;width:61.111%;height:61.111%;transform:translate(-50%,-50%);
+          border:1px dashed rgba(239,68,68,.8);border-radius:50%}
+
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+.row-label{font-family:"Press Start 2P",monospace;font-size:9px;color:var(--m);letter-spacing:.5px;margin:0 0 8px;display:block}
+
+.cand{border:2px solid var(--bd);background:var(--s);margin:0 0 20px}
+.cand.pick{border-color:var(--a);box-shadow:4px 4px 0 #332816}
+.cand-head{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;padding:14px 16px;border-bottom:2px solid var(--bd)}
+.cand-head .idx{font-family:"Press Start 2P",monospace;font-size:9px;color:var(--a)}
+.cand-body{display:grid;grid-template-columns:auto 1fr;gap:24px;padding:20px 16px}
+@media(max-width:760px){.cand-body{grid-template-columns:1fr}}
+.cand-notes{min-width:0}
+.verdict{display:inline-block;border:2px solid currentColor;padding:6px 10px;font-size:11px;margin:0}
+.v-pick{color:var(--g)}.v-fine{color:var(--soft)}.v-risk{color:var(--r)}
+ul.tight{margin:10px 0 0;padding-left:18px}
+ul.tight li{margin-bottom:5px}
+
+.homescreen{display:flex;gap:18px;flex-wrap:wrap;padding:20px;border:2px solid var(--bd)}
+.wall-light{background:var(--wall)}
+.apptile{display:flex;flex-direction:column;align-items:center;gap:6px;width:60px}
+.apptile span{font-size:9px;color:var(--soft);text-align:center;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px}
+.wall-light .apptile span{color:#3a352e}
+.generic{width:48px;height:48px;background:#5a5f6b;border-radius:26%;display:grid;place-items:center;color:#cfd3da;font-size:11px}
+.generic.alt{background:#7a5f52}
+.generic.alt2{background:#4a6b5a}
+
+table{border-collapse:collapse;width:100%;font-size:12px;margin:8px 0 0}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #2a2118;vertical-align:top}
+th{color:var(--a);font-weight:500;font-size:11px}
+td.n{color:var(--soft);white-space:nowrap}
+
+.rejects{display:flex;flex-wrap:wrap;gap:16px}
+.reject{width:190px;border:2px solid var(--bd);padding:12px;background:var(--s)}
+.reject .tile{width:64px;height:64px;margin-bottom:8px}
+.reject b{font-family:"Press Start 2P",monospace;font-size:9px;color:var(--soft);display:block;margin-bottom:6px}
+.reject p{margin:0;font-size:11px;color:var(--m);line-height:1.5}
+</style></head><body data-safe="off" data-mask="none"><main>
+
+<h1>SONDER / LAUNCHER ICON CANDIDATES</h1>
+<p class="lede">Revision 2. The first five candidates are kept at the bottom of this page and rejected, with reasons —
+they were all rectangles with something inside them, and a rectangle has no silhouette. These four have one.</p>
+
+<div class="controls">
+  <span class="ctl-label">MASK</span>
+  <button class="ctl" data-m="none" aria-pressed="true">NONE</button>
+  <button class="ctl" data-m="circle" aria-pressed="false">CIRCLE</button>
+  <button class="ctl" data-m="squircle" aria-pressed="false">SQUIRCLE</button>
+  <button class="ctl" data-m="rounded" aria-pressed="false">ROUNDED</button>
+  <span class="ctl-label" style="margin-left:16px">GUIDES</span>
+  <button class="ctl" data-safe-toggle aria-pressed="false">SAFE ZONES</button>
+</div>
+<p class="muted" style="margin:10px 0 0">The mask buttons apply to every tile at once. Your OnePlus/ColorOS masks to a
+circle, which is the harshest case — it crops the corners a rectangle needs to be recognisable.</p>
+
+<div class="note">
+  <p class="lede" style="margin:0"><strong style="color:var(--a)">The three tests that killed the first five.</strong>
+  <strong>Silhouette:</strong> flattened to solid black, does the shape still say something? A framed panel becomes a
+  black square. <strong>Mask fit:</strong> a circle crops corners, so a mark whose identity lives in its corners loses
+  it. <strong>One colour:</strong> the themed-icon layer is a separate drawable the launcher flattens, so any interior
+  painted with an opaque fill turns into a solid block. Every mark below is checked against all three, and each has a
+  silhouette row and a monochrome row so you can judge it yourself rather than take my word.</p>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs id="spritedefs"></defs></svg>
+
+<section id="cands"></section>
+
+<h2>HOME SCREEN, AT REAL SIZE</h2>
+<p class="lede">All four at 48dp beside ordinary app tiles, on a dark wallpaper and a pale one. The pale one is the
+honest test — most people are not running a near-black home screen.</p>
+<div class="homescreen" style="background:#141210" id="hs-dark"></div>
+<div class="homescreen wall-light" style="margin-top:16px" id="hs-light"></div>
+
+<h2>REJECTED — THE FIRST FIVE</h2>
+<p class="lede">Kept here so the reasoning is visible rather than asserted. Every one of these is a frame with an
+object inside it, which is why they collapse into identical black squares in the silhouette test.</p>
+<div class="rejects" id="rejects"></div>
+
+<h2>THE CONSTRAINTS THAT DECIDE</h2>
+<div class="panel">
+<table>
+<tr><th>Constraint</th><th>Number</th><th>What it rules out</th></tr>
+<tr><td>Adaptive canvas</td><td class="n">108 &times; 108 dp</td><td>Anything drawn in the outer 16dp — it gets cropped</td></tr>
+<tr><td>Guaranteed visible</td><td class="n">72 &times; 72 dp square</td><td>Full-bleed frames, which is what most of the rejects were</td></tr>
+<tr><td>Guaranteed under a circle mask</td><td class="n">66dp &#8960; circle</td><td>Corner-defined shapes. A round mark loses nothing; a rectangle loses its identity</td></tr>
+<tr><td>Themed icon monochrome layer</td><td class="n">one flat colour</td><td>Any mark needing a second tone, a border, or an opaque interior fill</td></tr>
+<tr><td>Notification small icon</td><td class="n">separate asset</td><td>Reusing this file — always a white silhouette, system-tinted</td></tr>
+</table>
+<p class="muted" style="margin:14px 0 0">Foreground and background are separate drawables and Android parallaxes them
+against each other on some launchers, so the mark cannot sit flush to the edge or it shears. Each icon is three files:
+<span class="mono-sm">ic_launcher_background.xml</span>, <span class="mono-sm">ic_launcher_foreground.xml</span>,
+<span class="mono-sm">ic_launcher_monochrome.xml</span> — all <strong>VectorDrawable</strong>, which also retires the
+quality-pass spec's objection, since that was about a raster icon pipeline rather than vectors.</p>
+</div>
+
+<script>
+/* ---- pixel sprites ----------------------------------------------------------
+   Marks are authored as ASCII art rather than hand-written path data, so the
+   drawing can be read and edited as a drawing. '#' is ink, anything else is a hole —
+   and because holes are genuine transparency, the monochrome layer is correct by
+   construction rather than by a second hand-maintained copy. */
+const SPRITES = {
+  // 13 x 14. Two lobes meeting in a notch, tapering to a stem with a flared base.
+  spade: [
+    "....#...#....",
+    "...###.###...",
+    "..#########..",
+    ".###########.",
+    "#############",
+    "#############",
+    ".###########.",
+    "..#########..",
+    "...#######...",
+    ".....###.....",
+    ".....###.....",
+    ".....###.....",
+    "....#####....",
+    "...#######...",
+  ],
+  // 13 x 14. The same spade with a keyhole punched through its mass: circle over slot.
+  spadelock: [
+    "....#...#....",
+    "...###.###...",
+    "..#########..",
+    ".###########.",
+    "#####...#####",
+    ".####...####.",
+    "..####.####..",
+    "...###.###...",
+    ".....#.#.....",
+    ".....#.#.....",
+    ".....#.#.....",
+    ".....###.....",
+    "....#####....",
+    "...#######...",
+  ],
+  // 10 x 9. Used only in the rejected strip, as the lettermark that proves the point.
+  s: [
+    ".########.",
+    "##......##",
+    "##........",
+    "##........",
+    ".########.",
+    "........##",
+    "........##",
+    "##......##",
+    ".########.",
+  ],
+  // 12 x 12. Triangular ears, round head, slit eyes as real holes.
+  cat: [
+    "..#......#..",
+    "..##....##..",
+    "..###..###..",
+    "..########..",
+    ".##########.",
+    "###.####.###",
+    "###.####.###",
+    "############",
+    ".##########.",
+    "..########..",
+    "...######...",
+    "....####....",
+  ],
+};
+
+/* Cell sizes match the shipped drawables: cat 4.5 is the largest that keeps the ear
+   tips inside the 66dp guaranteed-visible circle, so this page cannot show a cat that
+   fits where the real one does not. */
+const SPRITE_CELL = { spade: 4, spadelock: 4, cat: 4.5, s: 6 };
+
+function spriteBody(rows, cell) {
+  const cols = Math.max(...rows.map(r => r.length));
+  const w = cols * cell, h = rows.length * cell;
+  const ox = (108 - w) / 2, oy = (108 - h) / 2;
+  const out = [];
+  rows.forEach((row, r) => {
+    let c = 0;
+    while (c < row.length) {
+      if (row[c] === '#') {
+        let run = 0;
+        while (c + run < row.length && row[c + run] === '#') run++;
+        out.push(`<rect x="${ox + c * cell}" y="${oy + r * cell}" width="${run * cell}" height="${cell}"/>`);
+        c += run;
+      } else c++;
+    }
+  });
+  return out.join("");
+}
+
+/* ---- geometry marks ---------------------------------------------------------
+   The fanned hand is polygons, not a sprite — the only candidate whose identity is
+   in its diagonal. */
+const GEOMETRY = {
+  hand: {
+    body: `<g transform="translate(54,56)">
+      <rect x="-34" y="-31" width="31" height="55" fill="#ffb827" transform="rotate(-15 -18.5 -3.5)"/>
+      <rect x="1" y="-31" width="31" height="55" fill="#f2e8d5" stroke="#0b0906" stroke-width="3"
+            transform="rotate(11 16.5 -3.5)"/>
+    </g>`,
+    // The honest monochrome render: the two cards have no contrast left between them,
+    // so the fan collapses into one white mass. That is the argument in the notes.
+    mono: `<g transform="translate(54,56)" fill="#fff">
+      <rect x="-34" y="-31" width="31" height="55" transform="rotate(-15 -18.5 -3.5)"/>
+      <rect x="1" y="-31" width="31" height="55" transform="rotate(11 16.5 -3.5)"/>
+    </g>`,
+  },
+};
+
+const CANDIDATES = [
+  { id:"cat", n:"A", name:"THE PIXEL CAT", pick:true,
+    idea:"design_v3 §2 names the recurring motif outright: <em>the player sitting at night with a cat while choosing whether to waste another few minutes.</em> This is that cat, as the app's face.",
+    verdict:["v-pick","RECOMMENDED"],
+    why:[
+      "It is the only round mark here, so a circular mask fills it perfectly instead of cropping it — the one shape a launcher mask cannot punish.",
+      "Nothing else in the screen-time category is a character. The category is shields, clocks and padlocks; this is the only one that is findable at a glance for being the odd one out.",
+      "Its eyes are genuine holes, so the monochrome layer is correct by construction and the face survives the flattening.",
+      "It matches the product's voice. The copy is warm — <em>limits are earned back one hand at a time</em>, <em>don't waste it</em> — and a warm icon agrees with warm copy. A playing card would not.",
+      "Honest cost: it does not explain the mechanic. You learn what Sonder does by opening it, not by looking at it.",
+    ]},
+  { id:"spade", n:"B", name:"THE PIXEL SPADE",
+    idea:"The suit, drawn as a sprite and set full-bleed. The mechanic stated as plainly as one shape can state it.",
+    verdict:["v-fine","BOLDEST, MOST LITERAL"],
+    why:[
+      "Best silhouette of the four: two lobes and a stem is organic where everything around it on the home screen is a rounded rectangle.",
+      "Fills a circle mask almost as well as the cat — its widest rows sit well inside the 66dp circle.",
+      "Unmistakable at 32dp, where the cat's ears start to soften.",
+      "The real risk: a spade reads as a card or casino app before it reads as a limit. For a tool whose whole purpose is restraint, an icon that looks like an invitation to gamble is working against the product — and §12 already warns against a casino read.",
+    ]},
+  { id:"spadelock", n:"C", name:"THE SPADE LOCK",
+    idea:"The spade with a keyhole punched through it. The card mechanic and the locked-door metaphor in one mark — §2's door and §9's suit, reconciled.",
+    verdict:["v-fine","SMARTEST, RISKIEST"],
+    why:[
+      "The only candidate carrying both halves of the product: you must play, and you are locked out.",
+      "Reads as a spade first and a lock second, so the mechanic lands before the restriction.",
+      "The risk is that a marked-up spade reads as a damaged or glitched one rather than as a keyhole. At 48dp the keyhole is eight pixels tall.",
+      "Worth building only if you like the spade and want the lock read on top of it. It is an amendment, not an alternative.",
+    ]},
+  { id:"hand", n:"D", name:"THE DEALT HAND",
+    idea:"Two cards caught mid-deal — one face-down in amber, one face-up in card white. The only candidate whose identity lives in a diagonal.",
+    verdict:["v-risk","MOST SCENE, LEAST ICON"],
+    why:[
+      "It shows the moment rather than an object, which makes it the most narrative of the four.",
+      "Diagonals are genuinely distinctive among a wall of upright rectangles.",
+      "But it is the worst circle-mask case of the four: both cards are rectangles at an angle, so the mask crops two sets of corners and the fan loses its read.",
+      "Two overlapping shapes is also one idea too many at 32dp, where it becomes a single amber smudge.",
+      "It is the darkest mark here, and against a pale wallpaper a dark tile is a hole.",
+    ]},
+];
+
+/* ---- render ---- */
+const defs = document.getElementById("spritedefs");
+Object.entries(SPRITES).forEach(([name, rows]) => {
+  const ink = spriteBody(rows, SPRITE_CELL[name]);
+  // Two symbols per mark: the coloured foreground, and the flattened monochrome layer
+  // the launcher would draw when themed icons are on. Holes are real holes in both,
+  // which is the whole reason the art is generated from one source.
+  defs.innerHTML += `<symbol id="px-${name}" viewBox="0 0 108 108"><g fill="#ffb827">${ink}</g></symbol>`
+                 +  `<symbol id="px-${name}-mono" viewBox="0 0 108 108"><g fill="#fff">${ink}</g></symbol>`;
+});
+Object.entries(GEOMETRY).forEach(([name, g]) => {
+  defs.innerHTML += `<symbol id="px-${name}" viewBox="0 0 108 108">${g.body}</symbol>`
+                 +  `<symbol id="px-${name}-mono" viewBox="0 0 108 108">${g.mono || g.body}</symbol>`;
+});
+
+function tile(id, cls, opts) {
+  opts = opts || {};
+  const ref = opts.mono ? `px-${id}-mono` : `px-${id}`;
+  return `<div class="tile ${cls||''} ${opts.mono ? "tile-mono" : ""}"><div class="maskwrap">
+    <svg viewBox="0 0 108 108"><use href="#${ref}"/></svg></div>
+    <div class="safe"><div class="sq"></div><div class="ci"></div></div></div>`;
+}
+
+const host = document.getElementById("cands");
+host.innerHTML = CANDIDATES.map(c => `
+<div class="cand ${c.pick ? "pick" : ""}">
+  <div class="cand-head">
+    <span class="idx">${c.n}</span><h3>${c.name}</h3>
+    <span class="verdict ${c.verdict[0]}">${c.verdict[1]}</span>
+    ${c.pick ? '<span class="muted" style="font-size:11px">— shipped as <span class="mono-sm">ic_launcher_foreground.xml</span>, at this exact scale</span>' : ''}
+  </div>
+  <div class="cand-body">
+    <div>
+      <span class="row-label">LAUNCHER SIZE</span>
+      <div class="row">${tile(c.id,"sz96")}${tile(c.id,"sz72")}${tile(c.id,"sz48")}${tile(c.id,"sz32")}</div>
+      <span class="row-label" style="margin-top:16px">SILHOUETTE</span>
+      <div class="row">
+        <div class="tile sz72 silhwrap"><svg viewBox="0 0 108 108"><use href="#px-${c.id}"/></svg></div>
+        <div class="tile sz48 silhwrap"><svg viewBox="0 0 108 108"><use href="#px-${c.id}"/></svg></div>
+      </div>
+      <span class="row-label" style="margin-top:16px">THEMED / MONOCHROME</span>
+      <div class="row">${tile(c.id,"sz72",{mono:true})}</div>
+    </div>
+    <div class="cand-notes">
+      <p class="lede" style="margin-top:0">${c.idea}</p>
+      <ul class="tight muted">${c.why.map(w=>`<li>${w}</li>`).join("")}</ul>
+    </div>
+  </div>
+</div>`).join("");
+
+function strip(el) {
+  const g1 = `<div class="apptile"><div class="generic">◍</div><span>Photos</span></div>
+              <div class="apptile"><div class="generic alt">✉</div><span>Inbox</span></div>`;
+  const g2 = `<div class="apptile"><div class="generic alt2">♫</div><span>Music</span></div>`;
+  el.innerHTML = g1 + CANDIDATES.map(c =>
+    `<div class="apptile">${tile(c.id,"sz48")}<span>${c.n}</span></div>`).join("") + g2;
+}
+strip(document.getElementById("hs-dark"));
+strip(document.getElementById("hs-light"));
+
+/* Rejected set — the same frame-plus-object family, drawn simply enough to make the
+   point that they all flatten to the same black rectangle. */
+const FRAME = `<path fill="#ffb827" fill-rule="evenodd"
+  d="M31,22 H77 L82,27 V81 L77,86 H31 L26,81 V27 Z
+     M36,27 H72 L77,32 V76 L72,81 H36 L31,76 V32 Z"/>`;
+const REJECTS = [
+  ["CARD BACK / DOOR", "A frame with a lighter band at the bottom. Flattened: a black rectangle.",
+    FRAME + `<rect x="40" y="58" width="28" height="7" fill="#ffb827"/>`],
+  ["LOCKED DOOR", "A frame with a keyhole. Flattened: a black rectangle with a notch.",
+    FRAME + `<circle cx="54" cy="48" r="8" fill="#ffb827"/><rect x="50" y="52" width="8" height="16" fill="#ffb827"/>`],
+  ["MOON WINDOW", "A frame with dividers. A circle mask eats all four corner panes.",
+    FRAME + `<rect x="52" y="27" width="4" height="54" fill="#ffb827"/><rect x="31" y="52" width="46" height="4" fill="#ffb827"/>`],
+  ["CURSOR BLOCK", "A frame with a square inside it. Nested rectangles, no identity.",
+    FRAME + `<rect x="44" y="44" width="20" height="20" fill="#ffb827"/>`],
+  ["PIXEL S", "A lettermark. Survives every test and says nothing about the product.",
+    `<use href="#px-s"/>`],
+];
+document.getElementById("rejects").innerHTML = REJECTS.map(([t, d, body]) =>
+  `<div class="reject"><div class="tile"><div class="maskwrap">
+     <svg viewBox="0 0 108 108">${body}</svg>
+   </div></div><b>${t}</b><p>${d}</p></div>`).join("");
+
+/* ---- controls ---- */
+document.querySelectorAll("[data-m]").forEach(b => b.addEventListener("click", () => {
+  document.body.dataset.mask = b.dataset.m;
+  document.querySelectorAll("[data-m]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+}));
+const safeBtn = document.querySelector("[data-safe-toggle]");
+safeBtn.addEventListener("click", () => {
+  const on = document.body.dataset.safe === "on";
+  document.body.dataset.safe = on ? "off" : "on";
+  safeBtn.setAttribute("aria-pressed", String(!on));
+});
+</script>
+
+</main></body></html>
