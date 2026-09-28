@@ -21,23 +21,30 @@ enum class SonderPermission(val label: String) {
 }
 
 /**
- * Permission state checks + the delayed audit (plan §4):
- * accessibility state can be flaky right at app start-up, so the on-open audit
- * deliberately waits 10 seconds before concluding a permission is missing —
- * exactly the behavior the user asked for.
+ * Permission state checks (plan §4). Every check reads the system directly and caches
+ * nothing, so a caller that re-audits on resume always sees the truth.
+ *
+ * The 10-second on-open audit that used to live here now sits in [com.example.sonder.MainActivity],
+ * where the onboarding flag is available — accessibility state is flaky right at app
+ * start-up, so it still waits [AUDIT_DELAY_MILLIS] before concluding anything is missing.
  */
 @Singleton
 class PermissionAudit @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
-    fun missingPermissions(): Set<SonderPermission> {
-        val missing = mutableSetOf<SonderPermission>()
-        if (!isAccessibilityEnabled()) missing += SonderPermission.ACCESSIBILITY
-        if (!Settings.canDrawOverlays(context)) missing += SonderPermission.OVERLAY
-        if (!isUsageAccessGranted()) missing += SonderPermission.USAGE_ACCESS
-        if (!isNotificationPermissionGranted()) missing += SonderPermission.NOTIFICATIONS
-        return missing
+    fun missingPermissions(): Set<SonderPermission> =
+        SonderPermission.entries.filterNot(::isGranted).toSet()
+
+    /**
+     * Live state for one permission. [PermissionHandoff] polls this while the user is
+     * away in Settings, so it reads the system on every call and caches nothing.
+     */
+    fun isGranted(permission: SonderPermission): Boolean = when (permission) {
+        SonderPermission.ACCESSIBILITY -> isAccessibilityEnabled()
+        SonderPermission.OVERLAY -> Settings.canDrawOverlays(context)
+        SonderPermission.USAGE_ACCESS -> isUsageAccessGranted()
+        SonderPermission.NOTIFICATIONS -> isNotificationPermissionGranted()
     }
 
     fun isAccessibilityEnabled(): Boolean {
@@ -78,29 +85,7 @@ class PermissionAudit @Inject constructor(
         }
 
     companion object {
+        /** Grace period after open, so accessibility state has settled before we judge. */
         const val AUDIT_DELAY_MILLIS = 10_000L
-
-        /**
-         * The on-open audit: 10 seconds after Sonder opens, if something is off,
-         * surface the pixel prompt. Marker-based: once granted, never prompts again.
-         */
-        fun scheduleOnOpenAudit(context: Context) {
-            android.os.Handler(android.os.Looper.getMainLooper())
-                .postDelayed(
-                    {
-                        try {
-                            val audit = PermissionAudit(context.applicationContext)
-                            if (audit.missingPermissions().isNotEmpty()) {
-                                val i = android.content.Intent(context, PermissionPromptActivity::class.java)
-                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(i)
-                            }
-                        } catch (_: Exception) {
-                            // Never crash over the audit.
-                        }
-                    },
-                    AUDIT_DELAY_MILLIS,
-                )
-        }
     }
 }
