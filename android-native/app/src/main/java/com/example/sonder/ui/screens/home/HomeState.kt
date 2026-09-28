@@ -1,19 +1,34 @@
 package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
+import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.LockoutSnapshot
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+/**
+ * Which lockout a row is serving. A debt lockout is short and ticks down; a daily-cap
+ * lockout runs to the next local midnight, so Home presents them differently. Null
+ * `LockoutSnapshot.reason` (pre-reason rows) can only ever have been debt.
+ */
+enum class HomeLockout { DEBT, DAILY_CAP }
 
 /** One enabled target as Home renders it: canonical state plus live remaining text. */
 data class HomeRow(
     val packageName: String,
     val label: String,
     val state: EnforcementState,
-    /** `MM:SS` while a grant or lockout is running; empty when nothing counts down. */
+    /** `MM:SS` while a grant or a debt lockout is running; empty when nothing counts down. */
     val remainingText: String,
+    /** The lockout kind when [state] is LOCKED; null otherwise. */
+    val lockout: HomeLockout? = null,
+    /** Local wall-clock `HH:mm` a DAILY_CAP row resets at; empty for every other row. */
+    val resetText: String = "",
 )
 
 /** The live-status panel's deterministic presentations (Loading is the screen's null state). */
@@ -48,6 +63,7 @@ internal fun mapHomeState(
     grants: List<GrantSnapshot>,
     lockouts: List<LockoutSnapshot>,
     nowMillis: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
 ): HomeState {
     val grantByPackage = grants.associateBy { it.packageName }
     val lockoutByPackage = lockouts.associateBy { it.packageName }
@@ -64,9 +80,16 @@ internal fun mapHomeState(
                 lockout = lockout,
                 nowMillis = nowMillis,
             )
-            val endsAtMillis = when (state) {
-                EnforcementState.GRANTED -> grant?.endAtMillis
-                EnforcementState.LOCKED -> lockout?.untilMillis
+            val kind = if (state == EnforcementState.LOCKED) {
+                lockout?.let { lockoutKind(it.reason) }
+            } else {
+                null
+            }
+            // A cap lockout runs to the next local midnight: it has a reset wall clock,
+            // not an interval, so it must never turn into a ticking MM:SS countdown.
+            val endsAtMillis = when {
+                state == EnforcementState.GRANTED -> grant?.endAtMillis
+                kind == HomeLockout.DEBT -> lockout?.untilMillis
                 else -> null
             }
             HomeRow(
@@ -78,9 +101,15 @@ internal fun mapHomeState(
                     ?.takeIf { it > 0L }
                     ?.let(::formatRemaining)
                     ?: "",
+                lockout = kind,
+                resetText = if (kind == HomeLockout.DAILY_CAP) {
+                    lockout?.untilMillis?.let { formatResetClock(it, zoneId) } ?: ""
+                } else {
+                    ""
+                },
             )
         }
-        .sortedWith(compareBy<HomeRow>({ urgency(it.state) }, { it.label }))
+        .sortedWith(compareBy<HomeRow>({ urgency(it) }, { it.label }))
 
     val active = rows.firstOrNull {
         it.state == EnforcementState.LOCKED || it.state == EnforcementState.GRANTED
@@ -93,16 +122,32 @@ internal fun mapHomeState(
     return HomeState(summary = summary, rows = rows)
 }
 
-/** Panel and list urgency: serving a lockout outranks a live grant; idle comes last. */
-private fun urgency(state: EnforcementState): Int = when (state) {
-    EnforcementState.LOCKED -> 0
-    EnforcementState.GRANTED -> 1
-    EnforcementState.IDLE -> 2
-    EnforcementState.DISABLED -> 3
+/**
+ * Panel and list urgency. A debt lockout is short and actionable, so it outranks a
+ * live grant. A cap lockout lasts the rest of the day and is not actionable, so it
+ * ranks below a grant that may expire in minutes. Idle comes last.
+ */
+private fun urgency(row: HomeRow): Int = when {
+    row.lockout == HomeLockout.DEBT -> 0
+    row.state == EnforcementState.GRANTED -> 1
+    row.lockout == HomeLockout.DAILY_CAP -> 2
+    row.state == EnforcementState.IDLE -> 3
+    else -> 4 // DISABLED never reaches here (filtered above); keep the mapping total
 }
+
+/** A null reason (a pre-reason row) can only ever have been debt. */
+private fun lockoutKind(reason: String?): HomeLockout =
+    if (reason == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP) HomeLockout.DAILY_CAP
+    else HomeLockout.DEBT
 
 /** Absolute epoch millis to the `MM:SS` the pixel timer shows. */
 internal fun formatRemaining(millis: Long): String {
     val totalSeconds = millis / 1000
     return String.format(Locale.ROOT, "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
 }
+
+/** Absolute epoch millis to the local wall-clock `HH:mm` a cap lockout resets at. */
+internal fun formatResetClock(millis: Long, zoneId: ZoneId): String =
+    ResetClock.format(Instant.ofEpochMilli(millis).atZone(zoneId))
+
+private val ResetClock: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)

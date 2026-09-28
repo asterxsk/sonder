@@ -1,8 +1,5 @@
 package com.example.sonder.ui.screens.block
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +22,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -39,7 +35,9 @@ import com.example.sonder.domain.model.Suit
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelPanel
@@ -78,18 +76,29 @@ fun BlockRoute(
     } ?: emptyList()
     val playerSlots = state.playerHand?.cards?.map { CardSlot(it, faceDown = false) } ?: emptyList()
 
+    // A grant exists only when the last hand wrote one; a win under a spent cap grants
+    // nothing. "Cap blocking" is that lockout with no such grant in flight — a day-wide
+    // state the invite copy and the controls must not present as a playable table.
+    val grantedWin = state.showResult && state.lastOutcome == HandOutcome.WIN && state.lastHandGranted
+    val capBlocking = state.capLocked && !grantedWin
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(PixelPalette.Bg)
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(16.dp),
+            .padding(PixelSpace.Room),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PixelSpace.Snug))
 
-        // §14 status badge row
+        // §14 status badge row. A cap lockout reads the same here as in the overlay: a
+        // day-wide lockout, not the idle PLAYING table it otherwise looks like.
         when {
+            grantedWin ->
+                PixelStatusBadge(BadgeTone.GRANTED)
+            capBlocking ->
+                PixelStatusBadge(BadgeTone.COOLDOWN, labelOverride = "CAPPED TODAY")
             state.showResult && state.lastOutcome == HandOutcome.WIN ->
                 PixelStatusBadge(BadgeTone.GRANTED)
             state.debtMinutes > 0 ->
@@ -98,7 +107,7 @@ fun BlockRoute(
                 PixelStatusBadge(BadgeTone.PLAYING)
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(PixelSpace.Base))
 
         PixelPanel(modifier = Modifier.fillMaxWidth()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -108,16 +117,34 @@ fun BlockRoute(
                     fontFamily = PixelFont,
                     color = PixelPalette.Text,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(PixelSpace.Tight))
                 androidx.compose.material3.Text(
-                    text = "WIN A HAND FOR 5:00 ACCESS",
+                    text = if (capBlocking) {
+                        "DAILY LIMIT REACHED — BACK TOMORROW"
+                    } else {
+                        "WIN A HAND FOR ${formatAccess(state.winGrantMillis)} ACCESS"
+                    },
                     style = MonoTypeScale.Metadata,
-                    color = PixelPalette.Muted,
+                    color = TextSoft,
                 )
+                // Only apps the user capped show a daily allowance line; uncapped apps
+                // behave exactly as before.
+                state.dailyRemainingMillis?.let { remaining ->
+                    Spacer(Modifier.height(PixelSpace.Tight))
+                    androidx.compose.material3.Text(
+                        text = if (remaining <= 0L) {
+                            "TODAY'S ALLOWANCE SPENT"
+                        } else {
+                            "TODAY'S ALLOWANCE ${formatAccess(remaining)} LEFT"
+                        },
+                        style = MonoTypeScale.Metadata,
+                        color = TextSoft,
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(PixelSpace.Base))
 
         // §9 blackjack table
         PixelPanel(
@@ -132,14 +159,14 @@ fun BlockRoute(
                 // Dealer hand — label and total stay pinned, cards scroll lazily.
                 HandRow(label = "DEALER", cards = dealerSlots, total = state.dealerFull?.total)
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(PixelSpace.Base))
                 PixelDivider()
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(PixelSpace.Base))
 
                 // Player hand — same pinned label/total, lazy card strip.
                 HandRow(label = "YOU", cards = playerSlots, total = state.playerHand?.total)
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(PixelSpace.Base))
 
                 // Message line — the table's one line of result copy, so it keeps the
                 // frame and the colour while everything around it stays a hairline.
@@ -153,8 +180,8 @@ fun BlockRoute(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(PixelPalette.Bg)
-                            .border(2.dp, messageColor)
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .border(PixelSpace.Stroke, messageColor)
+                            .padding(horizontal = PixelSpace.Base, vertical = PixelSpace.Snug),
                         contentAlignment = Alignment.Center,
                     ) {
                         androidx.compose.material3.Text(
@@ -173,12 +200,22 @@ fun BlockRoute(
         // Controls: IDLE → DEAL, PLAYER_TURN → HIT/STAND, RESOLVED → CONTINUE
         when (state.phase) {
             com.example.sonder.ui.screens.blackjack.TableState.Phase.IDLE -> {
-                PixelButton(text = "♠  DEAL HAND", onClick = { viewModel.deal() }, modifier = Modifier.fillMaxWidth())
+                // A cap lockout has no hand to play for; offer the exit instead of a deal.
+                if (capBlocking) {
+                    PixelButton(
+                        text = "CAPPED — BACK TOMORROW",
+                        onClick = onDismiss,
+                        style = PixelButtonStyle.SECONDARY,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    PixelButton(text = "♠  DEAL HAND", onClick = { viewModel.deal() }, modifier = Modifier.fillMaxWidth())
+                }
             }
             com.example.sonder.ui.screens.blackjack.TableState.Phase.PLAYER_TURN -> {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(PixelSpace.Base),
                 ) {
                     PixelButton(
                         text = "HIT",
@@ -194,18 +231,28 @@ fun BlockRoute(
                 }
             }
             com.example.sonder.ui.screens.blackjack.TableState.Phase.RESOLVED -> {
-                val won = state.lastOutcome == HandOutcome.WIN && state.debtMinutes == 0L
-                PixelButton(
-                    text = when {
-                        state.lastOutcome == HandOutcome.WIN && won -> "CONTINUE →"
-                        else -> "PLAY AGAIN"
-                    },
-                    onClick = {
-                        if (won) onAccessGranted() else viewModel.continueAfterResult()
-                    },
-                    style = if (won) PixelButtonStyle.SUCCESS else PixelButtonStyle.PRIMARY,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // Success keys off whether a grant was actually written, not off "won with
+                // no debt": a debt-free win under a spent cap grants nothing, and treating
+                // it as success would finish() the gate with no grant and re-raise it.
+                when {
+                    grantedWin -> PixelButton(
+                        text = "CONTINUE →",
+                        onClick = onAccessGranted,
+                        style = PixelButtonStyle.SUCCESS,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    capBlocking -> PixelButton(
+                        text = "CAPPED — BACK TOMORROW",
+                        onClick = onDismiss,
+                        style = PixelButtonStyle.SECONDARY,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    else -> PixelButton(
+                        text = "PLAY AGAIN",
+                        onClick = { viewModel.continueAfterResult() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             else -> {
                 androidx.compose.material3.Text(
@@ -217,7 +264,7 @@ fun BlockRoute(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PixelSpace.Base))
 
         // §13 mini timer for debt
         if (state.debtMinutes > 0) {
@@ -227,7 +274,7 @@ fun BlockRoute(
                 tone = TimerTone.LOCKED,
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PixelSpace.Snug))
     }
 }
 
@@ -236,9 +283,15 @@ private fun PixelDivider() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(2.dp)
+            .height(PixelSpace.Stroke)
             .background(PixelPalette.BorderDark),
     )
+}
+
+/** mm:ss for a grant / allowance figure, matching the timer digits elsewhere. */
+private fun formatAccess(millis: Long): String {
+    val totalSeconds = millis / 1000
+    return String.format(Locale.ROOT, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
 }
 
 /** One slot on the table: a card plus whether it is still face down. */
@@ -259,14 +312,14 @@ private fun HandRow(label: String, cards: List<CardSlot>, total: Int?) {
             label,
             style = PixelTypeScale.Badge,
             fontFamily = PixelFont,
-            color = PixelPalette.Muted,
+            color = TextSoft,
         )
-        Spacer(Modifier.size(8.dp))
+        Spacer(Modifier.size(PixelSpace.Snug))
         LazyRow(modifier = Modifier.weight(1f)) {
             items(cards) { slot -> PlayingCard(slot.card, faceDown = slot.faceDown) }
         }
         total?.let {
-            Spacer(Modifier.size(8.dp))
+            Spacer(Modifier.size(PixelSpace.Snug))
             androidx.compose.material3.Text(
                 "$it",
                 style = PixelTypeScale.SectionTitle,
@@ -282,25 +335,24 @@ private fun HandRow(label: String, cards: List<CardSlot>, total: Int?) {
  *  have their own line and never clip out of the card frame. */
 @Composable
 fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
-    val rotation by animateFloatAsState(
-        targetValue = if (faceDown) 0f else 1f,
-        animationSpec = snap(), // discrete flip, no spring
-        label = "cardFlip",
-    )
+    // design_v3 §18: the card flip is instant — no tween, no spring, no rotation.
     val suitColor = if (suit == Suit.HEARTS || suit == Suit.DIAMONDS) PixelPalette.Danger else PixelPalette.CardInk
     Box(
         modifier = Modifier
-            .size(width = 52.dp, height = 74.dp)
-            .padding(2.dp)
+            .size(width = CardWidth, height = CardHeight)
+            .padding(PixelSpace.Stroke)
             .background(if (faceDown) PixelPalette.Primary else PixelPalette.CardFace)
-            .border(2.dp, if (faceDown) PixelPalette.PrimaryDark else PixelPalette.CardInk),
+            .border(
+                PixelSpace.Stroke,
+                if (faceDown) PixelPalette.PrimaryDark else PixelPalette.CardInk,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (!faceDown) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxSize().padding(vertical = 6.dp),
+                modifier = Modifier.fillMaxSize().padding(vertical = PixelSpace.Snug),
             ) {
                 androidx.compose.material3.Text(
                     text = suitGlyph(suit),
@@ -321,7 +373,7 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
                 text = "☾S",
                 style = PixelTypeScale.Badge,
                 fontFamily = PixelFont,
-                color = PixelPalette.Bg,
+                color = PixelPalette.CardInk,
             )
         }
     }
@@ -339,3 +391,10 @@ private fun suitGlyph(suit: Suit): String = when (suit) {
     Suit.DIAMONDS -> "♦"
     Suit.CLUBS -> "♣"
 }
+
+/**
+ * §9's card. 52×74 is the nominal size the rank and suit columns are laid out against;
+ * the visible face is inset by one stroke so adjacent cards in a hand never touch.
+ */
+private val CardWidth = 52.dp
+private val CardHeight = 74.dp

@@ -1,11 +1,7 @@
 package com.example.sonder.ui.screens.home
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -32,14 +29,19 @@ import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.PixelTab
 import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
+import com.example.sonder.ui.kit.PixelLoader
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTimer
 import com.example.sonder.ui.kit.TimerTone
+import com.example.sonder.ui.kit.pixelShadow
+import com.example.sonder.ui.kit.pixelSteppedCorners
 
 /**
  * Home: the console view of live enforcement state (§14 badges), then the limited
@@ -59,23 +61,34 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(contentPadding)
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = PixelSpace.Room),
+        contentPadding = PaddingValues(top = PixelSpace.Room, bottom = PixelSpace.Room),
+        verticalArrangement = Arrangement.spacedBy(PixelSpace.Base),
     ) {
         item {
             Column {
-                androidx.compose.material3.Text(
-                    text = "SONDER",
-                    style = PixelTypeScale.Wordmark,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Primary,
-                )
-                Spacer(Modifier.height(4.dp))
+                Row {
+                    androidx.compose.material3.Text(
+                        text = "SONDER",
+                        style = PixelTypeScale.Wordmark,
+                        fontFamily = PixelFont,
+                        color = PixelPalette.Primary,
+                    )
+                    Spacer(Modifier.width(PixelSpace.Snug))
+                    // The amber pixel after the wordmark: one block of the brand
+                    // accent, the way a console prints its cursor.
+                    Box(
+                        modifier = Modifier
+                            .padding(top = PixelSpace.Snug)
+                            .size(CursorBlockSize)
+                            .background(PixelPalette.Primary),
+                    )
+                }
+                Spacer(Modifier.height(PixelSpace.Tight))
                 androidx.compose.material3.Text(
                     text = "limits are earned back one hand at a time",
                     style = MonoTypeScale.Metadata,
-                    color = PixelPalette.Muted,
+                    color = TextSoft,
                 )
             }
         }
@@ -99,7 +112,7 @@ fun HomeScreen(
                     text = "LIMITED APPS",
                     style = PixelTypeScale.SectionTitle,
                     fontFamily = PixelFont,
-                    color = PixelPalette.Muted,
+                    color = TextSoft,
                 )
             }
             items(current.rows, key = { it.packageName }) { row -> HomeTargetPanel(row) }
@@ -107,17 +120,9 @@ fun HomeScreen(
     }
 }
 
-/** Loading: restrained pixel progress so an initializing screen never reads as frozen. */
+/** Loading: the shared pixel loader so an initializing screen never reads as frozen. */
 @Composable
 private fun HomeLoadingPanel() {
-    val transition = rememberInfiniteTransition(label = "homeLoading")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 3f,
-        animationSpec = infiniteRepeatable(tween(durationMillis = 900, easing = LinearEasing)),
-        label = "phase",
-    )
-
     PixelPanel(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -129,18 +134,8 @@ private fun HomeLoadingPanel() {
                 fontFamily = PixelFont,
                 color = PixelPalette.Text,
             )
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                repeat(3) { index ->
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .background(
-                                if (index < phase) PixelPalette.Primary else PixelPalette.BorderDark,
-                            ),
-                    )
-                }
-            }
+            Spacer(Modifier.height(PixelSpace.Snug))
+            PixelLoader()
         }
     }
 }
@@ -161,13 +156,13 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
                         fontFamily = PixelFont,
                         color = PixelPalette.Text,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(PixelSpace.Snug))
                     androidx.compose.material3.Text(
                         text = "Pick the apps you want to gate\nbehind blackjack.",
                         style = MonoTypeScale.Body,
-                        color = PixelPalette.Muted,
+                        color = TextSoft,
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(PixelSpace.Base))
                     PixelButton(text = "LIMIT APPS", onClick = onLimitApps)
                 }
 
@@ -178,36 +173,46 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
                         fontFamily = PixelFont,
                         color = PixelPalette.Text,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(PixelSpace.Snug))
                     androidx.compose.material3.Text(
                         text = limitedCountLabel(summary.enabledCount),
                         style = MonoTypeScale.Body,
-                        color = PixelPalette.Primary,
+                        color = PixelPalette.Text,
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(PixelSpace.Tight))
                     androidx.compose.material3.Text(
                         text = "Opening one requires winning a hand of blackjack.",
                         style = MonoTypeScale.Metadata,
-                        color = PixelPalette.Muted,
+                        color = TextSoft,
                     )
                 }
 
                 is HomeSummary.Active -> {
-                    val locked = summary.row.state == EnforcementState.LOCKED
+                    val row = summary.row
+                    val capped = row.lockout == HomeLockout.DAILY_CAP
+                    val locked = row.state == EnforcementState.LOCKED
                     androidx.compose.material3.Text(
-                        text = summary.row.label,
+                        text = row.label,
                         style = PixelTypeScale.SectionTitle,
                         fontFamily = PixelFont,
                         color = PixelPalette.Text,
                     )
-                    Spacer(Modifier.height(8.dp))
-                    PixelStatusBadge(if (locked) BadgeTone.LOCKED else BadgeTone.GRANTED)
-                    Spacer(Modifier.height(12.dp))
-                    PixelTimer(
-                        timeText = summary.row.remainingText,
-                        caption = if (locked) "LOCKED FOR" else "ACCESS LEFT",
-                        tone = if (locked) TimerTone.LOCKED else TimerTone.GRANTED,
+                    Spacer(Modifier.height(PixelSpace.Snug))
+                    PixelStatusBadge(
+                        tone = if (locked) BadgeTone.LOCKED else BadgeTone.GRANTED,
+                        labelOverride = if (capped) "CAPPED" else null,
                     )
+                    Spacer(Modifier.height(PixelSpace.Base))
+                    if (capped) {
+                        // A cap resets at the next local midnight: a wall clock, not a countdown.
+                        HomeResetFrame(resetText = row.resetText)
+                    } else {
+                        PixelTimer(
+                            timeText = row.remainingText,
+                            caption = if (locked) "LOCKED FOR" else "ACCESS LEFT",
+                            tone = if (locked) TimerTone.LOCKED else TimerTone.GRANTED,
+                        )
+                    }
                 }
             }
         }
@@ -217,8 +222,11 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
 /** One limited app: label, its live state badge, and the package id underneath. */
 @Composable
 private fun HomeTargetPanel(row: HomeRow) {
+    val capped = row.lockout == HomeLockout.DAILY_CAP
     val stateWord = row.stateWord()
-    val description = listOf(row.label, stateWord, row.remainingText)
+    // A capped row has no MM:SS interval to read; name the wall clock it resets at instead.
+    val detail = if (capped) "RESETS ${row.resetText}" else row.remainingText
+    val description = listOf(row.label, stateWord, detail)
         .filter { it.isNotEmpty() }
         .joinToString(", ")
 
@@ -245,29 +253,67 @@ private fun HomeTargetPanel(row: HomeRow) {
                     EnforcementState.GRANTED ->
                         PixelStatusBadge(BadgeTone.GRANTED, labelOverride = row.remainingText)
                     EnforcementState.LOCKED ->
-                        PixelStatusBadge(BadgeTone.LOCKED, labelOverride = row.remainingText)
+                        PixelStatusBadge(
+                            BadgeTone.LOCKED,
+                            labelOverride = if (capped) "CAPPED" else row.remainingText,
+                        )
                     else ->
                         PixelStatusBadge(BadgeTone.PLAYING)
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PixelSpace.Tight))
             androidx.compose.material3.Text(
                 text = row.packageName,
                 style = MonoTypeScale.PackageId,
-                color = PixelPalette.Muted,
+                color = TextSoft,
             )
         }
     }
 }
 
+/** The amber cursor block after the wordmark. */
+private val CursorBlockSize = 8.dp
+
 /** "1 APP LIMITED" / "3 APPS LIMITED" — the panel's live enabled count. */
 private fun limitedCountLabel(count: Int): String =
     if (count == 1) "1 APP LIMITED" else "$count APPS LIMITED"
 
+/**
+ * A daily-cap lockout ends at the next local midnight, so it is drawn as that wall
+ * clock in the timer's frame grammar rather than as a ticking MM:SS countdown.
+ */
+@Composable
+private fun HomeResetFrame(resetText: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .background(PixelPalette.Surface)
+                .pixelShadow()
+                .pixelSteppedCorners()
+                .border(PixelSpace.Stroke, PixelPalette.Primary)
+                .padding(horizontal = PixelSpace.Room, vertical = PixelSpace.Snug),
+        ) {
+            androidx.compose.material3.Text(
+                text = resetText,
+                style = PixelTypeScale.Timer,
+                fontFamily = PixelFont,
+                color = PixelPalette.Primary,
+            )
+        }
+        androidx.compose.material3.Text(
+            text = "RESETS",
+            style = PixelTypeScale.Badge,
+            color = TextSoft,
+            modifier = Modifier.padding(top = PixelSpace.Snug),
+        )
+    }
+}
+
 /** Readable state word for the row's accessibility description. */
-private fun HomeRow.stateWord(): String = when (state) {
-    EnforcementState.LOCKED -> "LOCKED"
-    EnforcementState.GRANTED -> "ACCESS GRANTED"
-    EnforcementState.IDLE -> "IDLE"
-    EnforcementState.DISABLED -> "OFF"
+private fun HomeRow.stateWord(): String = when {
+    lockout == HomeLockout.DAILY_CAP -> "DAILY CAP REACHED"
+    state == EnforcementState.LOCKED -> "LOCKED"
+    state == EnforcementState.GRANTED -> "ACCESS GRANTED"
+    state == EnforcementState.IDLE -> "IDLE"
+    else -> "OFF"
 }

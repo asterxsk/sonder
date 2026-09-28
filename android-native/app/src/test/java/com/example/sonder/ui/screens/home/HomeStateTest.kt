@@ -1,9 +1,11 @@
 package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
+import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.LockoutSnapshot
+import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -27,8 +29,16 @@ class HomeStateTest {
     private fun grant(packageName: String, endAtMillis: Long) =
         GrantSnapshot(packageName = packageName, endAtMillis = endAtMillis, lastSeenMillis = t0)
 
-    private fun lockout(packageName: String, untilMillis: Long) =
-        LockoutSnapshot(packageName = packageName, untilMillis = untilMillis, debtMillis = 0L)
+    private fun lockout(packageName: String, untilMillis: Long, reason: String? = null) =
+        LockoutSnapshot(
+            packageName = packageName,
+            untilMillis = untilMillis,
+            debtMillis = 0L,
+            reason = reason,
+        )
+
+    private fun capLockout(packageName: String, untilMillis: Long) =
+        lockout(packageName, untilMillis, reason = EnforcementRepository.LOCKOUT_REASON_DAILY_CAP)
 
     private fun HomeState.row(packageName: String) = rows.single { it.packageName == packageName }
 
@@ -204,5 +214,81 @@ class HomeStateTest {
 
         assertEquals(HomeSummary.NoTargets, state.summary)
         assertTrue(state.rows.isEmpty())
+    }
+
+    @Test
+    fun `cap lockout shows the reset wall clock instead of a countdown`() {
+        // 2024-01-01T00:00:00Z: a production cap lockout runs to the next local midnight.
+        val midnight = 1_704_067_200_000L
+        val state = mapHomeState(
+            targets = listOf(target("com.c", "CAPPED")),
+            grants = emptyList(),
+            lockouts = listOf(capLockout("com.c", midnight)),
+            nowMillis = midnight - 3 * 60 * 60_000L,
+            zoneId = ZoneOffset.UTC,
+        )
+
+        val row = state.row("com.c")
+        assertEquals(EnforcementState.LOCKED, row.state)
+        assertEquals(HomeLockout.DAILY_CAP, row.lockout)
+        // The countdown field stays empty: nothing may render a four-digit minute count.
+        assertEquals("", row.remainingText)
+        assertEquals("00:00", row.resetText)
+    }
+
+    @Test
+    fun `debt lockout keeps the ticking countdown and reads as debt`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.d", "DEBT")),
+            grants = emptyList(),
+            lockouts = listOf(lockout("com.d", t0 + 10 * 60_000L)),
+            nowMillis = t0,
+        )
+
+        val row = state.row("com.d")
+        assertEquals(HomeLockout.DEBT, row.lockout)
+        assertEquals("10:00", row.remainingText)
+        assertEquals("", row.resetText)
+    }
+
+    @Test
+    fun `a cap lockout ranks below a live grant while a debt lockout outranks it`() {
+        val targets = listOf(
+            target("com.g", "GRANT"),
+            target("com.c", "CAP"),
+            target("com.d", "DEBT"),
+        )
+        val grants = listOf(grant("com.g", t0 + 60_000L))
+        val lockouts = listOf(
+            capLockout("com.c", t0 + 600_000L),
+            lockout("com.d", t0 + 600_000L),
+        )
+
+        val state = mapHomeState(targets, grants, lockouts, nowMillis = t0, zoneId = ZoneOffset.UTC)
+
+        assertEquals(listOf("com.d", "com.g", "com.c"), state.rows.map { it.packageName })
+        // The short, actionable debt lockout is what the panel features — not the all-day cap.
+        assertEquals(HomeSummary.Active(state.row("com.d")), state.summary)
+    }
+
+    @Test
+    fun `the summary features a live grant over a cap lockout, and a lone cap on its own`() {
+        val withGrant = mapHomeState(
+            targets = listOf(target("com.g", "GRANT"), target("com.c", "CAP")),
+            grants = listOf(grant("com.g", t0 + 60_000L)),
+            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
+            nowMillis = t0,
+            zoneId = ZoneOffset.UTC,
+        )
+        assertEquals(HomeSummary.Active(withGrant.row("com.g")), withGrant.summary)
+
+        val capOnly = mapHomeState(
+            targets = listOf(target("com.c", "CAP")),
+            grants = emptyList(),
+            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
+            nowMillis = t0,
+            zoneId = ZoneOffset.UTC,
+        )
+        assertEquals(HomeSummary.Active(capOnly.row("com.c")), capOnly.summary)
     }
 }

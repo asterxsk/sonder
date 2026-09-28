@@ -47,7 +47,9 @@ class HomeViewModel @Inject constructor(
             mapHomeState(
                 targets = targets,
                 grants = grants.map { GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis) },
-                lockouts = lockouts.map { LockoutSnapshot(it.packageName, it.untilMillis, 0L) },
+                lockouts = lockouts.map {
+                    LockoutSnapshot(it.packageName, it.untilMillis, 0L, it.reason)
+                },
                 nowMillis = nowMillis,
             )
         }.stateIn(

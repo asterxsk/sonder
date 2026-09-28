@@ -3,6 +3,7 @@ package com.example.sonder.ui.screens.blackjack
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.repo.EnforcementRepository
+import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.BlackjackRules
 import com.example.sonder.domain.DealtHand
 import com.example.sonder.domain.model.Card
@@ -29,6 +30,19 @@ data class TableState(
     val message: String = "",
     val showResult: Boolean = false,
     val lastOutcome: HandOutcome? = null,
+    /** Effective win grant for this target: the per-app override, else the global default. */
+    val winGrantMillis: Long = AccessPolicy.WIN_GRANT_MILLIS,
+    /** Remaining allowance under the app's daily cap; null when the app has no cap. */
+    val dailyRemainingMillis: Long? = null,
+    /**
+     * Whether the last settled hand actually granted access. A debt-free win grants
+     * nothing once the daily cap is spent, so the RESOLVED success path must key off
+     * this rather than off "won with no debt", or the gate would report CONTINUE with
+     * no grant behind it and the coordinator would re-raise the gate.
+     */
+    val lastHandGranted: Boolean = false,
+    /** True while the app is under an active DAILY_CAP lockout; the cap is not time-served. */
+    val capLocked: Boolean = false,
 ) {
     enum class Phase { IDLE, DEALING, PLAYER_TURN, DEALER_TURN, RESOLVED }
 }
@@ -47,15 +61,38 @@ class BlackjackViewModel @Inject constructor(
 
     fun start(targetPackage: String) {
         if (_state.value.targetPackage == targetPackage && _state.value.phase != TableState.Phase.IDLE) return
-        viewModelScope.launch {
-            val debt = repository.currentDebt(targetPackage)
-            _state.value = TableState(targetPackage = targetPackage, debtMinutes = debt / 60_000)
-        }
+        // A reused gate can retarget to a different package, so a fresh start must
+        // reinitialise rather than keep the previous target's hands and rules.
+        _state.value = TableState(targetPackage = targetPackage)
+        viewModelScope.launch { refreshPolicy() }
+    }
+
+    /**
+     * Re-reads debt and the app's per-app rules so the gate shows the effective win
+     * grant and today's remaining allowance under the cap. Called on start and after
+     * every settled hand, since a win both changes debt and spends allowance.
+     */
+    private suspend fun refreshPolicy() {
+        val pkg = _state.value.targetPackage
+        if (pkg.isEmpty()) return
+        val rules = repository.rulesFor(pkg)
+        val grantedToday = repository.dailyGrantedMillis(pkg)
+        _state.value = _state.value.copy(
+            debtMinutes = repository.currentDebt(pkg) / 60_000,
+            winGrantMillis = rules.winGrantMillis,
+            dailyRemainingMillis = rules.dailyCapMillis?.let { (it - grantedToday).coerceAtLeast(0L) },
+            // A cap lockout is read from the lockout row, not inferred from a zero
+            // allowance: the win that spends the cap grants access AND writes the
+            // lockout, so both are true at once and only the row separates them.
+            capLocked = repository.lockoutReason(pkg) == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP &&
+                repository.lockoutRemainingMillis(pkg) > 0L,
+        )
     }
 
     fun deal() {
         val pkg = _state.value.targetPackage
         if (pkg.isEmpty()) return
+        if (_state.value.capLocked) return // the cap is spent: a hand cannot grant access today
         deck = BlackjackRules.shuffledDeck()
         dealt = BlackjackRules.deal(deck)
         deck = dealt!!.remainingDeck
@@ -72,6 +109,7 @@ class BlackjackViewModel @Inject constructor(
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
+            lastHandGranted = false,
             message = "HIT OR STAND?",
         )
     }
@@ -143,12 +181,15 @@ class BlackjackViewModel @Inject constructor(
             if (grantedUntil != null) {
                 expiryScheduler.scheduleExpiry(pkg, grantedUntil)
             }
-            val debt = repository.currentDebt(pkg)
+            // Mark the resolved state first so refreshPolicy's copy keeps it. The grant
+            // result is recorded here because a WIN can still grant nothing (spent cap),
+            // and the gate's success branch must not fire without a grant behind it.
             _state.value = _state.value.copy(
-                debtMinutes = debt / 60_000,
                 showResult = true,
                 lastOutcome = outcome,
+                lastHandGranted = grantedUntil != null,
             )
+            refreshPolicy()
         }
     }
 
@@ -161,6 +202,7 @@ class BlackjackViewModel @Inject constructor(
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
+            lastHandGranted = false,
             message = "",
         )
     }
