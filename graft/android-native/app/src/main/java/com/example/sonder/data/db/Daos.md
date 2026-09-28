@@ -29,3 +29,7 @@
 - observeRecent · method · L86-L87 — @Query("SELECT * FROM hands ORDER BY playedAtMillis DESC LIMIT :limit") fun observeRecent(limit: Int = 50): Flow<List<HandEntity>>
 - observeWinCount · method · L89-L90 — @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'WIN'") fun observeWinCount(): Flow<Int>
 - observeLossCount · method · L92-L93 — @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'LOSE'") fun observeLossCount(): Flow<Int>
+- DailyUsageDao · interface · L96-L106 — @Dao interface DailyUsageDao
+- get · method · L98-L99 — @Query("SELECT * FROM daily_usage WHERE packageName = :pkg") suspend fun get(pkg: String): DailyUsageEntity?
+- observe · method · L101-L102 — @Query("SELECT * FROM daily_usage WHERE packageName = :pkg") fun observe(pkg: String): Flow<DailyUsageEntity?>
+- upsert · method · L104-L105 — @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(usage: DailyUsageEntity)

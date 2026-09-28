@@ -5,3 +5,4 @@
 - Targets · class · L8-L8 — @Serializable data object Targets : NavKey
 - Stats · class · L9-L9 — @Serializable data object Stats : NavKey
 - Settings · class · L10-L10 — @Serializable data object Settings : NavKey
+- AppSettings · class · L13-L13 — @Serializable data class AppSettings(val packageName: String) : NavKey
