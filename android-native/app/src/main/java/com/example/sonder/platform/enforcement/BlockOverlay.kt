@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.util.Locale
 
 /**
  * Instant-blocking overlay (SYSTEM_ALERT_WINDOW). Shows the moment a blocked app
@@ -22,7 +23,12 @@ class BlockOverlay(
     private val context: Context,
     private val targetLabel: String,
     private val lockoutRemainingMillis: Long,
+    /** Effective win grant for this target, so the un-locked copy names the real amount. */
+    private val winGrantMillis: Long,
+    /** Lockout cause ("DEBT" | "DAILY_CAP" | null); a cap lockout must not read as debt. */
+    private val lockoutReason: String?,
     private val onTap: () -> Unit,
+    private val onAutoDismiss: () -> Unit = {},
 ) {
     private var view: View? = null
     private val mainHandler = android.os.Handler(context.mainLooper)
@@ -32,8 +38,15 @@ class BlockOverlay(
      * hasn't taken over within this window, the overlay removes itself —
      * a stuck full-screen overlay swallows touches system-wide (including the
      * home gesture), which reads as "the whole phone is frozen".
+     *
+     * This self-removal is a path the owner cannot observe, so it reports back
+     * via [onAutoDismiss]; an owner that keeps "overlay up for pkg" state would
+     * otherwise hold it forever and swallow every later event for that package.
      */
-    private val autoDismissRunnable = Runnable { dismiss() }
+    private val autoDismissRunnable = Runnable {
+        dismiss()
+        onAutoDismiss()
+    }
 
     fun show(): Boolean = try {
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -71,6 +84,9 @@ class BlockOverlay(
     companion object {
         /** Overlay never outlives this. The gate normally replaces it in <1s. */
         const val MAX_OVERLAY_MILLIS = 4_000L
+
+        /** LockoutEntity.reason value for a lockout imposed by the daily cap. */
+        const val REASON_DAILY_CAP = "DAILY_CAP"
     }
 
     private fun buildView(): View {
@@ -102,10 +118,13 @@ class BlockOverlay(
         }
 
         val body = TextView(context).apply {
-            text = if (lockoutRemainingMillis > 0) {
-                "LOCKED — WAIT IT OUT"
-            } else {
-                "IS BLOCKED.\nWIN A HAND OF BLACKJACK\nFOR 5:00 ACCESS."
+            text = when {
+                lockoutRemainingMillis > 0 && lockoutReason == REASON_DAILY_CAP ->
+                    "CAPPED FOR TODAY.\nCOME BACK TOMORROW."
+                lockoutRemainingMillis > 0 ->
+                    "LOCKED — WAIT IT OUT"
+                else ->
+                    "IS BLOCKED.\nWIN A HAND OF BLACKJACK\nFOR ${formatAccess(winGrantMillis)} ACCESS."
             }
             setTextColor(0xFFEAD7A1.toInt())
             typeface = Typeface.MONOSPACE
@@ -115,7 +134,11 @@ class BlockOverlay(
         }
 
         val cta = TextView(context).apply {
-            text = if (lockoutRemainingMillis > 0) "⌛ SERVING TIME" else "♠  PLAY BLACKJACK →"
+            text = when {
+                lockoutRemainingMillis > 0 && lockoutReason == REASON_DAILY_CAP -> "⌛ CAPPED UNTIL TOMORROW"
+                lockoutRemainingMillis > 0 -> "⌛ SERVING TIME"
+                else -> "♠  PLAY BLACKJACK →"
+            }
             setTextColor(0xFF0B0906.toInt())
             typeface = Typeface.MONOSPACE
             textSize = 12f
@@ -139,4 +162,10 @@ class BlockOverlay(
         root.addView(frame)
         return root
     }
+}
+
+/** mm:ss for a grant amount, matching the gate's wording. */
+private fun formatAccess(millis: Long): String {
+    val totalSeconds = millis / 1000
+    return String.format(Locale.ROOT, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
 }

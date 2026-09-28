@@ -39,12 +39,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Full-screen blackjack gate shown when a blocked app is opened. -->
+        <!-- Full-screen blackjack gate shown when a blocked app is opened.
+             Empty taskAffinity keeps the gate in its own task so finishing it can
+             never reveal MainActivity behind it. -->
         <activity
             android:name=".platform.block.BlockActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
+            android:taskAffinity=""
             android:showWhenLocked="false"
             android:turnScreenOn="false" />
 

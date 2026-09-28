@@ -12,6 +12,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -26,18 +27,30 @@ class EnforcementCoordinator @Inject constructor(
     private val repository: EnforcementRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Overlay bookkeeping is touched from two threads: the Default-dispatcher
+    // coroutines that raise it (onWindowEvent / onGateHandoffFailed) and the main
+    // thread that tears it down (onGateShown / onGateDismissed, and the overlay's
+    // own auto-dismiss via its main-thread handler). @Volatile keeps a reader from
+    // observing a stale cache; every compound update goes through a @Synchronized
+    // method so a concurrent raise/teardown cannot interleave and orphan a view.
+    @Volatile
     private var overlay: BlockOverlay? = null
+
+    @Volatile
     private var overlayShownFor: String? = null
 
     /**
-     * Cooldown after the user backs out of a gate (BlockActivity finish). Without
-     * it, backing out of the blackjack table instantly re-triggers the overlay
-     * + gate for the same app — an inescapable loop that reads as a freeze.
+     * The package whose gate most recently finished. Used only to let a re-pin
+     * request from a failed handoff detect that a newer dismissal superseded it;
+     * it is deliberately NOT a time window. A window that swallowed a same-package
+     * window event would also swallow a genuine fast reopen, which is exactly the
+     * un-gated state the gate exists to prevent. The un-granted exit hands the user
+     * to the launcher, so teardown cannot re-reveal the blocked app and no such
+     * suppression is needed.
      */
     @Volatile
-    private var gateCooldownUntil: Long = 0
-    @Volatile
-    private var gateCooldownPkg: String? = null
+    private var lastDismissedPkg: String? = null
 
     /** Target package awaiting the blackjack gate (consumed by BlockActivity). */
     @Volatile
@@ -70,23 +83,58 @@ class EnforcementCoordinator @Inject constructor(
             // 3) Granted apps pass; everything else gets gated or locked out.
             if (repository.hasActiveGrant(pkg, now)) return@launch
 
-            if (overlayShownFor == pkg) return@launch // already gated this app
-
-            // Just-backed-out cooldown: let the user leave (home, back) without
-            // being instantly re-gated. Next FRESH open of the app re-gates.
-            if (pkg == gateCooldownPkg && now < gateCooldownUntil) return@launch
+            if (isOverlayShownFor(pkg)) return@launch // already gated this app
 
             val lockoutRemaining = repository.lockoutRemainingMillis(pkg, now)
-            showOverlay(pkg, lockoutRemaining)
+            showOverlay(
+                pkg = pkg,
+                lockoutRemainingMillis = lockoutRemaining,
+                lockoutReason = repository.lockoutReason(pkg),
+                winGrantMillis = repository.rulesFor(pkg).winGrantMillis,
+            )
             launchGate(pkg)
         }
     }
 
-    /** Called by BlockActivity when the user backs out without winning. */
+    /**
+     * Called by BlockActivity whenever the gate finishes. Drops the overlay, and
+     * records [pkg] only so a later failed-handoff re-pin can tell a newer dismissal
+     * apart from its own.
+     *
+     * It deliberately does NOT re-pin. An un-granted exit hands the user to the
+     * launcher, and launcher window events never reach here (the service drops
+     * them), so the departure is unobservable from this side — any "is the app
+     * still in front?" test here would read a stale value and re-trap the user on
+     * the home screen. Re-pinning is requested explicitly by the only code that can
+     * tell a real handoff from a failed one.
+     */
     fun onGateDismissed(pkg: String?) {
-        gateCooldownPkg = pkg
-        gateCooldownUntil = System.currentTimeMillis() + GATE_DISMISS_COOLDOWN_MILLIS
+        lastDismissedPkg = pkg
         dismissOverlay()
+    }
+
+    /**
+     * The un-granted exit could not resolve a HOME activity, so the blocked app is
+     * left in front with nothing over it. Once the teardown has settled, re-pin the
+     * overlay and gate — the overlay must go up BEFORE the gate, since its
+     * visibility is what keeps the launch BAL-exempt on API 29+.
+     */
+    fun onGateHandoffFailed(pkg: String?) {
+        if (pkg == null) return
+        scope.launch {
+            delay(HANDOFF_RETRY_MILLIS)
+            val now = System.currentTimeMillis()
+            if (lastDismissedPkg != pkg) return@launch        // a newer dismissal superseded this one
+            if (!repository.isTargetEnabled(pkg)) return@launch
+            if (repository.hasActiveGrant(pkg, now)) return@launch // user won — access stands
+            showOverlay(
+                pkg = pkg,
+                lockoutRemainingMillis = repository.lockoutRemainingMillis(pkg, now),
+                lockoutReason = repository.lockoutReason(pkg),
+                winGrantMillis = repository.rulesFor(pkg).winGrantMillis,
+            )
+            launchGate(pkg)
+        }
     }
 
     fun launchGate(pkg: String) {
@@ -107,12 +155,26 @@ class EnforcementCoordinator @Inject constructor(
         context.startActivity(intent)
     }
 
-    private fun showOverlay(pkg: String, lockoutRemainingMillis: Long) {
+    @Synchronized
+    private fun showOverlay(
+        pkg: String,
+        lockoutRemainingMillis: Long,
+        lockoutReason: String?,
+        winGrantMillis: Long,
+    ) {
         dismissOverlay()
-        val o = BlockOverlay(context, pkg, lockoutRemainingMillis) {
+        val o = BlockOverlay(
+            context = context,
+            targetLabel = pkg,
+            lockoutRemainingMillis = lockoutRemainingMillis,
+            winGrantMillis = winGrantMillis,
+            lockoutReason = lockoutReason,
             // Overlay tap = open the gate activity (BAL-exempt: overlay is visible).
-            launchGate(pkg)
-        }
+            onTap = { launchGate(pkg) },
+            // Self-removal must clear our bookkeeping, or overlayShownFor stays set
+            // and the guard above swallows every later window event for this package.
+            onAutoDismiss = { dismissOverlayIfFor(pkg) },
+        )
         if (o.show()) {
             overlay = o
             overlayShownFor = pkg
@@ -124,9 +186,13 @@ class EnforcementCoordinator @Inject constructor(
         dismissOverlay()
     }
 
+    @Synchronized
     fun dismissOverlayIfFor(pkg: String) {
         if (overlayShownFor == pkg) dismissOverlay()
     }
+
+    @Synchronized
+    private fun isOverlayShownFor(pkg: String): Boolean = overlayShownFor == pkg
 
     @Synchronized
     fun dismissOverlay() {
@@ -136,7 +202,10 @@ class EnforcementCoordinator @Inject constructor(
     }
 
     companion object {
-        /** Grace period after backing out of a gate before re-gating the same app. */
-        const val GATE_DISMISS_COOLDOWN_MILLIS = 30_000L
+        /**
+         * Delay before a failed handoff re-pins. Long enough for the gate teardown
+         * to settle so the re-pin does not race the departing activity.
+         */
+        const val HANDOFF_RETRY_MILLIS = 1_500L
     }
 }
