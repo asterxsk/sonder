@@ -1,30 +1,34 @@
 # android-native/app/src/main/java/com/example/sonder/data/repo/EnforcementRepository.kt
 
-- EnforcementRepository · class · L33-L322 — @Singleton class EnforcementRepository @Inject constructor( private val targetDao: TargetDao, private val grantDao: GrantDao, private val debtDao: DebtDao, private val lockoutDao: LockoutDao, private val handDao: HandDao, private val dailyUsageDao: DailyUsageDao, )
-- TargetOverrides · class · L51-L57 — data class TargetOverrides( val winGrantMillis: Long? = null, val lossDebtMillis: Long? = null, val maxDebtMillis: Long? = null, val absenceRevokeMillis: Long? = null, val dailyCapMillis: Long? = null, )
-- rulesFor · method · L60-L61 — suspend fun rulesFor(packageName: String): AccessRules
-- overridesFor · method · L64-L65 — suspend fun overridesFor(packageName: String): TargetOverrides
-- observeRules · method · L68-L69 — fun observeRules(packageName: String): Flow<AccessRules>
-- observeOverrides · method · L72-L75 — fun observeOverrides(packageName: String): Flow<TargetOverrides?>
-- updateOverrides · method · L89-L110 — suspend fun updateOverrides(packageName: String, overrides: TargetOverrides)
-- dailyGrantedMillis · method · L113-L119 — suspend fun dailyGrantedMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
-- observeDailyGrantedMillis · method · L122-L129 — fun observeDailyGrantedMillis(packageName: String): Flow<Long>
-- lockoutReason · method · L138-L141 — suspend fun lockoutReason(packageName: String): String?
-- observeState · method · L144-L158 — fun observeState(packageName: String): Flow<EnforcementState>
-- currentDebt · method · L160-L161 — suspend fun currentDebt(packageName: String): Long
-- isTargetEnabled · method · L164-L165 — suspend fun isTargetEnabled(packageName: String): Boolean
-- hasActiveGrant · method · L168-L179 — suspend fun hasActiveGrant( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Boolean
-- grantRemainingMillis · method · L182-L188 — suspend fun grantRemainingMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
-- lockoutRemainingMillis · method · L191-L197 — suspend fun lockoutRemainingMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
-- canPlay · method · L200-L201 — suspend fun canPlay(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean
-- onHandResult · method · L207-L249 — suspend fun onHandResult( packageName: String, outcome: HandOutcome, nowMillis: Long = System.currentTimeMillis(), ): Long?
-- recordLastSeen · method · L252-L254 — suspend fun recordLastSeen(packageName: String, nowMillis: Long = System.currentTimeMillis())
-- evaluateAbsence · method · L260-L272 — suspend fun evaluateAbsence(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean
-- revokeGrant · method · L275-L277 — suspend fun revokeGrant(packageName: String, reason: String)
-- purgeExpired · method · L280-L283 — suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis())
-- recordGrantedUsage · method · L286-L291 — private suspend fun recordGrantedUsage(packageName: String, nowMillis: Long, grantedMillis: Long)
-- toOverrides · method · L293-L299 — private fun TargetEntity?.toOverrides(): TargetOverrides
-- toRules · method · L301-L307 — private fun TargetEntity?.toRules(): AccessRules
-- epochDay · method · L309-L310 — private fun epochDay(nowMillis: Long): Long
-- toSnapshot · method · L312-L312 — private fun GrantEntity.toSnapshot()
-- toSnapshot · method · L313-L313 — private fun LockoutEntity.toSnapshot()
+- EnforcementRepository · class · L44-L359 — @Singleton class EnforcementRepository @Inject constructor( private val targetDao: TargetDao, private val grantDao: GrantDao, private val debtDao: DebtDao, private val lockoutDao: LockoutDao, private val handDao: HandDao, private val dailyUsageDao: DailyUsageDao, @ApplicationScope private val externalScope: CoroutineScope, )
+- start · method · L60-L72 — fun start()
+- enabledTarget · method · L74-L74 — fun enabledTarget(pkg: String): TargetEntity?
+- cachedGrant · method · L76-L76 — fun cachedGrant(pkg: String): GrantEntity?
+- cachedLockout · method · L78-L78 — fun cachedLockout(pkg: String): LockoutEntity?
+- TargetOverrides · class · L88-L94 — data class TargetOverrides( val winGrantMillis: Long? = null, val lossDebtMillis: Long? = null, val maxDebtMillis: Long? = null, val absenceRevokeMillis: Long? = null, val dailyCapMillis: Long? = null, )
+- rulesFor · method · L97-L98 — suspend fun rulesFor(packageName: String): AccessRules
+- overridesFor · method · L101-L102 — suspend fun overridesFor(packageName: String): TargetOverrides
+- observeRules · method · L105-L106 — fun observeRules(packageName: String): Flow<AccessRules>
+- observeOverrides · method · L109-L112 — fun observeOverrides(packageName: String): Flow<TargetOverrides?>
+- updateOverrides · method · L126-L147 — suspend fun updateOverrides(packageName: String, overrides: TargetOverrides)
+- dailyGrantedMillis · method · L150-L156 — suspend fun dailyGrantedMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
+- observeDailyGrantedMillis · method · L159-L166 — fun observeDailyGrantedMillis(packageName: String): Flow<Long>
+- lockoutReason · method · L175-L178 — suspend fun lockoutReason(packageName: String): String?
+- observeState · method · L181-L195 — fun observeState(packageName: String): Flow<EnforcementState>
+- currentDebt · method · L197-L198 — suspend fun currentDebt(packageName: String): Long
+- isTargetEnabled · method · L201-L202 — suspend fun isTargetEnabled(packageName: String): Boolean
+- hasActiveGrant · method · L205-L216 — suspend fun hasActiveGrant( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Boolean
+- grantRemainingMillis · method · L219-L225 — suspend fun grantRemainingMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
+- lockoutRemainingMillis · method · L228-L234 — suspend fun lockoutRemainingMillis( packageName: String, nowMillis: Long = System.currentTimeMillis(), ): Long
+- canPlay · method · L237-L238 — suspend fun canPlay(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean
+- onHandResult · method · L244-L286 — suspend fun onHandResult( packageName: String, outcome: HandOutcome, nowMillis: Long = System.currentTimeMillis(), ): Long?
+- recordLastSeen · method · L289-L291 — suspend fun recordLastSeen(packageName: String, nowMillis: Long = System.currentTimeMillis())
+- evaluateAbsence · method · L297-L309 — suspend fun evaluateAbsence(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean
+- revokeGrant · method · L312-L314 — suspend fun revokeGrant(packageName: String, reason: String)
+- purgeExpired · method · L317-L320 — suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis())
+- recordGrantedUsage · method · L323-L328 — private suspend fun recordGrantedUsage(packageName: String, nowMillis: Long, grantedMillis: Long)
+- toOverrides · method · L330-L336 — private fun TargetEntity?.toOverrides(): TargetOverrides
+- toRules · method · L338-L344 — private fun TargetEntity?.toRules(): AccessRules
+- epochDay · method · L346-L347 — private fun epochDay(nowMillis: Long): Long
+- toSnapshot · method · L349-L349 — private fun GrantEntity.toSnapshot()
+- toSnapshot · method · L350-L350 — private fun LockoutEntity.toSnapshot()
