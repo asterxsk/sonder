@@ -203,7 +203,7 @@ Target rows become small inventory-like objects.
 
 ```text
 ┌────────────────────────────────┐
-│ [ICON] YouTube       [ ON ] →  │
+│ (ICON) YouTube          ✎  ✕  │
 │        com.google...           │
 └────────────────────────────────┘
 ```
@@ -211,9 +211,17 @@ Target rows become small inventory-like objects.
 The row gets:
 - pixel border
 - tiny metadata line
-- app icon in a framed 40dp box
-- amber toggle
-- arrow affordance
+- app icon bare on the row's own ground, in a 40dp slot
+- two 48dp framed glyph buttons — `✎` edit and `✕` remove
+
+The icon is the one thing in the row that is not framed. The row is already one framed
+object, so putting a second border around the icon made a picture inside a box rather
+than a list row; the icon reads as the row's own content, the buttons as its controls.
+
+
+Both controls are delayed, and a served `✕` wait is not permission to remove: it raises a
+confirmation whose confirm control is red (`DANGER`). The wait buys time to think; the
+question is what the thinking is for.
 
 Do not use large modern cards.
 
@@ -349,6 +357,10 @@ Four canonical badges:
 `♠ PLAYING`
 `⌛ COOLDOWN`
 
+`♠ PLAYING` and `⌛ COOLDOWN` belong to the blackjack gate — the one screen where a hand is
+played and a lockout is named against it. Home uses `✓ GRANTED` and `▣ LOCKED`: a gated app
+you have not opened reads `LOCKED`, never `PLAYING`.
+
 Each has:
 - icon
 - label
@@ -358,20 +370,47 @@ Each has:
 
 ## 15. Navigation
 
-Bottom navigation becomes a tiny console dock.
+Bottom navigation is a floating console dock: a rounded pill that clears the screen
+edges by a 16dp margin on the sides and the bottom, so it floats above the gesture
+area rather than sitting flush. This is the one deliberate rounded surface in an
+otherwise zero-radius world — §5's frame language stays 0px for panels, buttons, and
+tabs. The pill is the approved exception, recorded here so the doc never silently
+contradicts §5.
 
 ```text
-┌───────────────────────────────────┐
-│  HOME    TARGETS    STATS SETTINGS│
-└───────────────────────────────────┘
+   ╭──────────────────────────────────╮
+   │   ⌂      ◎      ▥       ⚙       │
+   │  Home  Targets  Stats  Settings  │
+   ╰──────────────────────────────────╯
 ```
 
-Active tab:
-- amber frame
-- amber icon
-- tiny top/bottom marker
+The pill keeps §5's hard grammar, only rounded:
+- 32dp radius — half the 64dp dock height, so the ends are true semicircles
+- 2dp hard frame
+- hard-offset shadow, rounded to match so it cannot poke square corners out from under the pill
 
-No floating navigation.
+Each tab is a glyph over a label, and the glyph is the icon: in the platform symbol font,
+because `⌂ ◎ ▥ ⚙` are symbols the pixel face has no cut of. The label is 10sp DM Mono —
+§4's floor keeps the pixel face at 10sp and above, and the labels are sentence case,
+which the pixel face has no lowercase cut for. Under a glyph that size the label is the
+caption, not the icon, so it is small and quiet.
+
+Each tab sets its **own** glyph size, because a symbol font's characters fill their em
+boxes by very different amounts: at a shared 26sp, `◎` drew a 30px ring while `⚙` drew
+58px, so Targets read as the tab that had been shrunk. Sizes are chosen so the four land
+at the same optical height — Home 26sp, Targets 38sp, Stats 26sp, Settings 26sp — and any
+future change to the glyphs has to be checked the same way, by measuring the marks rather
+than by trusting the sp value.
+
+Active tab:
+- a square of raised panel behind the tab — square on purpose, because §15 rounds the
+  pill and not the key inside it, so the two shapes stay legible as two shapes
+- amber glyph and label on that ground; no frame of its own, since the pill is already
+  the loudest outline on screen
+
+The old full-width amber top/bottom marker bars are gone: they are bar grammar, and
+inside a pill they read as a straight edge cutting the curve. Inactive tabs carry no
+dividers for the same reason — the active segment is the whole signal.
 
 ## 16. Toasts
 
@@ -436,6 +475,29 @@ Avoid:
 - smooth floating
 - continuous gradients/glows
 
+### Screen transitions
+
+Screens slide sideways; they do not crossfade. A fade says a screen replaced another with
+no relationship to it, where a slide says which way the user is going and which way Back
+comes home. Push enters from the right and leaves left; pop reverses. 180ms.
+
+The slide is the one animation not run through `steps()`, and the exception is deliberate:
+quantising a colour or a 2dp press to four frames is what makes motion read as pixel-hard,
+but quantising a full-width slide to the same four frames lands them 90dp apart and reads
+as a stutter rather than as a slide. The duration is still the motion scale's 180ms; only
+the easing is continuous.
+
+### Waiting states
+
+A list that is still reading shows the rows it is about to become — same frame, same icon
+slot, same control frames — not a spinner and not a panel in the middle of an empty screen.
+The placeholder holds the layout still, so the real rows do not jump into place when they
+arrive, and it tells the user what is coming rather than only that something is.
+
+The placeholder blocks take the two nearest grounds (`Panel` to `BorderDark`) and pulse
+between them on a 700ms two-frame cycle. They are inert, and the whole list announces
+itself to accessibility once as "Loading" rather than exposing a stack of empty boxes.
+
 ## 19. Layout and anti-clipping rules
 
 The V2 anti-clipping rules remain mandatory.
@@ -447,7 +509,7 @@ Safe area:
 - 16dp sides
 - 16dp top
 - 16dp bottom
-- 80dp reserved navigation area
+- 96dp reserved navigation area (16dp margin + 64dp dock + 16dp margin)
 
 Minimum:
 - 48dp touch target

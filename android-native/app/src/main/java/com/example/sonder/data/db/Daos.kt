@@ -20,6 +20,35 @@ interface TargetDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(target: TargetEntity)
 
+    /**
+     * Materialises a row for [target] and leaves an existing one exactly as it is. The
+     * picker and the settings screen both mean "there should be a row for this package,
+     * keeping whatever is already there" — REPLACE would answer that with a whole-row
+     * write built from a value read a moment earlier, silently reverting a concurrent
+     * edit to any column the caller did not mean to touch.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(target: TargetEntity)
+
+    /** Enables [pkg] under [label], naming only those two columns. */
+    @Query("UPDATE targets SET enabled = 1, label = :label WHERE packageName = :pkg")
+    suspend fun enable(pkg: String, label: String)
+
+    /** Writes the per-app overrides and nothing else, so label and enabled survive. */
+    @Query(
+        "UPDATE targets SET winGrantMillis = :winGrant, lossDebtMillis = :lossDebt, " +
+            "maxDebtMillis = :maxDebt, absenceRevokeMillis = :absenceRevoke, " +
+            "dailyCapMillis = :dailyCap WHERE packageName = :pkg",
+    )
+    suspend fun setOverrides(
+        pkg: String,
+        winGrant: Long?,
+        lossDebt: Long?,
+        maxDebt: Long?,
+        absenceRevoke: Long?,
+        dailyCap: Long?,
+    )
+
     @Query("UPDATE targets SET enabled = :enabled WHERE packageName = :pkg")
     suspend fun setEnabled(pkg: String, enabled: Boolean)
 

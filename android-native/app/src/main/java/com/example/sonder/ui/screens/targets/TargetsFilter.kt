@@ -1,19 +1,18 @@
 package com.example.sonder.ui.screens.targets
 
+import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.data.repo.InstalledApp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-/** The two Targets filters: ALL keeps every launchable app, LIMITED keeps the enabled ones. */
-enum class TargetsTab { ALL, LIMITED }
-
 /**
- * Launcher enumeration state. [Loading] is deliberately distinct from
- * `Loaded(emptyList())` — the first is "still reading", the second is a device
- * with nothing launchable. [Failed] is a third thing again: the enumeration threw,
- * so there is no list to believe either way.
+ * Launcher enumeration state, shared by both screens. [Loading] is deliberately
+ * distinct from `Loaded(emptyList())` — the first is "still reading", the second a
+ * device with nothing launchable. [Failed] is a third thing again: the enumeration
+ * threw, so there is no list to believe either way and neither screen may claim an
+ * empty device.
  */
 sealed interface TargetsListState {
     data object Loading : TargetsListState
@@ -21,54 +20,62 @@ sealed interface TargetsListState {
     data object Failed : TargetsListState
 }
 
-/** What the picker draws once the tab and query are applied. */
+/**
+ * What the Targets screen draws. The tab and search dimensions are gone — the screen
+ * is the added set — so its states are only "reading", "could not read", "nothing
+ * launchable to add", "nothing added yet", or the rows.
+ */
 sealed interface TargetsViewState {
-    /** Packages still enumerating — a spinner, never an unexplained blank list. */
     data object Loading : TargetsViewState
 
-    /** Enumeration finished with nothing launchable on the device. */
+    /** Nothing on the device has a launcher, so there is nothing ADD could ever offer. */
     data object NoLaunchableApps : TargetsViewState
 
     /** Enumeration threw — unknown list, not an empty one, and retryable. */
     data object LoadFailed : TargetsViewState
 
-    /** LIMITED tab, apps are launchable but none is enabled yet. */
-    data object EmptyLimited : TargetsViewState
+    /** Apps exist, but none is enabled: the empty-list state that offers ADD. */
+    data object Empty : TargetsViewState
 
-    /** A query matched nothing in the current tab. */
-    data object NoResults : TargetsViewState
-
-    /** Rows to draw. */
+    /** The added targets to draw. */
     data class Rows(val picks: List<TargetPickUi>) : TargetsViewState
 }
 
-/** One Targets screen state; recomputed only when its inputs actually change. */
-data class TargetsUiState(
-    val tab: TargetsTab,
-    val enabledCount: Int,
-    val view: TargetsViewState,
-)
+/**
+ * What the picker draws once its query is applied. Every state the Targets list used
+ * to carry lives here now, minus the tab: loading, failed, a device with nothing
+ * launchable, a query that matched nothing, or rows.
+ */
+sealed interface TargetPickerViewState {
+    data object Loading : TargetPickerViewState
+    data object NoLaunchableApps : TargetPickerViewState
+    data object LoadFailed : TargetPickerViewState
+    data object NoResults : TargetPickerViewState
+    data class Rows(val picks: List<TargetPickUi>) : TargetPickerViewState
+}
 
 /** Trim and lowercase once so every row comparison downstream is allocation-free. */
 fun normalizeTargetsQuery(raw: String): String = raw.trim().lowercase()
 
-/** Enabled picks across the whole list — independent of the tab and the query. */
-fun enabledTargetCount(picks: List<TargetPickUi>): Int = picks.count { it.enabled }
+/**
+ * The added apps, in list order — enabled targets only. A soft-removed row
+ * (`enabled = false`) keeps its overrides in Room but is no longer a target, so it
+ * must not appear here; re-adding it through the picker brings it back.
+ */
+fun addedTargets(picks: List<TargetPickUi>): List<TargetPickUi> = picks.filter { it.enabled }
 
 /**
- * Applies the tab and [normalizedQuery]. ALL keeps enabled and disabled apps;
- * LIMITED keeps enabled only. The query matches the label or the package name,
- * case-insensitively.
+ * The picker's search: matches label or package, case-insensitively, over the whole
+ * launchable list — added and not-added alike, so an added app can still be found and
+ * read as the inert checked row that says removal lives on Targets.
  */
-fun filterTargets(
+fun filterLaunchable(
     picks: List<TargetPickUi>,
-    tab: TargetsTab,
     normalizedQuery: String,
 ): List<TargetPickUi> = picks.filter { pick ->
-    (tab == TargetsTab.ALL || pick.enabled) &&
-        (normalizedQuery.isEmpty() ||
-            pick.label.contains(normalizedQuery, ignoreCase = true) ||
-            pick.packageName.contains(normalizedQuery, ignoreCase = true))
+    normalizedQuery.isEmpty() ||
+        pick.label.contains(normalizedQuery, ignoreCase = true) ||
+        pick.packageName.contains(normalizedQuery, ignoreCase = true)
 }
 
 /** Merges launchable apps with Room's enabled flags, keyed by package name. */
@@ -83,42 +90,72 @@ fun mergeTargetPicks(
     )
 }
 
-/** Pure mapping from list + tab + normalized query to the screen's render state. */
-fun targetsUiState(
-    list: TargetsListState,
-    tab: TargetsTab,
-    normalizedQuery: String,
-): TargetsUiState = when (list) {
-    TargetsListState.Loading -> TargetsUiState(tab, 0, TargetsViewState.Loading)
+/**
+ * The row ADD inserts when [packageName] has no stored row at all. It is deliberately
+ * inserted, never upserted: a soft-removed row that still holds the user's per-app
+ * overrides must keep them, so ADD's other half is a write naming only `enabled` and
+ * `label` (`TargetDao.enable`). Together the two can express "make this a target and
+ * refresh its name" without ever rewriting a column this screen does not own — which is
+ * what a read-copy-write of the whole row could not promise, since the copy is stale the
+ * moment the settings screen saves a knob.
+ *
+ * Carrying no overrides is the point: this entity is only ever inserted where there was
+ * nothing, so there is nothing for its nulls to overwrite.
+ */
+fun newTarget(packageName: String, label: String, nowMillis: Long): TargetEntity =
+    TargetEntity(
+        packageName = packageName,
+        label = label,
+        enabled = true,
+        createdAtMillis = nowMillis,
+    )
 
-    // No list to filter and no enabled count to claim — the count would be a guess.
-    TargetsListState.Failed -> TargetsUiState(tab, 0, TargetsViewState.LoadFailed)
+/** Pure mapping from the enumeration to the added-only Targets state. */
+fun targetsUiState(list: TargetsListState): TargetsViewState = when (list) {
+    TargetsListState.Loading -> TargetsViewState.Loading
+
+    // No list to filter and no added set to claim — either would be a guess.
+    TargetsListState.Failed -> TargetsViewState.LoadFailed
 
     is TargetsListState.Loaded -> {
-        val filtered = filterTargets(list.picks, tab, normalizedQuery)
-        val view = when {
+        val added = addedTargets(list.picks)
+        when {
+            added.isNotEmpty() -> TargetsViewState.Rows(added)
+            // Nothing installed outranks "nothing added": ADD would open an empty picker.
             list.picks.isEmpty() -> TargetsViewState.NoLaunchableApps
-            filtered.isNotEmpty() -> TargetsViewState.Rows(filtered)
-            normalizedQuery.isNotEmpty() -> TargetsViewState.NoResults
-            else -> TargetsViewState.EmptyLimited
+            else -> TargetsViewState.Empty
         }
-        TargetsUiState(tab, enabledTargetCount(list.picks), view)
+    }
+}
+
+/** Pure mapping from the enumeration plus the normalized query to the picker's state. */
+fun pickerUiState(
+    list: TargetsListState,
+    normalizedQuery: String,
+): TargetPickerViewState = when (list) {
+    TargetsListState.Loading -> TargetPickerViewState.Loading
+    TargetsListState.Failed -> TargetPickerViewState.LoadFailed
+    is TargetsListState.Loaded -> {
+        val filtered = filterLaunchable(list.picks, normalizedQuery)
+        when {
+            list.picks.isEmpty() -> TargetPickerViewState.NoLaunchableApps
+            filtered.isNotEmpty() -> TargetPickerViewState.Rows(filtered)
+            else -> TargetPickerViewState.NoResults
+        }
     }
 }
 
 /**
- * Combines the streams so the count and filter above run only when the picks,
- * the selected tab, or the normalized query changes — a trailing space in the
- * search field, for instance, neither re-filters nor re-emits.
+ * Combines the enumeration with the search text so the filter runs only when the picks
+ * or the normalized query actually change — a trailing space in the field, for
+ * instance, neither re-filters nor re-emits.
  */
-fun targetsUiFlow(
+fun pickerUiFlow(
     list: Flow<TargetsListState>,
-    tab: Flow<TargetsTab>,
     rawQuery: Flow<String>,
-): Flow<TargetsUiState> = combine(
+): Flow<TargetPickerViewState> = combine(
     list,
-    tab,
     rawQuery.map(::normalizeTargetsQuery).distinctUntilChanged(),
-) { state, selectedTab, normalizedQuery ->
-    targetsUiState(state, selectedTab, normalizedQuery)
+) { state, normalizedQuery ->
+    pickerUiState(state, normalizedQuery)
 }

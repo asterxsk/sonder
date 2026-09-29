@@ -1,139 +1,50 @@
 package com.example.sonder.ui.screens.targets
 
-import android.graphics.Bitmap
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.db.TargetDao
-import com.example.sonder.data.db.TargetEntity
-import com.example.sonder.data.repo.InstalledApp
 import com.example.sonder.data.repo.InstalledAppsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-private const val TAG = "TargetsViewModel"
-
-data class TargetPickUi(
-    val packageName: String,
-    val label: String,
-    val enabled: Boolean,
-    val icon: Bitmap? = null,
-)
-
+/**
+ * The added targets. This screen no longer owns a tab or a search field — it shows the
+ * enabled set only — so the ViewModel keeps the enumeration, the retry, and the removal.
+ * The picker that owns the search has its own.
+ */
 @HiltViewModel
 class TargetsViewModel @Inject constructor(
     private val targetDao: TargetDao,
-    private val appsRepository: InstalledAppsRepository,
+    appsRepository: InstalledAppsRepository,
 ) : ViewModel() {
 
-    /** null until the launcher enumeration finishes — the only slow step here. */
-    private val installed = MutableStateFlow<List<InstalledApp>?>(null)
+    private val source = TargetsListSource(targetDao, appsRepository, viewModelScope)
 
-    /** True when the last enumeration threw; separate from null, which only means "not yet". */
-    private val loadFailed = MutableStateFlow(false)
-
-    /** The in-flight enumeration, so a retry supersedes it instead of racing it. */
-    private var loadJob: Job? = null
-
-    private val tab = MutableStateFlow(TargetsTab.ALL)
-    private val query = MutableStateFlow("")
-
-    /** Raw search text, bound to the field; normalization happens in [targetsUiFlow]. */
-    val queryText: StateFlow<String> = query.asStateFlow()
-
-    // Room emits on any target change, so toggles show up live. distinctUntilChanged
-    // drops an emission that leaves the picks identical.
-    private val listState: Flow<TargetsListState> =
-        combine(installed, loadFailed, targetDao.observeAll()) { apps, failed, targets ->
-            when {
-                failed -> TargetsListState.Failed
-                apps == null -> TargetsListState.Loading
-                else -> {
-                    // mergeTargetPicks owns label and enabled only; the icon is attached
-                    // here by package name, where apps are already distinct by package.
-                    val iconsByPackage = apps.associate { it.packageName to it.icon }
-                    TargetsListState.Loaded(
-                        mergeTargetPicks(apps, targets.associate { it.packageName to it.enabled })
-                            .map { pick -> pick.copy(icon = iconsByPackage[pick.packageName]) },
-                    )
-                }
-            }
-        }.distinctUntilChanged()
-
-    val ui: StateFlow<TargetsUiState> =
-        targetsUiFlow(listState, tab, query)
-            .stateIn(
-                viewModelScope,
-                SharingStarted.WhileSubscribed(5_000),
-                targetsUiState(TargetsListState.Loading, TargetsTab.ALL, ""),
-            )
-
-    init {
-        loadInstalledApps()
-    }
+    val ui: StateFlow<TargetsViewState> = source.state
+        .map(::targetsUiState)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            TargetsViewState.Loading,
+        )
 
     /** Explicit recovery from [TargetsViewState.LoadFailed]; re-enters Loading first. */
     fun retry() {
-        loadInstalledApps()
+        source.retry()
     }
 
-    private fun loadInstalledApps() {
-        // Supersede any in-flight enumeration. Without this a late failure from the
-        // replaced load could set loadFailed after a newer load already succeeded,
-        // leaving the screen on APPS UNAVAILABLE with nothing left to clear it. The
-        // catch below rethrows CancellationException, so cancelling never sets it.
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            installed.value = null
-            loadFailed.value = false
-            try {
-                // The repository enumerates on Dispatchers.IO; nothing is cached here or
-                // there, so a fresh visit sees apps installed or removed since last time.
-                installed.value = appsRepository.launchableApps()
-            } catch (e: Exception) {
-                // PackageManager is binder traffic and can throw (DeadObjectException,
-                // RemoteException, SecurityException). Without this the throw would escape
-                // viewModelScope and take the process down; instead the screen reports it.
-                if (e is CancellationException) throw e
-                Log.e(TAG, "launcher enumeration failed", e)
-                loadFailed.value = true
-            }
-        }
-    }
-
-    fun setTab(value: TargetsTab) {
-        tab.value = value
-    }
-
-    fun setQuery(value: String) {
-        query.value = value
-    }
-
-    fun toggle(packageName: String, label: String, enabled: Boolean) {
-        viewModelScope.launch {
-            // A copy of the stored row, not a fresh entity: upsert REPLACEs, so building
-            // from scratch would wipe the per-app overrides the settings screen saved.
-            // The label is refreshed from the launcher, since a row materialised by that
-            // screen before the app was ever enabled carries only the package id.
-            val row = targetDao.get(packageName)?.copy(label = label, enabled = enabled)
-                ?: TargetEntity(
-                    packageName = packageName,
-                    label = label,
-                    enabled = enabled,
-                    createdAtMillis = System.currentTimeMillis(),
-                )
-            targetDao.upsert(row)
-        }
+    /**
+     * Soft-remove a target: clear the enabled flag and nothing else. The row is left in
+     * place because the per-app overrides are columns on it, so deleting would destroy
+     * the settings the user requires a later ADD to restore. The 30 s wait in the
+     * screen gates this call; the ViewModel trusts the caller.
+     */
+    fun remove(packageName: String) {
+        viewModelScope.launch { targetDao.setEnabled(packageName, enabled = false) }
     }
 }

@@ -291,4 +291,75 @@ class HomeStateTest {
         )
         assertEquals(HomeSummary.Active(capOnly.row("com.c")), capOnly.summary)
     }
+
+    @Test
+    fun `an idle row badges LOCKED with no override`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.i", "IDLE")),
+            grants = emptyList(),
+            lockouts = emptyList(),
+            nowMillis = t0,
+        )
+
+        val row = state.row("com.i")
+        assertEquals(HomeBadge.LOCKED, row.badge())
+        // Null, not "": the badge reads plain LOCKED, never one with a trailing space.
+        assertEquals(null, row.badgeText())
+    }
+
+    @Test
+    fun `a granted row badges GRANTED with its MM SS countdown`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.g", "GRANT")),
+            grants = listOf(grant("com.g", t0 + 125_000L)),
+            lockouts = emptyList(),
+            nowMillis = t0,
+        )
+
+        val row = state.row("com.g")
+        assertEquals(HomeBadge.GRANTED, row.badge())
+        assertEquals("02:05", row.badgeText())
+    }
+
+    @Test
+    fun `a debt lockout badges LOCKED with its countdown`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.d", "DEBT")),
+            grants = emptyList(),
+            lockouts = listOf(lockout("com.d", t0 + 10 * 60_000L)),
+            nowMillis = t0,
+        )
+
+        val row = state.row("com.d")
+        assertEquals(HomeBadge.LOCKED, row.badge())
+        assertEquals("10:00", row.badgeText())
+    }
+
+    @Test
+    fun `a daily cap lockout badges LOCKED reading CAPPED`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.c", "CAPPED")),
+            grants = emptyList(),
+            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
+            nowMillis = t0,
+            zoneId = ZoneOffset.UTC,
+        )
+
+        val row = state.row("com.c")
+        assertEquals(HomeBadge.LOCKED, row.badge())
+        assertEquals("CAPPED", row.badgeText())
+    }
+
+    @Test
+    fun `the accessibility state word for an idle row is LOCKED`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.i", "IDLE")),
+            grants = emptyList(),
+            lockouts = emptyList(),
+            nowMillis = t0,
+        )
+
+        // The spoken state must match the visible badge, so IDLE reads LOCKED here too.
+        assertEquals("LOCKED", state.row("com.i").stateWord())
+    }
 }

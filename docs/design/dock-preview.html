@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonder — dock selection styles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0906; --surface:#15100B; --panel:#221A12; --border:#A68A52;
+    --border-dark:#51452F; --primary:#FFB827; --primary-dark:#C88A16;
+    --text:#EAD7A1; --muted:#8A8168; --shadow-panel:#332816; --danger:#EF4444;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"DM Mono",ui-monospace,monospace; font-size:13px; line-height:1.6;
+    padding:32px 24px 96px; -webkit-font-smoothing:antialiased;
+  }
+  h1{
+    font-family:"Press Start 2P",monospace; font-size:16px; color:var(--primary);
+    margin:0 0 8px; letter-spacing:.5px;
+  }
+  .lede{max-width:680px;color:var(--muted);margin:0 0 32px}
+  .lede b{color:var(--text);font-weight:400}
+
+  .grid{display:flex;flex-wrap:wrap;gap:40px 32px;align-items:flex-start}
+  .card{width:360px}
+  .cap{
+    font-family:"Press Start 2P",monospace;font-size:10px;color:var(--primary);
+    letter-spacing:.5px;margin-bottom:2px;
+  }
+  .note{color:var(--muted);font-size:12px;margin:0 0 14px;min-height:52px}
+
+  /* The dock: 360dp wide, 64dp tall, 16dp margins, radius 32 = true semicircle ends. */
+  .dock{
+    position:relative;width:328px;height:64px;margin:16px;border-radius:32px;
+    background:var(--surface);border:2px solid var(--border);
+    display:flex;
+  }
+  .dock::after{ /* the hard-offset ground, drawn as one rounded ground behind the pill */
+    content:"";position:absolute;inset:0;border-radius:32px;
+    background:transparent;z-index:-1;
+  }
+  .shadow{filter:drop-shadow(2px 2px 0 var(--shadow-panel))}
+
+  .tab{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    position:relative;gap:1px;
+  }
+  /* Segment inset from the pill edge: 8dp vertical, 4dp horizontal. */
+  .seg{position:absolute;inset:8px 4px;border-radius:32px}
+  .glyph{font-size:26px;line-height:28px;position:relative;z-index:1}
+  .label{font-family:"DM Mono",monospace;font-size:10px;line-height:13px;position:relative;z-index:1}
+
+  .on{color:var(--primary)}
+  .off{color:var(--muted)}
+
+  /* ---------- Variant 1: FRAME (current) ---------- */
+  .v-frame .on .seg{background:var(--panel);border:2px solid var(--primary)}
+
+  /* ---------- Variant 2: FILL ---------- */
+  .v-fill .on .seg{background:var(--primary)}
+  .v-fill .on{color:var(--bg)}
+
+  /* ---------- Variant 3: UNDERLINE ---------- */
+  .v-underline .on .seg::after{
+    content:"";position:absolute;left:50%;transform:translateX(-50%);
+    bottom:2px;width:26px;height:3px;background:var(--primary);
+  }
+
+  /* ---------- Variant 4: TAB (top bar) ---------- */
+  .v-tab .on .seg::before{
+    content:"";position:absolute;left:50%;transform:translateX(-50%);
+    top:-8px;width:26px;height:3px;background:var(--primary);
+  }
+
+  /* ---------- Variant 5: INK (quietest) ---------- */
+  /* nothing but the amber type */
+
+  /* ---------- Variant 6: NOTCH (filled, no border) ---------- */
+  .v-notch .on .seg{background:var(--panel)}
+
+  /* ---------- Variant 7: GLOW FRAME (frame + amber pixel shadow) ---------- */
+  .v-glow .on .seg{
+    background:var(--panel);border:2px solid var(--primary);
+    box-shadow:2px 2px 0 var(--primary-dark);
+  }
+
+  /* ---------- Variant 8: WELL (inset, dark) ---------- */
+  .v-well .on .seg{
+    background:var(--bg);border:2px solid var(--border-dark);
+    box-shadow:inset 0 0 0 2px var(--bg);
+  }
+
+  .divider{height:2px;background:var(--border-dark);margin:56px 0 40px;max-width:1140px}
+  .foot{max-width:680px;color:var(--muted);font-size:12px;margin-top:48px}
+  .foot code{color:var(--text)}
+</style>
+</head>
+<body>
+
+<h1>Dock selection styles</h1>
+<p class="lede">
+  Same palette, same 328×64 pill, same geometry — only the <b>active-tab treatment</b> changes.
+  Each card shows Home selected. <b>Compare the ink weight first</b>: how loudly the pill says which
+  tab you are on, and whether that competes with the app content above it.
+</p>
+<p class="lede" style="color:#EAD7A1">
+  <b>Shipped:</b> a quiet <b>square</b> of raised panel behind the tab, no frame — the pill is
+  rounded and the key inside it is not. See variant 6 for the nearest of these, with the one
+  difference that the shipped ground is square rather than rounded.
+</p>
+
+<div class="grid" id="grid"></div>
+
+<div class="divider"></div>
+<p class="foot">
+  Live file: <code>android-native/app/src/main/java/com/example/sonder/ui/kit/PixelDock.kt</code>.
+  Variant 1 is what ships today.
+</p>
+
+<script>
+const TABS = [
+  {glyph:"⌂", label:"Home"},
+  {glyph:"◎", label:"Targets"},
+  {glyph:"▥", label:"Stats"},
+  {glyph:"⚙", label:"Settings"},
+];
+
+const VARIANTS = [
+  ["1 · FRAME",   "v-frame",     "Amber 2px frame on a raised panel. What ships today. Reads as a button inside the pill; the strongest structural statement of the eight."],
+  ["2 · FILL",    "v-fill",      "Solid amber segment, near-black glyph and label. Loudest and most legible at a glance; also the biggest block of amber on screen, which pulls the eye off the content."],
+  ["3 · UNDERLINE","v-underline","No ground, no frame — amber type with a short amber rule under it. The selection sits in the type rather than in a box."],
+  ["4 · TAB",     "v-tab",       "Short amber rule above the glyph, like a console indicator riding the pill's top edge. Very quiet; may read as a separate mark rather than a selection."],
+  ["5 · INK",     "v-ink",       "Nothing at all but amber type. The quietest option — relies entirely on colour, so it is also the weakest for anyone who can't separate amber from the muted tone."],
+  ["6 · NOTCH",   "v-notch",     "Raised panel ground, no frame. A soft 'pressed in' dark segment: the amber does the pointing, the panel only hints at the shape."],
+  ["7 · GLOW FRAME","v-glow",    "The current frame plus a hard amber pixel shadow bottom-right. Adds the raised-object grammar the rest of the UI uses; extra weight on the largest chrome element."],
+  ["8 · WELL",    "v-well",      "A recessed dark well with a dim frame and no amber fill at all — only the glyph and label are amber. Sinks rather than lifts."],
+];
+
+const grid = document.getElementById("grid");
+for (const [cap, cls, note] of VARIANTS) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const tabs = TABS.map((t, i) => {
+    const active = i === 0;
+    return `<div class="tab ${active ? "on" : "off"}">
+      <div class="seg"></div>
+      <div class="glyph">${t.glyph}</div>
+      <div class="label">${t.label}</div>
+    </div>`;
+  }).join("");
+  card.innerHTML = `
+    <div class="cap">${cap}</div>
+    <p class="note">${note}</p>
+    <div class="dock ${cls} shadow">${tabs}</div>`;
+  grid.appendChild(card);
+}
+</script>
+</body>
+</html>

@@ -18,6 +18,13 @@ import java.util.Locale
  */
 enum class HomeLockout { DEBT, DAILY_CAP }
 
+/**
+ * Home's badge vocabulary. PLAYING is deliberately absent: while a gated app is open the
+ * block overlay covers Home, and Home is only on screen when Sonder itself is foreground,
+ * so "playing" was never observable here — the blackjack gate keeps that badge.
+ */
+enum class HomeBadge { GRANTED, LOCKED }
+
 /** One enabled target as Home renders it: canonical state plus live remaining text. */
 data class HomeRow(
     val packageName: String,
@@ -30,6 +37,35 @@ data class HomeRow(
     /** Local wall-clock `HH:mm` a DAILY_CAP row resets at; empty for every other row. */
     val resetText: String = "",
 )
+
+/**
+ * GRANTED only for a live grant. IDLE is LOCKED because the app is gated and untouched:
+ * no clock is running behind it, and no Home state could honestly read as "playing".
+ */
+internal fun HomeRow.badge(): HomeBadge =
+    if (state == EnforcementState.GRANTED) HomeBadge.GRANTED else HomeBadge.LOCKED
+
+/**
+ * The badge's own word when null, so an idle row reads a clean `LOCKED` rather than one
+ * with a trailing space where a countdown would be. A cap lockout names the wall clock it
+ * resets against instead of a countdown that would run four digits long.
+ */
+internal fun HomeRow.badgeText(): String? = when {
+    lockout == HomeLockout.DAILY_CAP -> "CAPPED"
+    else -> remainingText.ifEmpty { null }
+}
+
+/**
+ * Readable state word for the row's accessibility description. Idle reads LOCKED so the
+ * spoken state matches the visible badge.
+ */
+internal fun HomeRow.stateWord(): String = when {
+    lockout == HomeLockout.DAILY_CAP -> "DAILY CAP REACHED"
+    state == EnforcementState.LOCKED -> "LOCKED"
+    state == EnforcementState.GRANTED -> "ACCESS GRANTED"
+    state == EnforcementState.IDLE -> "LOCKED"
+    else -> "OFF"
+}
 
 /** The live-status panel's deterministic presentations (Loading is the screen's null state). */
 sealed interface HomeSummary {

@@ -108,7 +108,8 @@ but not publishable to Play.
 1. Install the APK (CI artifacts or local build).
 2. Complete the onboarding wizard — grant all four permissions (each step
    deep-links to the right settings page).
-3. Toggle apps ON in **Targets**.
+3. Add the apps you want to limit in **Targets** — `ADD` opens a picker; tap apps to
+   select them and `DONE` to confirm.
 4. Open a target app → the gate appears → play blackjack.
 
 ---

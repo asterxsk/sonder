@@ -110,18 +110,25 @@ The panel has four deterministic presentations:
 - **Idle:** `PROTECTION READY`, the number of enabled targets, and concise copy explaining that opening one requires a hand.
 - **Active:** the highest-urgency granted or locked target, its label, state badge, and live `MM:SS` remaining time. Locked state sorts before granted state; other active rows remain visible in the list.
 
-Below the panel, `LIMITED APPS` shows enabled targets only. Rows are ordered locked, granted, then idle, with label as a stable secondary ordering. Disabled target records remain in Room but appear only in Targets.
+Below the panel, `LIMITED APPS` shows enabled targets only. Rows are ordered locked, granted, then idle, with label as a stable secondary ordering. Disabled target records remain in Room but appear only in the `ADD` picker, unchecked and selectable — re-adding one restores the per-app rules it kept.
 
 ### Targets
 
-Targets becomes a dock-backed top-level screen with no Back or Done controls.
+Targets becomes a dock-backed top-level screen with no Back or Done controls. It lists
+only the apps you have added, and opens empty with an `ADD` action.
 
-- Keep search, All, and Limited filters.
-- Reduce title/search/tab/footer vertical consumption while keeping interactive elements at least 48dp high.
-- Make tabs fill the available row consistently.
+- `ADD` opens a separate multi-select picker that is add-only; already-added apps render
+  checked and inert, and search now lives in the picker, not the list.
+- Reduce title/footer vertical consumption while keeping interactive elements at least 48dp high.
+- Each added row carries a delayed `✎` edit control (15 s) and a delayed `✕` remove control
+  (30 s); both are cancellable, and the instant per-row toggle is gone, since it was a
+  no-wait path around those pauses.
+- Removal is a soft remove — `enabled = false` — so the app keeps its per-app rule overrides
+  and its hand history; re-adding restores its settings.
 - Keep lightweight framed glyphs instead of eagerly loading all launcher bitmaps.
-- Treat each row as a toggle with a selected-state description; the whole row remains tappable.
-- Show explicit states for package loading, zero launchable apps, no query results, and an empty Limited filter.
+- Show explicit states for package loading and zero launchable apps. No-results belongs to
+  the picker, which is the only screen with a query now; the added list has no search and
+  so has no way to match nothing.
 - Keep explanatory copy concise and outside the scrolling list without obscuring the last row.
 
 ### Stats
@@ -190,7 +197,7 @@ Do not perform repeated permission audits during ordinary recomposition. Refresh
 ## Accessibility and resilience
 
 - All tab, row, button, and permission actions expose readable labels or state descriptions.
-- Target rows expose an on/off toggle role and selected state without requiring the package ID to understand the action.
+- Target rows expose labeled edit and remove actions without requiring the package ID to understand them.
 - Text and state colors continue to use Pixel UI v3 semantic tokens.
 - Interactive targets remain at least 48dp.
 - Small-height screens, gesture navigation, display cutouts, and larger font scales must not hide primary actions.
@@ -212,10 +219,9 @@ Add focused unit tests for pure behavior introduced by this pass:
 
 ### Targets filter
 
-- All tab includes enabled and disabled launchable apps.
-- Limited tab includes enabled apps only.
-- Query matches labels and package names case-insensitively.
-- A nonmatching query produces the no-results state.
+- `addedTargets` includes enabled apps only.
+- `filterLaunchable` matches labels and package names case-insensitively.
+- A nonmatching query produces the picker's no-results state.
 - Loading is distinct from an empty loaded package list.
 
 ### Navigation policy

@@ -87,20 +87,25 @@ class EnforcementRepository @Inject constructor(
      * than dropping the write, which is what "tapping a preset persists it" requires.
      */
     suspend fun updateOverrides(packageName: String, overrides: TargetOverrides) {
-        val target = targetDao.get(packageName) ?: TargetEntity(
-            packageName = packageName,
-            label = packageName,
-            enabled = false,
-            createdAtMillis = System.currentTimeMillis(),
-        )
-        targetDao.upsert(
-            target.copy(
-                winGrantMillis = overrides.winGrantMillis,
-                lossDebtMillis = overrides.lossDebtMillis,
-                maxDebtMillis = overrides.maxDebtMillis,
-                absenceRevokeMillis = overrides.absenceRevokeMillis,
-                dailyCapMillis = overrides.dailyCapMillis,
+        // Materialise first, then name the five columns this call owns. Writing the whole
+        // row would mean writing the label and the enabled flag too, from a value read
+        // before this function started — so an ADD committed in the same instant would be
+        // undone here, or an override saved in the same instant undone there.
+        targetDao.insertIfAbsent(
+            TargetEntity(
+                packageName = packageName,
+                label = packageName,
+                enabled = false,
+                createdAtMillis = System.currentTimeMillis(),
             ),
+        )
+        targetDao.setOverrides(
+            pkg = packageName,
+            winGrant = overrides.winGrantMillis,
+            lossDebt = overrides.lossDebtMillis,
+            maxDebt = overrides.maxDebtMillis,
+            absenceRevoke = overrides.absenceRevokeMillis,
+            dailyCap = overrides.dailyCapMillis,
         )
     }
 

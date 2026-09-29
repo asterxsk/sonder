@@ -58,7 +58,7 @@ app/src/main/java/com/example/sonder/
 │   └── scheduling/    boot receiver, grant-expiry alarms
 └── ui/
     ├── kit/           PixelKit: panels, buttons, tabs, timer, badges, toasts
-    └── screens/       onboarding, home, targets, blackjack, stats, settings
+    └── screens/       onboarding, home, targets, targetpicker, blackjack, stats, settings
 ```
 
 Timers are absolute epoch millis everywhere: grants, lockouts and debt survive

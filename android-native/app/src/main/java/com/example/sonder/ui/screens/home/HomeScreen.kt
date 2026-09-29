@@ -249,17 +249,12 @@ private fun HomeTargetPanel(row: HomeRow) {
                     fontFamily = PixelFont,
                     color = PixelPalette.Text,
                 )
-                when (row.state) {
-                    EnforcementState.GRANTED ->
-                        PixelStatusBadge(BadgeTone.GRANTED, labelOverride = row.remainingText)
-                    EnforcementState.LOCKED ->
-                        PixelStatusBadge(
-                            BadgeTone.LOCKED,
-                            labelOverride = if (capped) "CAPPED" else row.remainingText,
-                        )
-                    else ->
-                        PixelStatusBadge(BadgeTone.PLAYING)
+                // A null override leaves the badge reading its own word (GRANTED / LOCKED).
+                val tone = when (row.badge()) {
+                    HomeBadge.GRANTED -> BadgeTone.GRANTED
+                    HomeBadge.LOCKED -> BadgeTone.LOCKED
                 }
+                PixelStatusBadge(tone, labelOverride = row.badgeText())
             }
             Spacer(Modifier.height(PixelSpace.Tight))
             androidx.compose.material3.Text(
@@ -307,13 +302,4 @@ private fun HomeResetFrame(resetText: String) {
             modifier = Modifier.padding(top = PixelSpace.Snug),
         )
     }
-}
-
-/** Readable state word for the row's accessibility description. */
-private fun HomeRow.stateWord(): String = when {
-    lockout == HomeLockout.DAILY_CAP -> "DAILY CAP REACHED"
-    state == EnforcementState.LOCKED -> "LOCKED"
-    state == EnforcementState.GRANTED -> "ACCESS GRANTED"
-    state == EnforcementState.IDLE -> "IDLE"
-    else -> "OFF"
 }

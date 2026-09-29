@@ -4,6 +4,7 @@ import androidx.navigation3.runtime.NavKey
 import com.example.sonder.Main
 import com.example.sonder.Settings
 import com.example.sonder.Stats
+import com.example.sonder.TargetPicker
 import com.example.sonder.Targets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -78,5 +79,23 @@ class NavPolicyTest {
         NavPolicy.back(stack)
 
         assertEquals(listOf<NavKey>(Main, Stats), stack)
+    }
+
+    @Test
+    fun `the add picker keeps TARGETS lit`() {
+        assertEquals(PixelTab.TARGETS, NavPolicy.tabOf(listOf(Main, Targets, TargetPicker)))
+    }
+
+    @Test
+    fun `a dock tap replaces the add picker`() {
+        // Re-tapping TARGETS must leave the picker for the list, like any other detail.
+        assertEquals(listOf<NavKey>(Main, Targets), NavPolicy.select(listOf(Main, Targets, TargetPicker), PixelTab.TARGETS))
+        // Any other tab replaces the whole TARGETS stack with that tab.
+        assertEquals(listOf<NavKey>(Main, Stats), NavPolicy.select(listOf(Main, Targets, TargetPicker), PixelTab.STATS))
+    }
+
+    @Test
+    fun `back from the add picker drops it`() {
+        assertEquals(listOf<NavKey>(Main, Targets), NavPolicy.back(listOf(Main, Targets, TargetPicker)))
     }
 }

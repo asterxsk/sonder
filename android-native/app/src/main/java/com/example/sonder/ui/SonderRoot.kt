@@ -1,5 +1,9 @@
 package com.example.sonder.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +22,9 @@ import com.example.sonder.Main
 import com.example.sonder.Onboarding
 import com.example.sonder.Settings
 import com.example.sonder.Stats
+import com.example.sonder.TargetPicker
 import com.example.sonder.Targets
+import com.example.sonder.theme.PixelMotion
 import com.example.sonder.theme.PanelDeep
 import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
@@ -29,6 +35,7 @@ import com.example.sonder.ui.screens.home.HomeScreen
 import com.example.sonder.ui.screens.onboarding.OnboardingScreen
 import com.example.sonder.ui.screens.settings.SettingsScreen
 import com.example.sonder.ui.screens.stats.StatsScreen
+import com.example.sonder.ui.screens.targetpicker.TargetPickerScreen
 import com.example.sonder.ui.screens.targets.TargetsScreen
 
 /**
@@ -71,6 +78,14 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                 }
             }
 
+            // Both ways out of the picker drop *this* entry rather than whatever is on
+            // top. DONE commits asynchronously and pops when the write lands, so a Back
+            // pressed while that write was still in flight would otherwise be answered
+            // twice — the second pop deleting Targets and leaving the user on Home.
+            val leavePicker: () -> Unit = {
+                if (backStack.lastOrNull() is TargetPicker) applyBackStack(NavPolicy.back(backStack))
+            }
+
             PixelAppScaffold(
                 selectedTab = NavPolicy.tabOf(backStack),
                 onSelectTab = { tab -> applyBackStack(NavPolicy.select(backStack, tab)) },
@@ -79,6 +94,24 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                     backStack = backStack,
                     modifier = Modifier.fillMaxSize(),
                     onBack = { applyBackStack(NavPolicy.back(backStack)) },
+                    // Screens slide, they do not dissolve. A crossfade reads as a screen
+                    // that has replaced another with no relationship to it; a slide says
+                    // which way the user is going and which way Back comes home.
+                    //
+                    // This is the one animation in the app that is not run through
+                    // §18's quantised easing. That easing pins colour and 2dp presses to
+                    // four discrete frames, but across a screen's full width the same
+                    // four frames land 90dp apart and read as a stutter rather than as a
+                    // slide, so the spatial transition stays continuous — and short, at
+                    // the same 180ms the rest of the motion uses.
+                    transitionSpec = {
+                        slideInHorizontally(tween(PixelMotion.StateMillis)) { it } togetherWith
+                            slideOutHorizontally(tween(PixelMotion.StateMillis)) { -it }
+                    },
+                    popTransitionSpec = {
+                        slideInHorizontally(tween(PixelMotion.StateMillis)) { -it } togetherWith
+                            slideOutHorizontally(tween(PixelMotion.StateMillis)) { it }
+                    },
                     entryProvider = entryProvider {
                         entry<Main> {
                             HomeScreen(
@@ -96,6 +129,9 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                                 onOpenAppSettings = { packageName ->
                                     applyBackStack(backStack.toList() + AppSettings(packageName))
                                 },
+                                onAddApps = {
+                                    applyBackStack(backStack.toList() + TargetPicker)
+                                },
                             )
                         }
                         entry<Stats> { StatsScreen(contentPadding = contentPadding) }
@@ -105,6 +141,16 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                                 packageName = key.packageName,
                                 contentPadding = contentPadding,
                                 onBack = { applyBackStack(NavPolicy.back(backStack)) },
+                            )
+                        }
+                        entry<TargetPicker> {
+                            // DONE commits in the screen before popping; CANCEL and system
+                            // Back commit nothing. All three just drop this entry, revealing
+                            // the Targets list underneath.
+                            TargetPickerScreen(
+                                contentPadding = contentPadding,
+                                onDone = leavePicker,
+                                onCancel = leavePicker,
                             )
                         }
                     },

@@ -28,7 +28,7 @@ import com.example.sonder.theme.TextSoft
 /**
  * The pixel search field (design_v3 §6 vocabulary, not a Material outline): hard
  * frame, panel ground, mono text, amber caret, the shared focus ring, 48dp target.
- * Type filters the Targets inventory; the IME action is Search.
+ * Type filters the add-apps picker; the IME action is Search.
  */
 @Composable
 fun PixelSearchField(

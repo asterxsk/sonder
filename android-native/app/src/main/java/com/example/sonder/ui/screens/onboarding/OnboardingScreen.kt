@@ -103,21 +103,26 @@ fun OnboardingScreen(
         )
         Spacer(Modifier.height(PixelSpace.Section))
 
-        // Progress rail: one block per permission, filled when granted.
+        // Progress rail: one block per step, filled up to where the user is. It is
+        // positional rather than per-permission: the label under it says "STEP 2 OF 4",
+        // and a rail that lit a later block green because that permission happened to be
+        // granted already would contradict the number right beneath it. So the current
+        // step is green, everything past it is the unfilled tone, and the rail only
+        // reaches its end when the last step is done.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(PixelSpace.Tight),
         ) {
-            SonderPermission.entries.forEach { p ->
-                val granted = p !in missing
+            SonderPermission.entries.forEachIndexed { index, _ ->
+                val reached = allGranted || index <= currentStep
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(ProgressRailHeight)
-                        .background(if (granted) PixelPalette.Success else PixelPalette.Panel)
+                        .background(if (reached) PixelPalette.Success else PixelPalette.Panel)
                         .border(
                             PixelSpace.Stroke,
-                            if (granted) PixelPalette.Success else PixelPalette.BorderDark,
+                            if (reached) PixelPalette.Success else PixelPalette.BorderDark,
                         ),
                 )
             }

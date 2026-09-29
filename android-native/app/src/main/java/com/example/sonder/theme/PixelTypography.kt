@@ -84,6 +84,27 @@ object PixelTypeScale {
         fontSize = 10.sp,
         lineHeight = 15.sp,
     )
+
+    /**
+     * The dock's tab glyph. No font family on purpose: `⌂ ◎ ▥ ⚙` are symbols the pixel
+     * face has no cut of, so they render from the platform's symbol font as they always
+     * have — this only makes them big enough to be the dock's icon rather than a
+     * decorative fleck above the label.
+     */
+    val NavGlyph = TextStyle(
+        fontSize = 26.sp,
+        lineHeight = 28.sp,
+    )
+
+    /**
+     * A row's action glyph (`✎ ✕`) — same reasoning as [NavGlyph]: a symbol-font
+     * character, sized to be the control's mark inside its 48dp frame rather than a
+     * stray character floating in an empty box.
+     */
+    val RowGlyph = TextStyle(
+        fontSize = 20.sp,
+        lineHeight = 24.sp,
+    )
     val CardFace = TextStyle(
         fontFamily = PixelFont,
         fontWeight = FontWeight.Normal,
@@ -111,6 +132,19 @@ object MonoTypeScale {
         fontWeight = FontWeight.Normal,
         fontSize = 10.sp,
         lineHeight = 14.sp,
+    )
+
+    /**
+     * The dock's tab label. Mono rather than the pixel face for two reasons: the label is
+     * sentence case, which the pixel face has no lowercase cut for, and §4's floor keeps
+     * the pixel face at 10sp and above — a smaller pixel label would break that rule
+     * rather than bend it. Under a large glyph the label is the caption, not the icon.
+     */
+    val NavLabel = TextStyle(
+        fontFamily = MonoFont,
+        fontWeight = FontWeight.Normal,
+        fontSize = 10.sp,
+        lineHeight = 13.sp,
     )
 }
 
