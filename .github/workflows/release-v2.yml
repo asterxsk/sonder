@@ -1,16 +1,21 @@
 # Builds the Sonder v2 (android-native) release APK and publishes it as a
 # GitHub Release. Triggered by version tags (v1.0.0) or by hand from the
-# Actions tab. This is the only workflow that publishes on v* tags.
+# Actions tab. This is the only workflow that publishes on version tags.
 #
 # The tag supplies versionName only. versionCode is the workflow run number,
 # which is monotonic and lets each release install over the previous one.
+#
+# The pattern is three dotted numbers rather than a bare `v*` so that a tag
+# which is only a marker — `v1-final`, say — cannot start a release. A bare `v*`
+# did exactly that: the marker tag built an APK and would have published it as
+# "Sonder v2 1-final", because the version is taken straight from the tag name.
 
 name: Release Android APK (v2)
 
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
     inputs:
       version:
