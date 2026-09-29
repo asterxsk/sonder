@@ -101,15 +101,23 @@ Enforcement internals, edge cases, and the QA checklist:
   compiles the release variant as a smoke check (no artifact). Uploads the debug
   APK as the `sonder-v2-debug-apk` artifact.
 
-`.github/workflows/release-v2.yml` on `v*` tags or a manual run: the only
-workflow that builds the release APK. Gates on the unit tests, builds it with
-the tag (or the manual `version` input) as `versionName` and the workflow run
-number as `versionCode`, verifies both plus the signer, and publishes it as a
-GitHub Release (`sonder-v2-<version>.apk`). **Signed automatically** when the
+`.github/workflows/release-v2.yml` on version tags (three dotted numbers, so a
+marker tag like `v1-final` cannot start one) or a manual run: the only workflow
+that builds the release APK. Gates on the unit tests, builds it with the tag (or
+the manual `version` input) as `versionName` and the workflow run number as
+`versionCode`, verifies both plus the signer, and publishes it as a GitHub
+Release (`sonder-v2-<version>.apk`). **Signed automatically** when the
 `SONDER_KEYSTORE_B64`, `SONDER_KEYSTORE_PASSWORD`, `SONDER_KEY_ALIAS`,
-`SONDER_KEY_PASSWORD` secrets are configured (keystore as base64). Without
-them it falls back to the Android **debug key** — installable for sideloading,
-but not publishable to Play.
+`SONDER_KEY_PASSWORD` secrets are configured (keystore as base64).
+
+The release key lives at `tools/sonder-release.jks` (gitignored, with its
+password alongside it) — **back it up somewhere outside this checkout**. Losing
+it means no future release can install as an update over an existing one, which
+is the whole reason it exists: without those secrets the workflow falls back to
+the Android **debug key**, and a debug key is generated fresh on every runner, so
+each release came out signed by a *different* key and `adb install` refused every
+update with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Sideloadable, one build at a
+time, never upgradeable.
 
 ### First-run setup
 

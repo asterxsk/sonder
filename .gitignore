@@ -3,6 +3,10 @@
 build/
 local.properties
 *.apk.idsig
+# No APK belongs in the tree — a committed one is not just dead weight. The
+# release workflow used to glob sonder-v2-*.apk at the checkout root, so a stale
+# sonder-v2-1.1.0.apk rode along as a second asset beside the real one.
+*.apk
 # Signing keys — never commit a private key (see docs/android-native-v2.md).
 *.jks
 *.keystore
