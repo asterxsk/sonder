@@ -1,6 +1,6 @@
 # android-native/app/src/test/java/com/example/sonder/ui/screens/home/HomeStateTest.kt
 
-- HomeStateTest · class · L18-L294 — class HomeStateTest
+- HomeStateTest · class · L18-L365 — class HomeStateTest
 - target · method · L22-L27 — private fun target(packageName: String, label: String, enabled: Boolean = true)
 - grant · method · L29-L30 — private fun grant(packageName: String, endAtMillis: Long)
 - lockout · method · L32-L38 — private fun lockout(packageName: String, untilMillis: Long, reason: String? = null)
@@ -22,3 +22,8 @@
 - `debt lockout keeps the ticking countdown and reads as debt` · method · L239-L252 — @Test fun `debt lockout keeps the ticking countdown and reads as debt`()
 - `a cap lockout ranks below a live grant while a debt lockout outranks it` · method · L254-L272 — @Test fun `a cap lockout ranks below a live grant while a debt lockout outranks it`()
 - `the summary features a live grant over a cap lockout, and a lone cap on its own` · method · L274-L293 — @Test fun `the summary features a live grant over a cap lockout, and a lone cap on its own`()
+- `an idle row badges LOCKED with no override` · method · L295-L308 — @Test fun `an idle row badges LOCKED with no override`()
+- `a granted row badges GRANTED with its MM SS countdown` · method · L310-L322 — @Test fun `a granted row badges GRANTED with its MM SS countdown`()
+- `a debt lockout badges LOCKED with its countdown` · method · L324-L336 — @Test fun `a debt lockout badges LOCKED with its countdown`()
+- `a daily cap lockout badges LOCKED reading CAPPED` · method · L338-L351 — @Test fun `a daily cap lockout badges LOCKED reading CAPPED`()
+- `the accessibility state word for an idle row is LOCKED` · method · L353-L364 — @Test fun `the accessibility state word for an idle row is LOCKED`()

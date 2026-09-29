@@ -1,21 +1,26 @@
 # android-native/app/src/main/java/com/example/sonder/ui/screens/targets/TargetsFilter.kt
 
-- TargetsTab · enum · L10-L10 — enum class TargetsTab
-- TargetsListState · interface · L18-L22 — sealed interface TargetsListState
-- Loading · class · L19-L19 — data object Loading : TargetsListState
-- Loaded · class · L20-L20 — data class Loaded(val picks: List<TargetPickUi>) : TargetsListState
-- Failed · class · L21-L21 — data object Failed : TargetsListState
-- TargetsViewState · interface · L25-L43 — sealed interface TargetsViewState
-- Loading · class · L27-L27 — data object Loading : TargetsViewState
-- NoLaunchableApps · class · L30-L30 — data object NoLaunchableApps : TargetsViewState
-- LoadFailed · class · L33-L33 — data object LoadFailed : TargetsViewState
-- EmptyLimited · class · L36-L36 — data object EmptyLimited : TargetsViewState
-- NoResults · class · L39-L39 — data object NoResults : TargetsViewState
-- Rows · class · L42-L42 — data class Rows(val picks: List<TargetPickUi>) : TargetsViewState
-- TargetsUiState · class · L46-L50 — data class TargetsUiState( val tab: TargetsTab, val enabledCount: Int, val view: TargetsViewState, )
-- normalizeTargetsQuery · function · L53-L53 — fun normalizeTargetsQuery(raw: String): String
-- enabledTargetCount · function · L56-L56 — fun enabledTargetCount(picks: List<TargetPickUi>): Int
-- filterTargets · function · L63-L72 — fun filterTargets( picks: List<TargetPickUi>, tab: TargetsTab, normalizedQuery: String, ): List<TargetPickUi>
-- mergeTargetPicks · function · L75-L84 — fun mergeTargetPicks( apps: List<InstalledApp>, enabledByPackage: Map<String, Boolean>, ): List<TargetPickUi>
-- targetsUiState · function · L87-L107 — fun targetsUiState( list: TargetsListState, tab: TargetsTab, normalizedQuery: String, ): TargetsUiState
-- targetsUiFlow · function · L114-L124 — fun targetsUiFlow( list: Flow<TargetsListState>, tab: Flow<TargetsTab>, rawQuery: Flow<String>, ): Flow<TargetsUiState>
+- TargetsListState · interface · L17-L21 — sealed interface TargetsListState
+- Loading · class · L18-L18 — data object Loading : TargetsListState
+- Loaded · class · L19-L19 — data class Loaded(val picks: List<TargetPickUi>) : TargetsListState
+- Failed · class · L20-L20 — data object Failed : TargetsListState
+- TargetsViewState · interface · L28-L42 — sealed interface TargetsViewState
+- Loading · class · L29-L29 — data object Loading : TargetsViewState
+- NoLaunchableApps · class · L32-L32 — data object NoLaunchableApps : TargetsViewState
+- LoadFailed · class · L35-L35 — data object LoadFailed : TargetsViewState
+- Empty · class · L38-L38 — data object Empty : TargetsViewState
+- Rows · class · L41-L41 — data class Rows(val picks: List<TargetPickUi>) : TargetsViewState
+- TargetPickerViewState · interface · L49-L55 — sealed interface TargetPickerViewState
+- Loading · class · L50-L50 — data object Loading : TargetPickerViewState
+- NoLaunchableApps · class · L51-L51 — data object NoLaunchableApps : TargetPickerViewState
+- LoadFailed · class · L52-L52 — data object LoadFailed : TargetPickerViewState
+- NoResults · class · L53-L53 — data object NoResults : TargetPickerViewState
+- Rows · class · L54-L54 — data class Rows(val picks: List<TargetPickUi>) : TargetPickerViewState
+- normalizeTargetsQuery · function · L58-L58 — fun normalizeTargetsQuery(raw: String): String
+- addedTargets · function · L65-L65 — fun addedTargets(picks: List<TargetPickUi>): List<TargetPickUi>
+- filterLaunchable · function · L72-L79 — fun filterLaunchable( picks: List<TargetPickUi>, normalizedQuery: String, ): List<TargetPickUi>
+- mergeTargetPicks · function · L82-L91 — fun mergeTargetPicks( apps: List<InstalledApp>, enabledByPackage: Map<String, Boolean>, ): List<TargetPickUi>
+- newTarget · function · L105-L111 — fun newTarget(packageName: String, label: String, nowMillis: Long): TargetEntity
+- targetsUiState · function · L114-L129 — fun targetsUiState(list: TargetsListState): TargetsViewState
+- pickerUiState · function · L132-L146 — fun pickerUiState( list: TargetsListState, normalizedQuery: String, ): TargetPickerViewState
+- pickerUiFlow · function · L153-L161 — fun pickerUiFlow( list: Flow<TargetsListState>, rawQuery: Flow<String>, ): Flow<TargetPickerViewState>

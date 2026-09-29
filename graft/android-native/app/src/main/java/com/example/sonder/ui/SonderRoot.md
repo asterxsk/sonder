@@ -1,3 +1,3 @@
 # android-native/app/src/main/java/com/example/sonder/ui/SonderRoot.kt
 
-- SonderRoot · function · L39-L115 — @Composable fun SonderRoot(onboardingComplete: Boolean?)
+- SonderRoot · function · L46-L161 — @Composable fun SonderRoot(onboardingComplete: Boolean?)

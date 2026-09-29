@@ -6,3 +6,4 @@
 - Stats · class · L9-L9 — @Serializable data object Stats : NavKey
 - Settings · class · L10-L10 — @Serializable data object Settings : NavKey
 - AppSettings · class · L13-L13 — @Serializable data class AppSettings(val packageName: String) : NavKey
+- TargetPicker · class · L16-L16 — @Serializable data object TargetPicker : NavKey
