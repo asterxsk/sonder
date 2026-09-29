@@ -17,9 +17,10 @@ import javax.inject.Singleton
  * and tear the blocker down right after it appeared.
  *
  * This resolves the real foreground package so the blocker can re-verify after
- * releasing. It reads only the foreground package name — never content — and
- * returns null when usage access is unavailable, in which case the event stream
- * alone drives enforcement.
+ * releasing, and so the periodic foreground re-check can see what a lost event
+ * stream never reported. It reads only the foreground package name — never content
+ * — and returns null when usage access is unavailable, in which case the event
+ * stream alone drives enforcement.
  */
 @Singleton
 class ForegroundResolver @Inject constructor(

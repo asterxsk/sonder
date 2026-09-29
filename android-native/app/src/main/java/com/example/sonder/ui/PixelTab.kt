@@ -16,14 +16,19 @@ import com.example.sonder.Targets
  *
  * [glyphSize] is per tab because none of these are drawn in the app's own fonts. They
  * come from the platform symbol font, whose characters carry their own built-in
- * padding and differ wildly in how much of their em box they fill: at a shared 26sp,
- * `◎` draws a small ring floating in a large gap while `⚙` fills its box. Each size
- * below is the one that lands at the same optical height as the others, not a size
- * chosen for its own tab.
+ * padding and differ wildly in how much of their em box they fill.
+ *
+ * The ceiling on that size is the label below it, not taste: §15 asks for both a glyph
+ * and a label inside a 64dp pill with 8dp of padding, which leaves a 48dp column. The
+ * glyph is measured first and the label is measured with whatever height is left, so a
+ * glyph whose line box fills that column does not overlap the label — it leaves the
+ * label zero height and the tab renders as "just a logo". §15's 38sp for `◎` was
+ * measured for optical parity on its own and cannot fit above a label in this dock;
+ * 26sp is the largest size the dock can hold, and it is what the other three use.
  */
 enum class PixelTab(val glyph: String, val label: String, val glyphSize: TextUnit) {
     HOME("⌂", "Home", 26.sp),
-    TARGETS("◎", "Targets", 38.sp),
+    TARGETS("◎", "Targets", 26.sp),
     STATS("▥", "Stats", 26.sp),
     SETTINGS("⚙", "Settings", 26.sp);
 

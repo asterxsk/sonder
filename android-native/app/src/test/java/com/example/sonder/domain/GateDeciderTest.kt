@@ -102,14 +102,44 @@ class GateDeciderTest {
         )
     }
 
+    @Test
+    fun `debt at its ceiling locks the app with no lockout row at all`() {
+        // The ceiling is its own lock: the hand that reached it wrote a lockout, but the
+        // wait must hold even if that row is gone, or the table reopens against a debt
+        // that can no longer be paid down.
+        assertEquals(
+            GateDecision.LOCKOUT,
+            decide(targetEnabled = true, grant = null, lockout = null, debtAtCap = true),
+        )
+    }
+
+    @Test
+    fun `debt below its ceiling still opens the table`() {
+        assertEquals(
+            GateDecision.GATE,
+            decide(targetEnabled = true, grant = null, lockout = null, debtAtCap = false),
+        )
+    }
+
+    @Test
+    fun `a live grant still wins over a debt at the ceiling`() {
+        // Precedence is unchanged: granted access is granted access.
+        assertEquals(
+            GateDecision.GRANTED,
+            decide(targetEnabled = true, grant = grant(), lockout = null, debtAtCap = true),
+        )
+    }
+
     private fun decide(
         targetEnabled: Boolean,
         grant: GrantSnapshot?,
         lockout: LockoutSnapshot?,
+        debtAtCap: Boolean = false,
     ): GateDecision = GateDecider.decide(
         targetEnabled = targetEnabled,
         grant = grant,
         lockout = lockout,
         nowMillis = t0,
+        debtAtCap = debtAtCap,
     )
 }

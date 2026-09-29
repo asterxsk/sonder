@@ -211,4 +211,29 @@ class AccessPolicyTest {
         assertEquals(86_400_000L, AccessPolicy.nextLocalMidnight(t0, utc))
         assertEquals(2 * 86_400_000L, AccessPolicy.nextLocalMidnight(86_400_000L, utc))
     }
+
+    // --- the debt ceiling stops the game ---
+
+    @Test
+    fun `debt below the ceiling keeps the table open`() {
+        // Winning hands are the fast way to pay debt down, so the loop stays open until
+        // there is nothing left that another loss could change.
+        assertFalse(AccessPolicy.isDebtAtCap(59 * 60_000L))
+    }
+
+    @Test
+    fun `the ceiling itself stops the game`() {
+        assertTrue(AccessPolicy.isDebtAtCap(60 * 60_000L))
+    }
+
+    @Test
+    fun `debt above the ceiling stays locked`() {
+        assertTrue(AccessPolicy.isDebtAtCap(75 * 60_000L))
+    }
+
+    @Test
+    fun `the ceiling follows a per-app override`() {
+        assertTrue(AccessPolicy.isDebtAtCap(30 * 60_000L, maxDebtMillis = 30 * 60_000L))
+        assertFalse(AccessPolicy.isDebtAtCap(30 * 60_000L, maxDebtMillis = 45 * 60_000L))
+    }
 }

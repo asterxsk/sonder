@@ -54,6 +54,7 @@ class EnforcementRepository @Inject constructor(
     private val _targets = MutableStateFlow<Map<String, TargetEntity>>(emptyMap())
     private val _grants = MutableStateFlow<Map<String, GrantEntity>>(emptyMap())
     private val _lockouts = MutableStateFlow<Map<String, LockoutEntity>>(emptyMap())
+    private val _debts = MutableStateFlow<Map<String, DebtEntity>>(emptyMap())
     private var cacheStarted = false
 
     /** Rebuild the cache from Room flows; idempotent, cheap after the first call. */
@@ -69,6 +70,9 @@ class EnforcementRepository @Inject constructor(
         lockoutDao.observeAll()
             .onEach { rows -> _lockouts.value = rows.associateBy { it.packageName } }
             .launchIn(externalScope)
+        debtDao.observeAll()
+            .onEach { rows -> _debts.value = rows.associateBy { it.packageName } }
+            .launchIn(externalScope)
     }
 
     fun enabledTarget(pkg: String): TargetEntity? = _targets.value[pkg]?.takeIf { it.enabled }
@@ -76,6 +80,17 @@ class EnforcementRepository @Inject constructor(
     fun cachedGrant(pkg: String): GrantEntity? = _grants.value[pkg]
 
     fun cachedLockout(pkg: String): LockoutEntity? = _lockouts.value[pkg]
+
+    /** Debt the package is carrying right now, from the warm cache. */
+    fun cachedDebt(pkg: String): Long = _debts.value[pkg]?.debtMillis ?: 0L
+
+    /**
+     * The debt ceiling in force for the package: its override, else the global default.
+     * Read from the warm cache rather than [rulesFor], because the gate decision runs on
+     * the foreground hot path and must not wait on Room.
+     */
+    fun cachedMaxDebt(pkg: String): Long =
+        _targets.value[pkg]?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS
 
     /**
      * The raw per-app overrides as stored: a null field inherits the AccessPolicy default.
@@ -197,6 +212,35 @@ class EnforcementRepository @Inject constructor(
     suspend fun currentDebt(packageName: String): Long =
         debtDao.get(packageName)?.debtMillis ?: 0L
 
+    /**
+     * Clear the debt of a package whose debt lockout has run out.
+     *
+     * Waiting the lockout out *is* paying the debt — the lockout was the debt written as
+     * time to serve — so the debt row goes with it. Without this the debt outlives its own
+     * lockout, and the app ends up gating a package whose lock timer has already expired:
+     * the table sits there against a dead timer, and at the ceiling there is no way back
+     * at all, because the only way to pay the debt down is to win hands and the ceiling is
+     * precisely where hands stop being offered.
+     *
+     * A package carrying debt with no lockout row at all is *not* served: that is the
+     * mid-session state, where the player is still at the table paying it down.
+     *
+     * @return whether anything was cleared, so a caller making a decision right now can
+     *   use the cleared values instead of waiting for the cache to come round.
+     */
+    suspend fun serveDebtIfLockoutElapsed(
+        packageName: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val lockout = lockoutDao.get(packageName) ?: return false
+        // A row written before reasons existed can only ever have been a debt lockout.
+        if ((lockout.reason ?: LOCKOUT_REASON_DEBT) != LOCKOUT_REASON_DEBT) return false
+        if (lockout.untilMillis > nowMillis) return false
+        lockoutDao.clear(packageName)
+        debtDao.clear(packageName)
+        return true
+    }
+
     /** Is this package an enabled target? */
     suspend fun isTargetEnabled(packageName: String): Boolean =
         targetDao.get(packageName)?.enabled == true
@@ -315,6 +359,9 @@ class EnforcementRepository @Inject constructor(
 
     /** Housekeeping: purge expired grants/lockouts (called on boot and periodically). */
     suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis()) {
+        // Read the served debts before their lockout rows are deleted, or a reboot would
+        // leave every one of them behind as a debt nothing can clear.
+        lockoutDao.expired(nowMillis, LOCKOUT_REASON_DEBT).forEach { debtDao.clear(it.packageName) }
         grantDao.purgeExpired(nowMillis)
         lockoutDao.purgeExpired(nowMillis)
     }

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.platform.enforcement.EnforcementCoordinator
@@ -35,10 +36,16 @@ class SonderAccessibilityService : AccessibilityService() {
 
     private var receiverRegistered = false
 
-    /** Screen off = the blocker must go: it must never cover the keyguard. */
-    private val screenOffReceiver = object : BroadcastReceiver() {
+    /**
+     * Screen off = the blocker must go: it must never cover the keyguard, and there is
+     * nothing on screen to enforce against. Screen on starts that enforcement again.
+     */
+    private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) coordinator.onScreenOff()
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> coordinator.onScreenOff()
+                Intent.ACTION_SCREEN_ON -> coordinator.onScreenOn()
+            }
         }
     }
 
@@ -51,6 +58,9 @@ class SonderAccessibilityService : AccessibilityService() {
             notificationTimeout = EVENT_DEBOUNCE_MILLIS
         }
         registerScreenOffReceiver()
+        // The event stream is the fast path; this re-checks the real foreground for the
+        // events it never delivers (see EnforcementCoordinator.onServiceConnected).
+        coordinator.onServiceConnected(ForegroundWindows(::isBehindAnotherWindow))
         AccessibilityGate.onServiceConnected(this)
     }
 
@@ -61,7 +71,40 @@ class SonderAccessibilityService : AccessibilityService() {
         // which must release the blocker) from our own overlay window (the
         // blocker itself, whose event must never dismiss it).
         val className = event.className?.toString()
-        coordinator.onForeground(pkg, ForegroundSurface.classify(pkg, packageName, className), className)
+        coordinator.onForeground(
+            pkg = pkg,
+            surface = ForegroundSurface.classify(pkg, packageName, className),
+            className = className,
+            // Carried along so a release can be checked against the window that reported
+            // it: see ForegroundWindows.
+            windowId = event.windowId,
+        )
+    }
+
+    /**
+     * The window list, top-most first, answering "is the window that reported a release
+     * still the one in front" from metadata alone — no window content is read.
+     */
+    private fun isBehindAnotherWindow(windowId: Int): Boolean {
+        val listed = try {
+            windows
+        } catch (_: Throwable) {
+            // The service can be disconnected mid-call; no answer is better than a guess.
+            return false
+        } ?: return false
+
+        // Our own overlay is deliberately not focusable, so while it covers a blocked app
+        // the app's window keeps input focus: this answers "is that app still in front"
+        // even with the blocker in the way.
+        val focused = listed.firstOrNull { it.isActive } ?: return false
+
+        // Only another *application* having focus is evidence. A system window or a
+        // keyboard holding focus while a launcher event lands says nothing about where
+        // the user is, and holding the blocker up on that would strand it over Home.
+        if (focused.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return false
+        if (focused.type == AccessibilityWindowInfo.TYPE_SYSTEM) return false
+
+        return focused.id != windowId && listed.any { it.id == windowId }
     }
 
     override fun onInterrupt() = Unit
@@ -85,8 +128,11 @@ class SonderAccessibilityService : AccessibilityService() {
         if (receiverRegistered) return
         ContextCompat.registerReceiver(
             this,
-            screenOffReceiver,
-            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         receiverRegistered = true
@@ -95,7 +141,7 @@ class SonderAccessibilityService : AccessibilityService() {
     private fun unregisterScreenOffReceiver() {
         if (!receiverRegistered) return
         receiverRegistered = false
-        runCatching { unregisterReceiver(screenOffReceiver) }
+        runCatching { unregisterReceiver(screenReceiver) }
     }
 
     companion object {

@@ -43,6 +43,15 @@ data class TableState(
     val lastHandGranted: Boolean = false,
     /** True while the app is under an active DAILY_CAP lockout; the cap is not time-served. */
     val capLocked: Boolean = false,
+    /**
+     * Time still owed on a debt that has reached its ceiling; 0 at any lower debt.
+     *
+     * A hand can take the debt to the ceiling *while the table is open*, so this cannot be
+     * left to the blocker's decision path: the panel has to switch to the wait-it-out state
+     * the moment that happens, or the player is offered another hand at the ceiling, which
+     * is the one state where hands are meant to stop.
+     */
+    val debtLockRemainingMillis: Long = 0,
 ) {
     enum class Phase { IDLE, DEALING, PLAYER_TURN, DEALER_TURN, RESOLVED }
 }
@@ -96,15 +105,25 @@ class GateController @Inject constructor(
         if (pkg.isEmpty()) return
         val rules = repository.rulesFor(pkg)
         val grantedToday = repository.dailyGrantedMillis(pkg)
+        val debt = repository.currentDebt(pkg)
+        val cap = repository.cachedMaxDebt(pkg)
+        val lockoutRemaining = repository.lockoutRemainingMillis(pkg)
         _state.value = _state.value.copy(
-            debtMinutes = repository.currentDebt(pkg) / 60_000,
+            debtMinutes = debt / 60_000,
             winGrantMillis = rules.winGrantMillis,
             dailyRemainingMillis = rules.dailyCapMillis?.let { (it - grantedToday).coerceAtLeast(0L) },
             // A cap lockout is read from the lockout row, not inferred from a zero
             // allowance: the win that spends the cap grants access AND writes the
             // lockout, so both are true at once and only the row separates them.
             capLocked = repository.lockoutReason(pkg) == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP &&
-                repository.lockoutRemainingMillis(pkg) > 0L,
+                lockoutRemaining > 0L,
+            // At the ceiling the wait is whichever is longer: the lockout the last loss
+            // wrote, or the debt standing behind it.
+            debtLockRemainingMillis = if (AccessPolicy.isDebtAtCap(debt, cap)) {
+                maxOf(lockoutRemaining, debt)
+            } else {
+                0L
+            },
         )
     }
 
@@ -112,6 +131,9 @@ class GateController @Inject constructor(
         val pkg = _state.value.targetPackage
         if (pkg.isEmpty()) return
         if (_state.value.capLocked) return // the cap is spent: a hand cannot grant access today
+        // At the debt ceiling the wait is the way out, not another hand — the deep guard
+        // behind the panel switch, so no path can start a game that should not run.
+        if (_state.value.debtLockRemainingMillis > 0L) return
         deck = BlackjackRules.shuffledDeck()
         dealt = BlackjackRules.deal(deck)
         deck = dealt!!.remainingDeck

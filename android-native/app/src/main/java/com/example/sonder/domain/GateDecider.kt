@@ -33,12 +33,16 @@ object GateDecider {
      * @param targetEnabled package is an enabled target
      * @param grant         current grant row, or null
      * @param lockout       current lockout row, or null
+     * @param debtAtCap     debt has reached the ceiling the app allows, so the app is in
+     *   the wait-it-out state regardless of what the lockout row says — see
+     *   [AccessPolicy.isDebtAtCap].
      */
     fun decide(
         targetEnabled: Boolean,
         grant: GrantSnapshot?,
         lockout: LockoutSnapshot?,
         nowMillis: Long,
+        debtAtCap: Boolean = false,
     ): GateDecision {
         if (!targetEnabled) return GateDecision.PASS
 
@@ -51,7 +55,9 @@ object GateDecider {
         }
 
         // No active grant here — either none at all or an expired row (the caller
-        // purges expired rows so enforcement resumes). An active lockout wins.
+        // purges expired rows so enforcement resumes). A live lockout wins, and a debt
+        // at the ceiling locks the app the same way even if its lockout row is gone.
+        if (debtAtCap) return GateDecision.LOCKOUT
         if (lockout != null && lockout.untilMillis > nowMillis) return GateDecision.LOCKOUT
 
         return GateDecision.GATE

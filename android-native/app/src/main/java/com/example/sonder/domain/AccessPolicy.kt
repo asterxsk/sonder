@@ -113,6 +113,19 @@ object AccessPolicy {
     fun canPlay(lockout: LockoutSnapshot?, nowMillis: Long): Boolean =
         lockout == null || lockout.untilMillis <= nowMillis
 
+    /**
+     * True once debt has reached the ceiling the app allows.
+     *
+     * Below the ceiling the table stays open, because winning hands are the fast way to pay
+     * debt down. At the ceiling there is nothing left to pay down that way — every further
+     * loss just writes the same lockout — so the gate stops offering hands and the debt is
+     * served by waiting instead (the repository clears it once its lockout has run out).
+     * Leaving the table open there would be an unbounded session: the player could play for
+     * as long as they liked, which is the opposite of what this app is for.
+     */
+    fun isDebtAtCap(debtMillis: Long, maxDebtMillis: Long = MAX_DEBT_MILLIS): Boolean =
+        debtMillis >= maxDebtMillis
+
     /** Overall enforcement state for a target at a moment in time. */
     fun stateFor(
         packageName: String,

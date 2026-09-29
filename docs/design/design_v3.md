@@ -398,9 +398,17 @@ caption, not the icon, so it is small and quiet.
 Each tab sets its **own** glyph size, because a symbol font's characters fill their em
 boxes by very different amounts: at a shared 26sp, `◎` drew a 30px ring while `⚙` drew
 58px, so Targets read as the tab that had been shrunk. Sizes are chosen so the four land
-at the same optical height — Home 26sp, Targets 38sp, Stats 26sp, Settings 26sp — and any
-future change to the glyphs has to be checked the same way, by measuring the marks rather
-than by trusting the sp value.
+at the same optical height, and any future change to the glyphs has to be checked the
+same way, by measuring the marks rather than by trusting the sp value.
+
+That optical goal has a hard ceiling the first cut of this section missed: the dock is a
+64dp pill with 8dp of padding, so a tab has a 48dp column for a glyph *and* a label. The
+glyph is measured first and the label is measured with whatever height is left, so a glyph
+whose line box fills that column does not overlap the label — it leaves the label zero
+height, and the tab renders as a bare glyph. The 38sp `◎` this section originally chose
+did exactly that on device: Targets showed a ring and no "Targets". All four tabs are
+26sp, which is the largest size the dock holds; a larger glyph would need a taller pill,
+and the 96dp navigation reservation in §19 does not have the room.
 
 Active tab:
 - a square of raised panel behind the tab — square on purpose, because §15 rounds the

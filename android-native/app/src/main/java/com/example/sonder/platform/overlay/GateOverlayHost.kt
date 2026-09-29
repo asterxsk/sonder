@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.toArgb
@@ -18,6 +19,7 @@ import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.SonderTheme
 import com.example.sonder.ui.gate.GateContent
 import com.example.sonder.ui.gate.GateController
+import com.example.sonder.ui.gate.TableState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,8 +42,17 @@ import kotlinx.coroutines.launch
  * Activity: the blocker supplies its own view-tree owners (see
  * [OverlayLifecycleOwner]), so nothing depends on the detox app's UI stack.
  *
- * Exactly one overlay exists at a time: showing for the package already blocked
- * is a no-op, so rapid window events cannot stack blockers or reset a live hand.
+ * At most one window exists at a time, and it is either fully on screen or gone:
+ * [showGate] *ensures* it (a gate for the app already covered is a no-op, so a burst
+ * of foreground events cannot stack blockers or reset a live hand, and a window
+ * already up for another app is repointed rather than replaced), and [dismiss]
+ * removes it. There is no in-between state — a blocker nobody is tracking is a
+ * blocker nothing can dismiss, which is how a lockout screen once ended up stranded
+ * over an unrelated app.
+ *
+ * The no-op above is only trusted while the window is really on screen (see
+ * [detachListener]): a blocker the system removed has to be raisable again, or the app
+ * it was covering stays uncovered for the rest of the session.
  */
 @Singleton
 class GateOverlayHost @Inject constructor(
@@ -55,11 +66,53 @@ class GateOverlayHost @Inject constructor(
     /** Drives recomposition for the overlay only; cancelled with the overlay. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** The single blocker window, kept for the life of the service. */
     private var root: View? = null
+
+    /** What [root] was composed for; a different request needs a new composition. */
+    private var composedFor: ShowRequest? = null
+
     private var lifecycleOwner: OverlayLifecycleOwner? = null
     private var unlockWatcher: Job? = null
 
-    /** Package the blocker is currently covering, or null when it is down. */
+    /**
+     * What a window was composed for. A gate whose package or lockout differs has to be
+     * composed again; one that matches is re-attached as it stands, which is what keeps
+     * a hand in progress exactly where the user left it.
+     */
+    private data class ShowRequest(
+        val pkg: String,
+        val label: String,
+        val lockoutRemainingMillis: Long,
+    )
+
+    /**
+     * Notes a blocker window the system has taken away behind this host's back — a
+     * revoked overlay permission, a window token that died with the app underneath, a
+     * display change that never came back. Without it the host would go on believing the
+     * blocker is up and refuse to raise it again, which is how a blocked app ends up
+     * uncovered for the rest of the session; with it, the next event or re-check pass
+     * composes the window afresh.
+     *
+     * Only the current root clears the state, so the removal of a window this host has
+     * already replaced cannot unmount its successor.
+     */
+    private val detachListener = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(view: View) = Unit
+
+        override fun onViewDetachedFromWindow(view: View) {
+            if (root !== view) return
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "OVERLAY_DETACHED(pkg=$shownForPackage reason=taken-by-system)")
+            }
+            root = null
+            composedFor = null
+            shownForPackage = null
+            teardownOwner()
+        }
+    }
+
+    /** Package the blocker is covering right now, or null while it is released. */
     @Volatile
     var shownForPackage: String? = null
         private set
@@ -71,50 +124,157 @@ class GateOverlayHost @Inject constructor(
 
     private fun show(pkg: String, label: String, lockoutRemainingMillis: Long) {
         mainHandler.post {
-            // Idempotent: never stack overlays, and never reset a hand in progress.
-            if (shownForPackage == pkg && root != null) return@post
+            val request = ShowRequest(pkg, label, lockoutRemainingMillis)
+
+            // ensureOverlay, not showOverlay: the app is already covered, so this changes
+            // nothing. A burst of foreground events can neither stack blockers nor reset a
+            // hand in progress, and the window has to still be attached for that to hold.
+            if (shownForPackage == pkg && root?.isAttachedToWindow == true) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "OVERLAY_ENSURE(pkg=$pkg already covering)")
+                return@post
+            }
 
             if (!Settings.canDrawOverlays(context)) {
                 Log.w(TAG, "blocker not shown for $pkg: overlay permission missing")
                 return@post
             }
 
-            removeOverlay(reason = "replacing")
+            val restored = controller.state.value.targetPackage == pkg &&
+                controller.state.value.phase != TableState.Phase.IDLE
             controller.begin(pkg)
+            if (BuildConfig.DEBUG && restored) {
+                Log.d(TAG, "BLACKJACK_STATE_RESTORED(pkg=$pkg phase=${controller.state.value.phase})")
+            }
 
-            try {
-                val view = buildView(pkg, label, lockoutRemainingMillis)
-                windowManager.addView(view, layoutParams())
-                root = view
-                shownForPackage = pkg
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "blocker up for $pkg lockoutMs=$lockoutRemainingMillis")
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "blocker add failed for $pkg", t)
-                teardownOwner()
+            // A live window composed for an earlier request is repointed in place rather
+            // than replaced, so switching between two blocked apps never uncovers either.
+            if (root != null && composedFor == request && repoint(pkg, request)) return@post
+
+            create(pkg, request)
+        }
+    }
+
+    /**
+     * Reuse the window that is already on screen: same view, same owners, new content and
+     * a fresh binding for the unlock watcher.
+     *
+     * Returns false when the live view cannot be reused, leaving the caller to compose a
+     * replacement. This is only ever called for a window that is genuinely on screen — a
+     * dismissed blocker is gone, not hidden — so reusing it cannot resurrect a stale one.
+     */
+    private fun repoint(pkg: String, request: ShowRequest): Boolean {
+        val view = root as? ComposeView ?: return false
+        if (!view.isAttachedToWindow) return false
+        return try {
+            view.setContent(contentFor(request))
+            windowManager.updateViewLayout(view, layoutParams())
+            composedFor = request
+            shownForPackage = pkg
+            watchUnlock(pkg)
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg lockoutMs=${request.lockoutRemainingMillis})")
+            }
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "blocker could not be repointed for $pkg; composing a new window", t)
+            removeBlocker(reason = "repoint failed")
+            false
+        }
+    }
+
+    /**
+     * Compose a blocker window for [request] and put it on screen.
+     *
+     * The composition is built *before* the window is added, so the blocker's first frame
+     * is already painted: adding the window first would put an empty surface over the app
+     * for the length of the composition.
+     */
+    private fun create(pkg: String, request: ShowRequest) {
+        if (root != null) removeBlocker(reason = "replacing")
+
+        val view = try {
+            buildView(request).also { it.addOnAttachStateChangeListener(detachListener) }
+        } catch (t: Throwable) {
+            Log.e(TAG, "blocker could not be composed for $pkg", t)
+            teardownOwner()
+            return
+        }
+        watchUnlock(request.pkg)
+
+        try {
+            windowManager.addView(view, layoutParams())
+            root = view
+            composedFor = request
+            shownForPackage = pkg
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "OVERLAY_CREATED(pkg=$pkg lockoutMs=${request.lockoutRemainingMillis})")
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "blocker add failed for $pkg", t)
+            teardownOwner()
+        }
+    }
+
+    /** Release the blocker the moment access is earned. One watcher per live window. */
+    private fun watchUnlock(pkg: String) {
+        unlockWatcher?.cancel()
+        unlockWatcher = scope.launch {
+            controller.unlocked.collect { unlockedPkg ->
+                if (unlockedPkg == pkg) dismiss(reason = "access granted")
             }
         }
     }
 
-    /** Take the blocker down. Safe to call when nothing is showing. */
+    private fun contentFor(request: ShowRequest): @Composable () -> Unit = {
+        val state by controller.state.collectAsState()
+        SonderTheme {
+            GateContent(
+                label = request.label,
+                state = state,
+                lockoutRemainingMillis = request.lockoutRemainingMillis,
+                onDeal = controller::deal,
+                onHit = controller::hit,
+                onStand = controller::stand,
+                onAccessGranted = controller::releaseAccess,
+                onPlayAgain = controller::playAgain,
+            )
+        }
+    }
+
+    /** Take the blocker off the screen. Safe to call when nothing is showing. */
     fun dismiss(reason: String = "unspecified") {
-        mainHandler.post { removeOverlay(reason) }
+        mainHandler.post { removeBlocker(reason) }
     }
 
-    private fun removeOverlay(reason: String) {
-        if (root != null && BuildConfig.DEBUG) {
-            Log.d(TAG, "blocker down for $shownForPackage ($reason)")
+    /**
+     * The window is removed, never merely hidden.
+     *
+     * Shrinking or fading a window instead of removing it leaves a blocker on screen that
+     * no state in this host describes: Android does not have to honour a relayout the way
+     * you expect, and a window left in a frame the screen no longer matches is a blocker
+     * nothing can dismiss — which is exactly how a lockout screen ended up stranded over
+     * an unrelated app. Removal cannot strand anything, and it is what makes "the blocker
+     * is gone" a fact rather than a hope.
+     *
+     * Idempotent: calling it when nothing is showing does nothing.
+     */
+    private fun removeBlocker(reason: String) {
+        val view = root
+        if (view == null) {
+            teardownOwner()
+            return
         }
-        root?.let { view ->
-            try {
-                windowManager.removeView(view)
-            } catch (_: Throwable) {
-                // Already detached by the system (config change, window token loss).
-            }
-        }
+
+        val pkg = shownForPackage
         root = null
+        composedFor = null
         shownForPackage = null
+        try {
+            windowManager.removeView(view)
+        } catch (_: Throwable) {
+            // Already detached by the system (config change, window token loss).
+        }
+        if (BuildConfig.DEBUG) Log.d(TAG, "OVERLAY_REMOVED(pkg=$pkg reason=$reason)")
         teardownOwner()
     }
 
@@ -147,42 +307,20 @@ class GateOverlayHost @Inject constructor(
         lifecycleOwner = null
     }
 
-    private fun buildView(pkg: String, label: String, lockoutRemainingMillis: Long): View {
+    private fun buildView(request: ShowRequest): View {
         // Compose without an Activity: the blocker owns the view-tree owners.
         val owner = OverlayLifecycleOwner().also { it.start() }
         lifecycleOwner = owner
 
-        val composeView = ComposeView(context).apply {
+        return ComposeView(context).apply {
             attachViewTreeOwners(this, owner)
             // Opaque background: no frame of the blocked app may show through.
             setBackgroundColor(PixelPalette.Bg.toArgb())
-            setContent {
-                val state by controller.state.collectAsState()
-                SonderTheme {
-                    GateContent(
-                        label = label,
-                        state = state,
-                        lockoutRemainingMillis = lockoutRemainingMillis,
-                        onDeal = controller::deal,
-                        onHit = controller::hit,
-                        onStand = controller::stand,
-                        onAccessGranted = controller::releaseAccess,
-                        onPlayAgain = controller::playAgain,
-                    )
-                }
-            }
+            setContent(contentFor(request))
         }
-
-        // Release the blocker the moment access is earned.
-        unlockWatcher = scope.launch {
-            controller.unlocked.collect { unlockedPkg ->
-                if (unlockedPkg == pkg) dismiss(reason = "access granted") 
-            }
-        }
-
-        return composeView
     }
 
+    /** Full screen, opaque, touchable: the blocker covering the app. */
     private fun layoutParams() = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,

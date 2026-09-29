@@ -82,6 +82,9 @@ interface DebtDao {
     @Query("SELECT * FROM debt WHERE packageName = :pkg")
     suspend fun get(pkg: String): DebtEntity?
 
+    @Query("SELECT * FROM debt")
+    fun observeAll(): Flow<List<DebtEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(debt: DebtEntity)
 
@@ -105,6 +108,18 @@ interface LockoutDao {
 
     @Query("DELETE FROM lockouts WHERE untilMillis <= :nowMillis")
     suspend fun purgeExpired(nowMillis: Long)
+
+    /**
+     * The debt lockouts that have run out, read before [purgeExpired] deletes them:
+     * an expired debt lockout is a debt that has been served, and the debt row it was
+     * serving has to be cleared with it. Rows written before reasons existed carry no
+     * reason but can only ever have been debt lockouts, so they match too.
+     */
+    @Query(
+        "SELECT * FROM lockouts WHERE untilMillis <= :nowMillis " +
+            "AND (reason = :reason OR reason IS NULL)",
+    )
+    suspend fun expired(nowMillis: Long, reason: String): List<LockoutEntity>
 }
 
 @Dao

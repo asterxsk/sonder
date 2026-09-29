@@ -63,8 +63,17 @@ fun GateContent(
     ) {
         Spacer(Modifier.height(12.dp))
 
-        if (lockoutRemainingMillis > 0) {
-            LockoutBlocker(label = label, remainingMillis = lockoutRemainingMillis)
+        // A wait can begin mid-session: the hand that takes the debt to its ceiling writes a
+        // lockout while the table is still open, so the panel follows the controller's state
+        // as well as the value the blocker was raised with. At the ceiling the player waits
+        // the debt out — waiting is what serves it — rather than being dealt another hand.
+        //
+        // A settled hand is the one exception: the result of the hand that reached the
+        // ceiling stays on screen until the player acknowledges it, since the wait panel
+        // offers no cards either way and losing the result would just be confusing.
+        val waiting = maxOf(lockoutRemainingMillis, state.debtLockRemainingMillis)
+        if (waiting > 0 && state.phase != TableState.Phase.RESOLVED) {
+            LockoutBlocker(label = label, remainingMillis = waiting)
         } else {
             BlackjackBlocker(
                 label = label,

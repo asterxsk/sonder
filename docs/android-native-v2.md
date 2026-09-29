@@ -27,10 +27,20 @@ carry the product rules. No Android imports; 27 unit tests cover them.
 | Win with debt | `debt = max(debt − 10 min, 0)`; no grant until it hits 0 |
 | Push | no change |
 | Walk away with debt | lockout until `now + debt` |
+| Debt at the ceiling | no table: the app waits the debt out (`GateDecider` → LOCKOUT) |
+| Lockout served | the debt it was serving is cleared with it |
 | Absence > 60 s during a grant | grant revoked regardless of remaining time |
 
 Worked example: `L, L, W, W, W` → debt 20 → 10 → 0 → access granted.
-At the 60-minute cap, further losses change nothing (`55 + 10 → 60`, not 65).
+At the 60-minute cap, further losses change nothing (`55 + 10 → 60`, not 65) — and
+at the cap the table closes: winning hands are the fast way to pay debt down, so the
+loop stays open below the ceiling, but at the ceiling there is nothing another loss
+could change and nothing another hand could win back. The wait is what serves a debt
+from then on, which is why an expired debt lockout clears the debt row along with
+itself (`EnforcementRepository.serveDebtIfLockoutElapsed`). Both the fresh decision and
+the session already on screen respect it — `GateController` reports the remaining wait
+in `TableState.debtLockRemainingMillis`, so the hand that reaches the ceiling ends the
+game instead of dealing another.
 
 ## 2. Time model
 
@@ -59,11 +69,19 @@ SonderAccessibilityService (TYPE_WINDOW_STATE_CHANGED only, 50 ms delivery)
   ▼
 EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
   ├─ TRANSIENT (shade, IME, own overlay window) → ignore, blocker untouched
-  ├─ HOME / OWN → release the blocker, then re-verify the real foreground
+  ├─ HOME / OWN → release the blocker, unless the real foreground says otherwise
   ├─ active grant? → absence check (now − lastSeen > 60 s ⇒ revoke) → touch lastSeen
   ├─ not an enabled target? → release the blocker
   ├─ lockout active? → lockout blocker only ("WAIT IT OUT")
   └─ otherwise → GateOverlayHost.showGate (the blackjack table)
+
+every 500 ms, in parallel with the events above (foreground re-check)
+  │  last resumed activity within 10 s, via ForegroundResolver
+  ▼
+ForegroundWatch (pure policy)
+  ├─ APP    → decide it, unless the previous pass is still holding (gate up, grant live)
+  ├─ HOME / OWN → release, once two passes in a row agree
+  └─ TRANSIENT → ignore
 ```
 
 - **`GateOverlayHost`** is the blocker: a single `TYPE_APPLICATION_OVERLAY`
@@ -72,14 +90,62 @@ EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
   screen inside the detox app, cannot be reached from Recents, and is unaffected
   by the app's navigation. It is opaque and touchable, so it swallows touches
   before they reach the blocked app underneath.
+- **At most one window, and it is either fully up or gone.** `showGate` *ensures*
+  it: a gate for the app already covered is a no-op (so bursts of foreground events
+  cannot stack blockers or reset a live hand), a window already up for a different
+  app is repointed in place (so switching between two blocked apps never uncovers
+  either), and a window is composed before it is added (so its first frame is
+  painted). `dismiss` removes it. There is deliberately no middle state — hiding a
+  window by resizing it leaves a blocker no state describes and nothing can
+  dismiss, which is how a lockout screen once ended up stranded over an unrelated
+  app. A window the system takes away is noticed by `detachListener` and composed
+  again on the next signal.
 - **Compose in the overlay** is hosted with the blocker's own view-tree owners
   (see `OverlayLifecycleOwner`), since a Service has no Activity lifecycle to
   borrow. The gate's state machine (`GateController`) is process-owned rather
   than a ViewModel behind an Activity.
-- **`ForegroundResolver`** re-checks the real foreground app (usage access, not
-  content) after every release: during app launches the launcher emits its own
-  window event *after* the target app's, which would otherwise release the
-  blocker immediately. The same pass re-applies a blocker that was dropped.
+- **A release is gated, not corrected afterwards.** Home and Recents deliver their
+  window events in bursts and in whatever order they please, so the launcher's own
+  event can land *after* the blocked app's. Releasing on that one event uncovered an
+  app the user was looking at, and the post-release verification raised the blocker
+  again 400 ms later — two decisions in opposition, which is the flicker overlay →
+  app → overlay → app around Recent Apps. Now a release has to survive two
+  independent pieces of evidence, and is refused when either says the user has not
+  actually left:
+  - **`ForegroundWindows`** — the accessibility window list the service already
+    receives. If the window that reported the release is still listed while another
+    *application* window holds input focus, the event is trailing. This needs no
+    permission and is never stale, since the list describes the screen at the moment
+    of the event. (Only another application counts: a keyboard or a system window
+    having focus says nothing about where the user is, and refusing on that would
+    strand the blocker over Home.)
+  - **`ForegroundResolver`** — the usage-stats lookup, as a second opinion. It lags
+    the events by a moment and needs usage access granted, so it cannot be the only
+    evidence: a device without that permission would decide every release on nothing,
+    which is how a blocked app becomes usable again after a Recents round trip.
+  Nothing needs undoing afterwards, so the post-release verification pass is gone.
+- **`ForegroundResolver`** is that authoritative lookup (usage access, not
+  content): the last *resumed activity*. Launching from the launcher, Recents,
+  an app-lock unlock and a screen unlock all leave one behind, which is what makes
+  it a usable second opinion against the event stream.
+- **The foreground re-check is the safety net under the event stream**, which is
+  the fast path but not a guarantee. Window events can be dropped, coalesced or
+  delivered late, and an app that locks itself (an in-app PIN screen, an OEM
+  app-lock activity, a third-party locker's overlay) puts a window in front of
+  the target that raises no event for the target at all. Events alone therefore
+  leave the app visible for seconds, or until something unrelated raises a fresh
+  event — and sometimes for good. Every 500 ms the coordinator asks
+  `ForegroundResolver` for the last *resumed activity*, which no way into an app
+  can skip (launcher tap, Recents, app-lock unlock, screen unlock), and applies
+  `ForegroundWatch` to the answer: an app is decided on every pass, a release
+  waits for two agreeing passes so a lookup trailing a launch cannot uncover the
+  app. Held state is re-examined rather than assumed — a blocker the system
+  removed, a grant that lapsed or was revoked mid-use, and a target enabled while
+  its app is open all reach a blocker within one interval.
+- **A blocker window that goes away is noticed**: `GateOverlayHost` tracks the
+  attach state of its window, so a window the system removed (revoked overlay
+  permission, a window token that died with the app underneath) stops counting as
+  "already showing" and is raised again by the next event or re-check.
 - **Self-events are ignored**: the blocker's own window reports the detox app's
   package, so the classifier only treats the app's *Activities* as "the detox app
   opened" — otherwise the blocker would dismiss itself the moment it appears.
