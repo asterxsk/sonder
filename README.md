@@ -11,6 +11,13 @@ Sonder is a single native Android app — Kotlin and Jetpack Compose in
 by the native implementation so foreground detection and the block gate run as
 one native platform process.
 
+That Flutter app is retired. Its sources are no longer in this tree, and its
+last commit is preserved under the tag
+[`v1-final`](https://github.com/asterxsk/sonder/releases/tag/v1-final) if the
+old behaviour ever needs reading. `main` is the native app; the
+[`v1.0.0`](https://github.com/asterxsk/sonder/releases/tag/v1.0.0) release is
+the Flutter build and is not maintained.
+
 ---
 
 ## Native Android (Kotlin + Compose)
