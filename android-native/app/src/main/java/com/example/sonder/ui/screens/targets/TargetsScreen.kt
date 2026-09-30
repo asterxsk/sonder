@@ -208,7 +208,7 @@ fun TargetsScreen(
                                     ?.takeIf { it.packageName == pick.packageName }
                                     ?.let { rowPending(it, pick.label, onRequest) },
                                 iconBitmap = pick.icon,
-                                scopeNote = blockScopeNote(pick.blockScope),
+                                scopeNote = blockScopeNote(pick.packageName, pick.blockScope),
                             )
                         }
                     }

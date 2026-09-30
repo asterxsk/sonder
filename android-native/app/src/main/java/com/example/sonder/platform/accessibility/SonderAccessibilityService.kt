@@ -213,39 +213,68 @@ class SonderAccessibilityService : AccessibilityService() {
     private fun showsMarkers(packageName: String, markers: List<String>): Boolean {
         if (markers.isEmpty()) return false
         return runCatching {
-            // The app's own window, top-most first, so a stale tree left over from a window
-            // the user has already left cannot answer about the wrong app.
+            // The app's own windows, so a stale tree left over from a window the user has
+            // already left cannot answer about the wrong app.
             val listed = windows ?: return@runCatching false
-            val window = listed.firstOrNull {
-                it.root?.packageName?.toString() == packageName
-            } ?: return@runCatching false
-            val root = window.root ?: return@runCatching false
-            // Our own blocker, which is the window that blinds the check above.
+            // Our own blocker, which is the window that blinds the check below.
             val coveredByUs = listed.any {
                 it.root?.packageName?.toString() == this.packageName
             }
+            // The app's *focused* window is asked first: an app can hold more than one
+            // window at a time — a round trip out to Recents and back is enough to leave the
+            // task with a second one — and the list's order is not a promise that the first
+            // window of the package is the one with the screen. The focused window is the one
+            // taking input, so it is the one whose tree the user is looking at.
+            //
+            // The top-most window is still asked when that answers no, and it is what keeps
+            // this from narrowing what the probe can find: an app that puts a sheet, a
+            // picture-in-picture video or its own overlay in front of its content holds focus
+            // in a window the surface is not in, and asking only that one would report "not
+            // the surface" about an app plainly showing one.
+            val candidates = listOfNotNull(
+                listed.firstOrNull {
+                    it.isActive && it.root?.packageName?.toString() == packageName
+                },
+                listed.firstOrNull { it.root?.packageName?.toString() == packageName },
+            ).distinct()
 
-            val pending = ArrayDeque<AccessibilityNodeInfo>()
-            pending.addLast(root)
-            var visited = 0
-            while (pending.isNotEmpty() && visited < MAX_NODES_VISITED) {
-                val node = pending.removeFirst()
-                visited++
-                val id = node.viewIdResourceName
-                if (
-                    id != null &&
-                    (node.isVisibleToUser || coveredByUs) &&
-                    markers.any { id.contains(it, ignoreCase = true) }
-                ) {
-                    if (BuildConfig.DEBUG) Log.d(TAG, "SHORTS_SURFACE(pkg=$packageName id=$id)")
-                    return@runCatching true
-                }
-                for (i in 0 until node.childCount) {
-                    node.getChild(i)?.let { pending.addLast(it) }
-                }
+            candidates.any { window ->
+                val root = window.root ?: return@any false
+                walkForMarker(root, packageName, markers, coveredByUs)
             }
-            false
         }.getOrDefault(false)
+    }
+
+    /**
+     * Breadth-first walk of one window's tree for any of [markers]; see [showsMarkers] for
+     * why the walk is breadth-first, why it is capped, and what counts as visible.
+     */
+    private fun walkForMarker(
+        root: AccessibilityNodeInfo,
+        packageName: String,
+        markers: List<String>,
+        coveredByUs: Boolean,
+    ): Boolean {
+        val pending = ArrayDeque<AccessibilityNodeInfo>()
+        pending.addLast(root)
+        var visited = 0
+        while (pending.isNotEmpty() && visited < MAX_NODES_VISITED) {
+            val node = pending.removeFirst()
+            visited++
+            val id = node.viewIdResourceName
+            if (
+                id != null &&
+                (node.isVisibleToUser || coveredByUs) &&
+                markers.any { id.contains(it, ignoreCase = true) }
+            ) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "SHORTS_SURFACE(pkg=$packageName id=$id)")
+                return true
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { pending.addLast(it) }
+            }
+        }
+        return false
     }
 
     /**

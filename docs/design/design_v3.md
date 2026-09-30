@@ -215,7 +215,9 @@ The row gets:
 - two 48dp framed glyph buttons — `✎` edit and `✕` remove
 
 A target that gates only Reels/Shorts carries a third metadata line,
-`REELS & SHORTS ONLY`, under the package id. Without it a shorts-scoped
+`REELS ONLY` on Instagram and `SHORTS ONLY` on YouTube, under the package id. The
+line names the surface the app itself has — one app's label for the other's screen
+says the user is gating something that does not exist. Without it a shorts-scoped
 YouTube and a whole-app YouTube render identically, and the row would say a
 blocked app is blocked in full when it is not. The line is drawn only for a
 scoped target, so whole-app rows keep the two-line metadata.
@@ -232,7 +234,8 @@ question is what the thinking is for.
 ### The edit screen commits on SAVE
 
 `✎` opens a per-app panel of numeric knobs and, for a catalogued app, a
-`[ WHOLE APP ] [ REELS & SHORTS ]` scope tab. Edits buffer in the screen and
+`[ WHOLE APP ] [ REELS ]` or `[ WHOLE APP ] [ SHORTS ]` scope tab, named for the
+surface that app has. Edits buffer in the screen and
 land in storage only on a full-width `SAVE`; the screen is not live-writing, so
 SAVE is not decoration — it is the only thing that persists.
 

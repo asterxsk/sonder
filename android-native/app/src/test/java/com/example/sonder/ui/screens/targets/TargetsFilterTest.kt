@@ -2,6 +2,7 @@ package com.example.sonder.ui.screens.targets
 
 import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.data.repo.InstalledApp
+import com.example.sonder.domain.BlockScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -155,5 +156,25 @@ class TargetsFilterTest {
         // Initial, the "alpha" query, and the shorter list — the trailing space is not one.
         assertEquals(3, seen.size)
         assertTrue(seen.last() is TargetPickerViewState.Rows)
+    }
+
+    @Test
+    fun `the scope note names the surface the app itself has`() {
+        // An Instagram target reads REELS ONLY and a YouTube one SHORTS ONLY: the row named
+        // a combined surface neither app has.
+        assertEquals("REELS ONLY", blockScopeNote("com.instagram.android", BlockScope.SHORTS_ONLY))
+        assertEquals("SHORTS ONLY", blockScopeNote("com.google.android.youtube", BlockScope.SHORTS_ONLY))
+    }
+
+    @Test
+    fun `a whole-app target carries no scope note`() {
+        assertNull(blockScopeNote("com.instagram.android", BlockScope.WHOLE_APP))
+    }
+
+    @Test
+    fun `a scoped app this build cannot name still reads as a scope`() {
+        // Reachable from a stored row written by a build that catalogued a third app: the
+        // row must still say it is scoped, just not which surface.
+        assertEquals("SHORTS ONLY", blockScopeNote("com.example.notes", BlockScope.SHORTS_ONLY))
     }
 }

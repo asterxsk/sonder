@@ -114,11 +114,12 @@ fun AppSettingsScreen(
         PixelPanel(modifier = Modifier.fillMaxWidth()) {
             Column {
                 // Shown only for an app with a known short-form surface. On any other app a
-                // REELS & SHORTS option could never fire, so offering it would be a setting
+                // shorts-scope option could never fire, so offering it would be a setting
                 // that lies about what it does.
                 if (ShortsCatalog.isCatalogued(packageName)) {
                     ScopeControl(
                         current = ui.blockScope,
+                        surfaceLabel = ShortsCatalog.surfaceLabelFor(packageName),
                         onSelect = viewModel::setBlockScope,
                     )
                     Spacer(Modifier.height(PixelSpace.Base))
@@ -203,12 +204,21 @@ fun AppSettingsScreen(
  * The scope control: what part of the app a target gates. Deliberately not a [Knob] — those
  * select among durations over an inherited default, and this is a choice between two kinds
  * of target with no default to fall back to. The description under it is the part that
- * matters: "WHOLE APP" and "REELS & SHORTS" are not a severity dial, and the difference
- * between blocking an app and blocking one screen inside it has to be legible before the
- * user picks one.
+ * matters: "WHOLE APP" and the surface's own name are not a severity dial, and the
+ * difference between blocking an app and blocking one screen inside it has to be legible
+ * before the user picks one.
+ *
+ * @param surfaceLabel what this app calls its short-form surface ("REELS", "SHORTS"). It
+ *   comes from [ShortsCatalog], which is also what decides whether this control is offered
+ *   at all, so the tab and the sentence under it name one surface by the name its own app
+ *   uses instead of a combined label that names a screen the app does not have.
  */
 @Composable
-private fun ScopeControl(current: BlockScope, onSelect: (BlockScope) -> Unit) {
+private fun ScopeControl(
+    current: BlockScope,
+    surfaceLabel: String,
+    onSelect: (BlockScope) -> Unit,
+) {
     val options = listOf(BlockScope.WHOLE_APP, BlockScope.SHORTS_ONLY)
     androidx.compose.material3.Text(
         "WHAT IS BLOCKED",
@@ -218,7 +228,7 @@ private fun ScopeControl(current: BlockScope, onSelect: (BlockScope) -> Unit) {
     )
     Spacer(Modifier.height(PixelSpace.Snug))
     PixelTabs(
-        tabs = listOf("WHOLE APP", "REELS & SHORTS"),
+        tabs = listOf("WHOLE APP", surfaceLabel),
         selected = options.indexOf(current).coerceAtLeast(0),
         onSelect = { index -> onSelect(options[index]) },
     )
@@ -227,7 +237,8 @@ private fun ScopeControl(current: BlockScope, onSelect: (BlockScope) -> Unit) {
         when (current) {
             BlockScope.WHOLE_APP -> "The whole app is gated. Every screen needs a won hand."
             BlockScope.SHORTS_ONLY ->
-                "Only Reels and Shorts are gated. The rest of the app stays open."
+                "Only ${surfaceLabel.lowercase().replaceFirstChar { it.uppercase() }} is " +
+                    "gated. The rest of the app stays open."
         },
         style = MonoTypeScale.Metadata,
         color = TextSoft,

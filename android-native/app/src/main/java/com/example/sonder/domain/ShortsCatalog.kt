@@ -62,11 +62,47 @@ object ShortsCatalog {
         ),
     )
 
+    /**
+     * package → what its short-form surface is *called*, in the pixel UI's uppercase.
+     *
+     * Kept beside [MARKERS] so an entry and its label are written together: the two apps do
+     * not share a name for the surface. Instagram's is Reels and YouTube's is Shorts, and a
+     * single "REELS & SHORTS" label told every user of either app that they were gating a
+     * screen one of the two does not have.
+     */
+    private val SURFACE_LABELS: Map<String, String> = mapOf(
+        INSTAGRAM to "REELS",
+        YOUTUBE to "SHORTS",
+    )
+
     /** True when [packageName] is one this catalogue knows how to recognise. */
     fun isCatalogued(packageName: String): Boolean = packageName in MARKERS
 
+    /**
+     * Every package this build catalogues.
+     *
+     * The two tables below are written by hand and keyed by hand, so the one thing that keeps
+     * them from drifting apart is that something reads them *together*: the tests walk this
+     * set and require a label and a marker list for each entry, which is what fails the build
+     * when a third app is added to one table and not the other. Callers in the app use
+     * [isCatalogued] instead — this is the set, not a question.
+     */
+    fun cataloguedPackages(): Set<String> = MARKERS.keys
+
     /** The identifier fragments to look for in [packageName], or empty when unknown. */
     fun markersFor(packageName: String): List<String> = MARKERS[packageName].orEmpty()
+
+    /**
+     * The name of [packageName]'s short-form surface as its own app spells it, or empty for
+     * a package with no such surface.
+     *
+     * Every label the UI shows for a scoped target comes from here, so the scope control and
+     * the target row cannot name the same surface two different ways. An empty answer is
+     * what a package with no surface gets, and callers that need a label for one must not
+     * have offered the choice in the first place — see [isCatalogued], which is what gates
+     * the scope control.
+     */
+    fun surfaceLabelFor(packageName: String): String = SURFACE_LABELS[packageName].orEmpty()
 
     /**
      * The scope a *new* target for [packageName] starts with.

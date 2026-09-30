@@ -143,11 +143,50 @@ class ShortsCatalogTest {
     }
 
     @Test
+    fun `each catalogued app names its own surface`() {
+        // Instagram has Reels, YouTube has Shorts. A combined label named a screen one of
+        // the two does not have, which is what the settings screen used to show both of
+        // them.
+        assertEquals("REELS", ShortsCatalog.surfaceLabelFor(instagram))
+        assertEquals("SHORTS", ShortsCatalog.surfaceLabelFor(youtube))
+    }
+
+    @Test
+    fun `a package with no surface has no name for one`() {
+        // The UI gates the scope control on isCatalogued, and an empty label is the second
+        // signal that there is nothing to offer: a caller that skipped the check draws no
+        // option rather than a nameless one.
+        assertEquals("", ShortsCatalog.surfaceLabelFor("com.example.notes"))
+        assertEquals("", ShortsCatalog.surfaceLabelFor(""))
+    }
+
+    @Test
     fun `no two apps share a marker`() {
         // A shared fragment would mean one app's ids could fire the other app's gate —
         // harmless while both are scoped the same way, and a landmine the moment either
         // list is edited.
-        val all = listOf(instagram, youtube).flatMap(ShortsCatalog::markersFor)
+        val all = ShortsCatalog.cataloguedPackages().flatMap(ShortsCatalog::markersFor)
         assertEquals(all.size, all.toSet().size)
+    }
+
+    @Test
+    fun `every catalogued app has a marker list and a label`() {
+        // The two tables are hand-written and keyed by hand, so the way they drift apart is
+        // a third app added to one and not the other. This walks the *catalogue's own* key
+        // set rather than a list repeated here, or it would pass while the app it was meant
+        // to guard went unlabelled — an empty tab in the settings screen, and a target row
+        // naming a surface with the generic fallback word.
+        val catalogued = ShortsCatalog.cataloguedPackages()
+        assertEquals(setOf(instagram, youtube), catalogued)
+        catalogued.forEach { pkg ->
+            assertTrue(
+                "$pkg is catalogued but carries no markers",
+                ShortsCatalog.markersFor(pkg).isNotEmpty(),
+            )
+            assertTrue(
+                "$pkg is catalogued but has no surface label",
+                ShortsCatalog.surfaceLabelFor(pkg).isNotEmpty(),
+            )
+        }
     }
 }

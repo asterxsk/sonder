@@ -80,7 +80,9 @@ EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
   └─ otherwise → GateOverlayHost.showGate (the blackjack table)
 
 every 500 ms, in parallel with the events above (foreground re-check)
-  │  last resumed activity within 10 s, via ForegroundResolver
+  │  last resumed activity within 60 s, via ForegroundResolver — a scoped target the
+  │  accessibility window list names as the focused window outranks that answer, since
+  │  no window event ever names Reels or Shorts
   ▼
 ForegroundWatch (pure policy)
   ├─ APP    → decide it, unless the previous pass is still holding (gate up, grant live)
@@ -251,7 +253,13 @@ GitHub Release.
   `AccessibilityNodeInfo.viewIdResourceName` on the nodes of the one app it was
   asked about, breadth-first, capped at 400 nodes, and matches them against the
   marker list in `ShortsCatalog`. Nothing else is read — no text, no content
-  descriptions, no images.
+  descriptions, no images. The tree it walks is the app's *focused* window's,
+  falling back to its top-most one: an app can hold more than one window, and the
+  first one the list happens to name is not always the one with the screen.
+  Because no window event names a Reels or Shorts surface, the 500 ms re-check is
+  the only thing that can notice the user opening one, and it decides on the
+  window list when that names a scoped target the usage-stats probe has not
+  caught up with — see `EnforcementCoordinator.scopedAppInFront`.
 - The probe cannot see past our own blocker, and that is measured, not assumed:
   on YouTube, `reel_recycler` reports `isVisibleToUser=false` while the blocker
   covers the app and `true` the moment it goes, same node, same bounds. A probe

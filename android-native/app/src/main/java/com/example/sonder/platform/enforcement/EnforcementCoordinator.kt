@@ -226,7 +226,8 @@ class EnforcementCoordinator @Inject constructor(
      */
     private suspend fun reconcile(mine: Int) {
         val now = System.currentTimeMillis()
-        val observed = foregroundPackage(now) ?: return
+        val resolved = foregroundPackage(now)
+        val observed = scopedAppInFront(resolved) ?: resolved ?: return
 
         // Our own package can only be resolved here through one of our Activities — the
         // overlay window is not an activity, so it leaves no resume behind. The class
@@ -363,6 +364,54 @@ class EnforcementCoordinator @Inject constructor(
 
     /** Which package the accessibility window list says is in front, or null. */
     private fun activeWindow(): String? = activeWindowPackage?.activePackage()
+
+    /**
+     * A scoped target the accessibility window list says is in front, or null when it names
+     * nothing this pass should decide on its behalf.
+     *
+     * The re-check's own probe reads usage events, which the platform batches, so a fast
+     * round trip out to Recents and back can leave it naming the launcher for a while after
+     * the user is already inside the app again — and the launcher's own event can land after
+     * the app's, so the pass is looking at the older of two answers. For a whole-app target
+     * that costs nothing: the app's window event names it and covers it. A scoped target is
+     * reached *inside* its activity — Reels is a fragment of Instagram's main tab activity —
+     * so no window event ever names its surface, and a pass that answers "launcher" never
+     * looks for the surface at all. That is a target that stops working the first time the
+     * user grazes Recents, with nothing in the event stream able to put it back.
+     *
+     * The window list is the immediate answer to the same question, and it is the same
+     * evidence [releaseIsTrailing] and [releaseIsCorroborated] already lean on. It is trusted
+     * here *only* for a scoped target, and only as the package to decide for: what happens
+     * next is the surface probe, so if the app is not really on screen — or is on screen but
+     * showing its feed — the pass still ends in PASS. A whole-app target is left to the probe
+     * alone, because for it there is no second check and a window list that is a moment
+     * stale in the other direction would raise the blocker over whatever the user is
+     * actually looking at.
+     *
+     * @param resolved what that probe answered, which is what bounds the override: it is
+     *   used only when the probe has no app of its own to decide for. Overriding it while it
+     *   names a real app would decide for the app the window list named instead, and a PASS
+     *   there dismisses a blocker that belongs to the app the user is actually in.
+     */
+    private fun scopedAppInFront(resolved: String?): String? {
+        // Only when the probe has no app to decide for. A real app named by the probe is a
+        // real switch — Chrome is in front, not Instagram — and the pass decides for it and
+        // leaves the blocker where it is. Overriding there would decide for the app the
+        // window list named instead, and a PASS for it takes down a blocker that belongs to
+        // the app the user is actually in.
+        val probeNamesAnApp = resolved != null &&
+            ForegroundSurface.classify(
+                pkg = resolved,
+                ownPackage = ownPackage,
+                isTarget = repository.enabledTarget(resolved) != null,
+            ) == ForegroundSurface.APP
+        if (probeNamesAnApp) return null
+
+        val active = activeWindow() ?: return null
+        if (active == ownPackage) return null
+        if (repository.cachedBlockScope(active) != BlockScope.SHORTS_ONLY) return null
+        return active.takeIf { repository.enabledTarget(it) != null }
+    }
 
     /**
      * Whether the accessibility window list agrees that [observed] is really the app on

@@ -62,12 +62,21 @@ fun normalizeTargetsQuery(raw: String): String = raw.trim().lowercase()
 /**
  * The line a row shows for a target that does not gate the whole app, or null for one that
  * does — null rather than a "WHOLE APP" label, because that is the default and labelling the
- * default on every row is noise. One definition, used by the Targets row and the app's
- * settings screen, so the two cannot describe the same scope differently.
+ * default on every row is noise.
+ *
+ * The surface is named by the app's own word for it ([ShortsCatalog.surfaceLabelFor]), which
+ * is also what the app's settings screen names its scope tab and description from: the two
+ * screens read one table rather than each keeping its own words for the same surface. So an
+ * Instagram target reads REELS ONLY and a YouTube one SHORTS ONLY.
+ *
+ * A [BlockScope.SHORTS_ONLY] row whose app has no label is one this build cannot name — a
+ * stored scope written by a build that catalogued a third app — and falls back to the
+ * scope's own name rather than printing nothing.
  */
-fun blockScopeNote(scope: BlockScope): String? = when (scope) {
+fun blockScopeNote(packageName: String, scope: BlockScope): String? = when (scope) {
     BlockScope.WHOLE_APP -> null
-    BlockScope.SHORTS_ONLY -> "REELS & SHORTS ONLY"
+    BlockScope.SHORTS_ONLY ->
+        "${ShortsCatalog.surfaceLabelFor(packageName).ifEmpty { "SHORTS" }} ONLY"
 }
 
 /**
