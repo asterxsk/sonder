@@ -197,7 +197,9 @@ class GateController @Inject constructor(
                 phase = TableState.Phase.RESOLVED,
                 message = "BUST — HOUSE TAKES IT",
             )
-            settle(current.targetPackage, HandOutcome.LOSE)
+            // A bust never sees the dealer's hole card, so the history records only the
+            // hand that busted — the ledger must not show a card this hand never revealed.
+            settle(current.targetPackage, HandOutcome.LOSE, newHand, null)
         } else if (newHand.total == 21) {
             _state.value = current.copy(playerHand = newHand, phase = TableState.Phase.DEALER_TURN)
             standInternal(current.targetPackage, dealt ?: return)
@@ -293,7 +295,7 @@ class GateController @Inject constructor(
                     HandOutcome.PUSH -> "PUSH — FREE REPLAY"
                 },
             )
-            settle(pkg, outcome)
+            settle(pkg, outcome, playerHand, dealerResult.dealer)
         }
     }
 
@@ -305,10 +307,14 @@ class GateController @Inject constructor(
      * reset by PLAY AGAIN while the result was still being written — must not have a result
      * written onto it, which is how an IDLE table once grew a result row for a hand the
      * player had already dismissed.
+     *
+     * The two hands travel with it because this is the last moment they exist: the table
+     * resets on the next deal, and the ledger is the only place a finished hand can be read
+     * back from. They are captured in memory, never re-derived from the deck.
      */
-    private fun settle(pkg: String, outcome: HandOutcome) {
+    private fun settle(pkg: String, outcome: HandOutcome, playerHand: Hand?, dealerHand: Hand?) {
         scope.launch {
-            val grantedUntil = repository.onHandResult(pkg, outcome)
+            val grantedUntil = repository.onHandResult(pkg, outcome, playerHand, dealerHand)
             if (grantedUntil != null) {
                 expiryScheduler.scheduleExpiry(pkg, grantedUntil)
             }

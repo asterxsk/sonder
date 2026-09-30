@@ -67,7 +67,17 @@ data class DailyUsageEntity(
     val grantedMillis: Long,
 )
 
-/** One blackjack hand per record — powers the Stats screen. */
+/**
+ * One blackjack hand per record — powers the Stats screen.
+ *
+ * The label and the two hands are *snapshots*, not lookups: what the app was called and
+ * what was on the table at the moment it was played. A history row that joined the targets
+ * table instead would relabel old hands when a target is renamed, and could not show the
+ * cards at all, because the gate holds them in memory and drops them when the table resets.
+ *
+ * Both card fields are a short human-readable line ("A♠ K♥ · 21"), empty for a hand played
+ * before this was recorded — the row then simply omits them rather than inventing a hand.
+ */
 @Entity(tableName = "hands")
 data class HandEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -75,4 +85,7 @@ data class HandEntity(
     val outcome: String, // WIN, LOSE, PUSH
     val debtAfterMillis: Long,
     val playedAtMillis: Long,
+    val label: String = "",
+    val playerCards: String = "",
+    val dealerCards: String = "",
 )

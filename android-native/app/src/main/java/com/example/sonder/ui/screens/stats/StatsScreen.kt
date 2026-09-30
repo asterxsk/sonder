@@ -167,44 +167,87 @@ private fun FramedNote(title: String, body: String) {
 @Composable
 private fun HandRow(hand: HandEntity, timeFmt: SimpleDateFormat) {
     PixelPanel {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                androidx.compose.material3.Text(
-                    hand.packageName.substringAfterLast('.'),
-                    style = PixelTypeScale.SectionTitle,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Text,
-                )
-                androidx.compose.material3.Text(
-                    timeFmt.format(Date(hand.playedAtMillis)),
-                    style = MonoTypeScale.PackageId,
-                    color = TextSoft,
-                )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    // The stored label, which is the app's own name at the time of the hand.
+                    // Rows written before the label existed fall back to the package name:
+                    // the last dot-segment used to be printed here, which turned
+                    // com.instagram.android into "android" — the word every Instagram and
+                    // YouTube hand was filed under.
+                    androidx.compose.material3.Text(
+                        hand.label.ifBlank { hand.packageName },
+                        style = PixelTypeScale.SectionTitle,
+                        fontFamily = PixelFont,
+                        color = PixelPalette.Text,
+                    )
+                    androidx.compose.material3.Text(
+                        timeFmt.format(Date(hand.playedAtMillis)),
+                        style = MonoTypeScale.PackageId,
+                        color = TextSoft,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    androidx.compose.material3.Text(
+                        when (hand.outcome) {
+                            "WIN" -> "✓ WIN"
+                            "LOSE" -> "▣ LOSS"
+                            else -> "— PUSH"
+                        },
+                        style = PixelTypeScale.Badge,
+                        fontFamily = PixelFont,
+                        color = when (hand.outcome) {
+                            "WIN" -> PixelPalette.Success
+                            "LOSE" -> PixelPalette.Danger
+                            else -> PixelPalette.Muted
+                        },
+                    )
+                    androidx.compose.material3.Text(
+                        "debt ${hand.debtAfterMillis / 60_000}m",
+                        style = MonoTypeScale.PackageId,
+                        color = TextSoft,
+                    )
+                }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                androidx.compose.material3.Text(
-                    when (hand.outcome) {
-                        "WIN" -> "✓ WIN"
-                        "LOSE" -> "▣ LOSS"
-                        else -> "— PUSH"
-                    },
-                    style = PixelTypeScale.Badge,
-                    fontFamily = PixelFont,
-                    color = when (hand.outcome) {
-                        "WIN" -> PixelPalette.Success
-                        "LOSE" -> PixelPalette.Danger
-                        else -> PixelPalette.Muted
-                    },
-                )
-                androidx.compose.material3.Text(
-                    "debt ${hand.debtAfterMillis / 60_000}m",
-                    style = MonoTypeScale.PackageId,
-                    color = TextSoft,
-                )
+
+            // The hands, as they were dealt. A row from before cards were recorded has
+            // neither line, and the ledger simply says less about that hand rather than
+            // printing an empty one.
+            if (hand.playerCards.isNotBlank() || hand.dealerCards.isNotBlank()) {
+                Spacer(Modifier.height(PixelSpace.Snug))
+                hand.playerCards.takeIf { it.isNotBlank() }?.let {
+                    HandLine(who = "YOU", cards = it)
+                }
+                hand.dealerCards.takeIf { it.isNotBlank() }?.let {
+                    HandLine(who = "DEALER", cards = it)
+                }
             }
         }
     }
 }
+
+/** One side of a played hand: who, and the cards with their total. */
+@Composable
+private fun HandLine(who: String, cards: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.material3.Text(
+            who,
+            style = MonoTypeScale.PackageId,
+            color = PixelPalette.Muted,
+            modifier = Modifier.width(WhoColumnWidth),
+        )
+        androidx.compose.material3.Text(
+            cards,
+            style = PixelTypeScale.Badge,
+            fontFamily = PixelFont,
+            color = TextSoft,
+        )
+    }
+}
+
+/** Wide enough for "DEALER" at the monospace metadata scale, so the two lines align. */
+private val WhoColumnWidth = 56.dp
+

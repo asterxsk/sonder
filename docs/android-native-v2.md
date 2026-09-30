@@ -190,12 +190,25 @@ ForegroundWatch (pure policy)
 | Notifications | runtime (33+) | expiry/lockout notices | app notification settings |
 
 - **Onboarding wizard** (first launch): four steps, each with plain-English
-  copy and a direct link; completes only when all are granted
+  copy and a direct link; completes only when all are granted — or, for
+  notifications, when they are skipped
 - **10-second delayed audit**: every `MainActivity` open schedules a check
   10 s out — deliberately late because accessibility state is flaky right
   after boot/enabling. Anything missing pops the pixel prompt
   (`PermissionPromptActivity`) with per-permission deep links
 - `SettingsScreen` mirrors the same audit with a manual re-check
+
+Notifications are the one **optional** grant (`SonderPermission.optional`), and
+that flag is the whole rule. Blocking runs on the accessibility service and the
+overlay; with notifications off the only loss is the "time's up" heads-up, so:
+
+- the wizard's notification step carries a `SKIP` control and the other three do not
+- a skip is recorded in DataStore (`SettingsRepository.skippedPermissionNames`)
+  and `outstandingPermissions(missing, skippedNames)` — one pure rule, in
+  `SonderPermission.kt` — is what both the wizard and the 10 s reminder ask, so a
+  declined permission stops being nagged about on one surface and not the other
+- `SettingsScreen` shows it as `(OPTIONAL)` in the muted tone rather than as a
+  failure, with `TURN ON` instead of `FIX`; taking it back on clears the skip
 - Package visibility uses a `<queries>` block for `MAIN`/`LAUNCHER` intents —
   **no `QUERY_ALL_PACKAGES`**
 
@@ -210,13 +223,22 @@ images. The service description string and onboarding state this.
 
 ## 5. Persistence
 
-Room database `sonder.db` (schema v3):
+Room database `sonder.db` (schema v4):
 
 - `targets` — gated packages (package name PK, label, enabled, `blockScope`)
 - `grants` — one per package: `endAtMillis`, `lastSeenMillis`
 - `debt` — one row per package: accumulated millis (cap applied by policy)
 - `lockouts` — one per package: `untilMillis`
-- `hands` — history: package, outcome, debt-after, timestamp (Stats screen)
+- `hands` — history: package, outcome, debt-after, timestamp, plus `label`,
+  `playerCards`, `dealerCards` (Stats screen)
+
+The three columns `MIGRATION_3_4` adds are snapshots taken at the moment the hand
+settled: the app's label as the target held it, and both hands as one line each
+(`handNotation` → `A♠ K♥ · 21`). They are stored rather than joined or re-derived
+because neither survives otherwise — a target can be renamed and the gate drops
+the cards the moment the table resets. They default to the empty string, which is
+the honest value for a hand played before they were kept; the Stats row omits a
+line it has nothing to say about.
 
 `EnforcementRepository` is the single mutation point; ViewModels and the
 platform layer never touch DAOs directly. Domain models stay pure; mapping

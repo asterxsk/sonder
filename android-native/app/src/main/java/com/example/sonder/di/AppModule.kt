@@ -70,11 +70,28 @@ object AppModule {
         }
     }
 
+    /**
+     * v3 → v4: the hand history gains what the row needs to be worth reading — the app's
+     * label and the two hands as they were dealt.
+     *
+     * All three default to the empty string, which is the honest answer for every hand
+     * played before this: the label was never stored and the cards were never kept, and a
+     * non-empty default (`'WIN'`, say) would put a hand on the screen that nobody played.
+     * The Stats row reads blank as "not recorded" and drops that line.
+     */
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE hands ADD COLUMN label TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE hands ADD COLUMN playerCards TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE hands ADD COLUMN dealerCards TEXT NOT NULL DEFAULT ''")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): SonderDatabase =
         Room.databaseBuilder(context, SonderDatabase::class.java, "sonder.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
 
     @Provides fun provideTargetDao(db: SonderDatabase): TargetDao = db.targetDao()

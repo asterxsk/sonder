@@ -18,8 +18,10 @@ import com.example.sonder.di.ApplicationScope
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.AccessRules
 import com.example.sonder.domain.BlockScope
+import com.example.sonder.domain.handNotation
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
+import com.example.sonder.domain.model.Hand
 import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.LockoutSnapshot
 import java.time.Instant
@@ -435,6 +437,8 @@ class EnforcementRepository @Inject constructor(
     suspend fun onHandResult(
         packageName: String,
         outcome: HandOutcome,
+        playerHand: Hand? = null,
+        dealerHand: Hand? = null,
         nowMillis: Long = System.currentTimeMillis(),
     ): Long? = database.withTransaction {
         val debtBefore = currentDebt(packageName)
@@ -455,6 +459,12 @@ class EnforcementRepository @Inject constructor(
                 outcome = outcome.name,
                 debtAfterMillis = result.debtMillis,
                 playedAtMillis = nowMillis,
+                // Snapshot, from the cache: the history has to say which app this was and
+                // what the hand looked like, and neither is recoverable later — the target
+                // can be renamed and the gate drops the cards the moment the table resets.
+                label = _targets.value[packageName]?.label?.takeIf { it.isNotBlank() } ?: packageName,
+                playerCards = handNotation(playerHand),
+                dealerCards = handNotation(dealerHand),
             ),
         )
         handDao.trimTo(HAND_HISTORY_LIMIT)
