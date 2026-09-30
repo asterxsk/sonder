@@ -53,6 +53,8 @@ fun OnboardingScreen(
     viewModel: OnboardingViewModel = hiltViewModel(),
 ) {
     val missing by viewModel.missing.collectAsStateWithLifecycle()
+    val skipped by viewModel.skipped.collectAsStateWithLifecycle()
+    val unresolved by viewModel.unresolved.collectAsStateWithLifecycle()
     val currentStep by viewModel.currentStep.collectAsStateWithLifecycle()
     val total = viewModel.totalSteps
     val context = LocalContext.current
@@ -84,7 +86,9 @@ fun OnboardingScreen(
         }
     }
 
-    val allGranted = missing.isEmpty()
+    // Done means nothing outstanding, not nothing missing: an optional permission the user
+    // turned down on purpose is not the wizard still waiting on them.
+    val allGranted = unresolved.isEmpty()
 
     Column(
         modifier = Modifier
@@ -138,8 +142,14 @@ fun OnboardingScreen(
         }
         Spacer(Modifier.height(PixelSpace.Tight))
         androidx.compose.material3.Text(
-            text = if (allGranted) "ALL PERMISSIONS GRANTED ✓"
-            else "STEP ${currentStep + 1} OF $total",
+            text = when {
+                // The claim has to stay literally true: with an optional permission declined
+                // the wizard is finished, but not everything is granted, and saying so on
+                // the last screen is the difference between a choice and a lie.
+                !allGranted -> "STEP ${currentStep + 1} OF $total"
+                missing.isEmpty() -> "ALL PERMISSIONS GRANTED ✓"
+                else -> "SETUP COMPLETE — ${skipped.size} OPTIONAL OFF"
+            },
             style = PixelTypeScale.Badge,
             fontFamily = PixelFont,
             color = if (allGranted) PixelPalette.Success else PixelPalette.Muted,
@@ -156,6 +166,9 @@ fun OnboardingScreen(
                 totalSteps = total,
                 alreadyGranted = false,
                 onOpen = { PermissionHandoff.request(context, p) },
+                // Only an optional step can be walked past; the other three are the
+                // enforcement itself and the wizard has nothing to offer without them.
+                onSkip = if (p.optional) ({ viewModel.skip(p) }) else null,
             )
             Spacer(Modifier.height(PixelSpace.Base))
 
@@ -181,6 +194,8 @@ private fun StepCard(
     alreadyGranted: Boolean,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Present only for an optional permission: walks past this step for good. */
+    onSkip: (() -> Unit)? = null,
 ) {
     val copy = copyFor(permission)
     Column(
@@ -230,6 +245,17 @@ private fun StepCard(
             onClick = onOpen,
             modifier = Modifier.fillMaxWidth(),
         )
+        // The opt-out sits under the grant, quieter and un-framed: the default is still to
+        // grant, and a skippable step that shouted would be a different app.
+        onSkip?.let { skip ->
+            Spacer(Modifier.height(PixelSpace.Snug))
+            PixelButton(
+                text = "SKIP — I'LL WATCH THE TIMER MYSELF",
+                onClick = skip,
+                style = PixelButtonStyle.SECONDARY,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -323,8 +349,8 @@ private fun copyFor(p: SonderPermission): StepCopy = when (p) {
         reassure = "Data stays on this device. Nothing is uploaded.",
     )
     SonderPermission.NOTIFICATIONS -> StepCopy(
-        title = "NOTIFICATIONS",
+        title = "NOTIFICATIONS — OPTIONAL",
         body = "Sonder tells you when access expires or a lockout ends — otherwise you'd never know why an app is blocked.",
-        reassure = "Only enforcement alerts. No marketing, ever.",
+        reassure = "Only enforcement alerts. No marketing, ever. Skip it and blocking still works.",
     )
 }

@@ -10,6 +10,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.sonder.data.settings.SettingsRepository
 import com.example.sonder.platform.permissions.PermissionAudit
 import com.example.sonder.platform.permissions.PermissionPromptActivity
+import com.example.sonder.platform.permissions.outstandingPermissions
 import com.example.sonder.theme.SonderTheme
 import com.example.sonder.theme.enablePixelEdgeToEdge
 import com.example.sonder.ui.SonderRoot
@@ -47,7 +48,16 @@ class MainActivity : ComponentActivity() {
                 delay(PermissionAudit.AUDIT_DELAY_MILLIS)
                 if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@launch
                 if (!settings.isOnboardingDone.first()) return@launch
-                PermissionPromptActivity.launchIfMissing(this@MainActivity, audit)
+                // The optional ones the user has already turned down are not missing in
+                // any sense the reminder cares about: it exists to catch a grant that
+                // silently went away, not to reopen a decision that was made on purpose.
+                PermissionPromptActivity.launchIfMissing(
+                    context = this@MainActivity,
+                    missing = outstandingPermissions(
+                        audit.missingPermissions(),
+                        settings.skippedPermissionNames.first(),
+                    ),
+                )
             }
         }
 

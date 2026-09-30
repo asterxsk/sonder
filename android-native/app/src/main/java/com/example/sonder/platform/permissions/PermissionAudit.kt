@@ -13,13 +13,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class SonderPermission(val label: String) {
-    ACCESSIBILITY("Accessibility"),
-    OVERLAY("Display over other apps"),
-    USAGE_ACCESS("Usage access"),
-    NOTIFICATIONS("Notifications"),
-}
-
 /**
  * Permission state checks (plan §4). Every check reads the system directly and caches
  * nothing, so a caller that re-audits on resume always sees the truth.

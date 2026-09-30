@@ -7,7 +7,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.sonder.platform.permissions.SonderPermission
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -25,6 +27,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
 class SettingsRepository(private val context: Context) {
 
     private val onboardingDone = booleanPreferencesKey("onboarding_done")
+    private val skippedPermissionsKey = stringSetPreferencesKey("skipped_permissions")
 
     /**
      * DataStore throws [IOException] when the file cannot be read, and on some devices when
@@ -40,5 +43,27 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setOnboardingDone() {
         context.dataStore.edit { it[onboardingDone] = true }
+    }
+
+    /**
+     * Names of the optional permissions the user has explicitly turned down.
+     *
+     * Stored by enum name rather than by index or ordinal, so reordering [SonderPermission]
+     * cannot silently move a "no" onto a different permission.
+     */
+    val skippedPermissionNames: Flow<Set<String>> = context.dataStore.data
+        .catch { failure ->
+            if (failure is IOException) emit(emptyPreferences()) else throw failure
+        }
+        .map { it[skippedPermissionsKey] ?: emptySet() }
+
+    /** Records that the user has seen this optional permission and does not want it. */
+    suspend fun skipPermission(permission: SonderPermission) {
+        context.dataStore.edit { it[skippedPermissionsKey] = it[skippedPermissionsKey].orEmpty() + permission.name }
+    }
+
+    /** Undoes [skipPermission] — used when the grant is made anyway from Settings. */
+    suspend fun unskipPermission(permission: SonderPermission) {
+        context.dataStore.edit { it[skippedPermissionsKey] = it[skippedPermissionsKey].orEmpty() - permission.name }
     }
 }

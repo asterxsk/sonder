@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +26,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.sonder.data.settings.SettingsRepository
 import com.example.sonder.platform.permissions.PermissionAudit
 import com.example.sonder.platform.permissions.PermissionHandoff
 import com.example.sonder.platform.permissions.SonderPermission
@@ -40,6 +42,7 @@ import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Settings: permission health with deep links (mirror of onboarding, always reachable).
@@ -51,6 +54,15 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val audit = remember(context) { PermissionAudit(context.applicationContext) }
+    val settings = remember(context) { SettingsRepository(context.applicationContext) }
+    val scope = rememberCoroutineScope()
+
+    // Which optional permissions the user has turned down. Read here rather than folded
+    // into the audit: the audit answers "what does the system say", and this answers "what
+    // did the user say", and the row needs both to tell "off because you chose so" from
+    // "off, and something is broken".
+    val skippedNames by remember(settings) { settings.skippedPermissionNames }
+        .collectAsStateWithLifecycle(initialValue = emptySet())
 
     // One published screen state. The audit runs on an explicit lifecycle event —
     // ON_RESUME, which includes coming back from Android Settings — and on RE-CHECK.
@@ -98,6 +110,10 @@ fun SettingsScreen(
                 Spacer(Modifier.height(PixelSpace.Base))
                 SonderPermission.entries.forEach { p ->
                     val granted = p !in missing
+                    // An optional permission that is off *and* was turned down is working as
+                    // designed; showing it in the failure colour would call the user's own
+                    // choice a fault, and the reminder that used to nag about it is gone.
+                    val declinedOptional = !granted && p.optional && p.name in skippedNames
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -106,14 +122,31 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Text(
-                            p.label,
+                            if (declinedOptional) "${p.label}  (OPTIONAL)" else p.label,
                             style = MonoTypeScale.Body,
-                            color = if (granted) PixelPalette.Text else PixelPalette.Danger,
+                            color = when {
+                                granted -> PixelPalette.Text
+                                declinedOptional -> TextSoft
+                                else -> PixelPalette.Danger
+                            },
                         )
-                        if (granted) {
-                            PixelStatusBadge(BadgeTone.GRANTED, labelOverride = "OK")
-                        } else {
-                            PixelButton(
+                        when {
+                            granted -> PixelStatusBadge(BadgeTone.GRANTED, labelOverride = "OK")
+                            declinedOptional -> PixelButton(
+                                text = "TURN ON",
+                                onClick = {
+                                    // Wanting it back has to clear the "no" as well as open
+                                    // Settings, or the on-open reminder would keep ignoring a
+                                    // permission the user has just asked for.
+                                    scope.launch { settings.unskipPermission(p) }
+                                    PermissionHandoff.request(context, p)
+                                },
+                                modifier = Modifier.semantics {
+                                    contentDescription = "TURN ON ${p.label}"
+                                },
+                                minHeight = PixelSpace.Target,
+                            )
+                            else -> PixelButton(
                                 text = "FIX",
                                 onClick = { PermissionHandoff.request(context, p) },
                                 // "FIX" alone reads the same four times in TalkBack; name the row.

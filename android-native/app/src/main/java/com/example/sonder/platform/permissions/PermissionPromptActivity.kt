@@ -9,8 +9,12 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import com.example.sonder.data.settings.SettingsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * Pixel-styled popup shown when the on-open audit finds a missing permission.
@@ -26,6 +30,7 @@ import javax.inject.Inject
 class PermissionPromptActivity : ComponentActivity() {
 
     @Inject lateinit var audit: PermissionAudit
+    @Inject lateinit var settings: SettingsRepository
 
     /** What the current view was built from, so a no-change resume skips the rebuild. */
     private var rendered: Set<SonderPermission>? = null
@@ -48,8 +53,19 @@ class PermissionPromptActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /**
+     * Read the declined-optional set, then draw. The audit itself is synchronous, but the
+     * skip list is DataStore-backed, so the frame waits on one preferences read — that read
+     * is what keeps a deliberately-skipped optional permission from being nagged about on
+     * every launch, which is the whole point of it being optional.
+     */
     private fun render() {
-        val missing = audit.missingPermissions()
+        lifecycleScope.launch {
+            build(outstandingPermissions(audit.missingPermissions(), settings.skippedPermissionNames.first()))
+        }
+    }
+
+    private fun build(missing: Set<SonderPermission>) {
         if (missing.isEmpty()) {
             finish()
             return
@@ -126,9 +142,15 @@ class PermissionPromptActivity : ComponentActivity() {
     }
 
     companion object {
-        /** Shows the prompt only when [audit] still finds something missing. */
-        fun launchIfMissing(context: Context, audit: PermissionAudit) {
-            if (audit.missingPermissions().isEmpty()) return
+        /**
+         * Shows the prompt only when [missing] still holds something worth asking about.
+         *
+         * Takes the set rather than the audit so the caller applies the optional-skip rule
+         * first: launching a translucent activity that instantly finishes itself is a
+         * flicker on the user's screen for a permission they already declined.
+         */
+        fun launchIfMissing(context: Context, missing: Set<SonderPermission>) {
+            if (missing.isEmpty()) return
             runCatching {
                 context.startActivity(
                     Intent(context, PermissionPromptActivity::class.java)
