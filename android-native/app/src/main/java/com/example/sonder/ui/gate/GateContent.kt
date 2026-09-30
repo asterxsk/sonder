@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.example.sonder.domain.model.Card
+import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.Rank
 import com.example.sonder.domain.model.Suit
 import com.example.sonder.theme.MonoTypeScale
@@ -390,7 +391,17 @@ private fun BlackjackBlocker(
             // act as CLOSE APP and grants nothing: it stops the bleeding and takes the
             // loss already on the books. A won hand has no debt to stop, so it gets no
             // such offer — CONTINUE is already the way forward.
-            if (!won) {
+            //
+            // A push with nothing on the books gets no such offer either, because there is
+            // nothing for it to take: a push moves no debt and grants nothing, so after one
+            // the books are exactly as they were before the hand. Offering STOP there was
+            // offering to take a loss that the hand never made — the retry is the whole
+            // panel. A push played while debt from earlier hands is still owed keeps the
+            // exit, since that debt is real and that is still the moment to stop adding to
+            // it.
+            val lostSomething = !won &&
+                !(state.lastOutcome == HandOutcome.PUSH && state.debtMinutes == 0L)
+            if (lostSomething) {
                 Spacer(Modifier.height(PixelSpace.Snug))
                 PixelButton(
                     text = "✕  STOP — TAKE THE LOSS",
