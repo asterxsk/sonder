@@ -45,3 +45,6 @@ captures/
 # If a bare `/graft/` rule reappears below this line, delete it: it would hide
 # newly generated cards from git status and let the committed graph go stale
 # without anything reporting it.
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
