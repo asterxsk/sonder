@@ -66,6 +66,38 @@ class AccessPolicyTest {
     }
 
     @Test
+    fun `a win that clears the last of the debt still grants nothing`() {
+        // The hand was played owing 10:00 and pays it off, so the state it leaves is a
+        // zero-debt one — but the player never played a hand *from* that state, which is
+        // the only thing a grant may be earned by. Without this a loss-then-win reads as a
+        // wash and one hand buys the way in.
+        val r = AccessPolicy.onHandResult(HandOutcome.WIN, loss10, t0)
+
+        assertEquals(0, r.debtMillis)
+        assertNull(r.grantedUntil)
+    }
+
+    @Test
+    fun `user example - a loss costs two wins, one to clear it and one to get in`() {
+        // L, W, W → debt 10 → 0 (still blocked) → access. The first win after a loss is
+        // debt off the books and nothing more, so getting in always costs the hand that
+        // clears what you owe *plus* the hand that is actually played from a clean slate.
+        var debt = 0L
+        var grantedUntil: Long? = null
+
+        listOf(HandOutcome.LOSE, HandOutcome.WIN).forEach { outcome ->
+            val r = AccessPolicy.onHandResult(outcome, debt, t0)
+            debt = r.debtMillis
+            grantedUntil = r.grantedUntil
+        }
+        assertEquals(0, debt)
+        assertNull(grantedUntil)
+
+        grantedUntil = AccessPolicy.onHandResult(HandOutcome.WIN, debt, t0).grantedUntil
+        assertEquals(t0 + win5, grantedUntil)
+    }
+
+    @Test
     fun `debt is capped at sixty minutes`() {
         var debt = 55 * 60_000L
         repeat(3) {

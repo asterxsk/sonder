@@ -123,15 +123,32 @@ class GateController @Inject constructor(
         val debt = repository.currentDebt(pkg)
         val cap = repository.cachedMaxDebt(pkg)
         val lockoutRemaining = repository.lockoutRemainingMillis(pkg)
+        // A cap lockout is read from the lockout row, not inferred from a zero
+        // allowance: the win that spends the cap grants access AND writes the
+        // lockout, so both are true at once and only the row separates them.
+        val capLocked = repository.lockoutReason(pkg) == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP &&
+            lockoutRemaining > 0L
+        val resolved = _state.value.phase == TableState.Phase.RESOLVED &&
+            _state.value.lastOutcome == HandOutcome.WIN &&
+            !_state.value.lastHandGranted
         _state.value = _state.value.copy(
+            // A win that granted nothing left the user still blocked, and the panel has to
+            // say which kind of blocked: debt off the books is progress worth naming, and
+            // "YOU WIN" alone over a gate that is about to come back up is what made a
+            // paid-down win look like a way in.
+            message = if (resolved) {
+                when {
+                    capLocked -> "YOU WIN — DAILY LIMIT SPENT"
+                    debt > 0L -> "YOU WIN — DEBT ${debt / 60_000} MIN LEFT"
+                    else -> "DEBT CLEARED — WIN AGAIN TO GET IN"
+                }
+            } else {
+                _state.value.message
+            },
             debtMinutes = debt / 60_000,
             winGrantMillis = rules.winGrantMillis,
             dailyRemainingMillis = rules.dailyCapMillis?.let { (it - grantedToday).coerceAtLeast(0L) },
-            // A cap lockout is read from the lockout row, not inferred from a zero
-            // allowance: the win that spends the cap grants access AND writes the
-            // lockout, so both are true at once and only the row separates them.
-            capLocked = repository.lockoutReason(pkg) == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP &&
-                lockoutRemaining > 0L,
+            capLocked = capLocked,
             // At the ceiling the wait is whichever is longer: the lockout the last loss
             // wrote, or the debt standing behind it.
             debtLockRemainingMillis = if (AccessPolicy.isDebtAtCap(debt, cap)) {

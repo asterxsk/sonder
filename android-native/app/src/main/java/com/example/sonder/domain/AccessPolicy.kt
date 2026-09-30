@@ -13,7 +13,9 @@ import java.time.ZoneId
  * - Win with zero debt  → +5:00 access.
  * - Loss                → +10:00 debt, capped at 60:00. You may keep gambling;
  *                         each win pays off 10:00 of debt.
- * - Win with debt       → debt −10:00 (no access granted yet).
+ * - Win with debt       → debt −10:00 and nothing else, *even when that clears
+ *                         the last of it*: access is granted only by a win
+ *                         played from a state that already owed nothing.
  * - Push                → free replay (nothing changes).
  * - Walk away with debt → locked until debt is served (lockout = full debt).
  * - Absence >60s while a grant is active → grant revoked regardless of time left.
@@ -29,6 +31,12 @@ object AccessPolicy {
     /**
      * A win resolves debt first; access is only granted from a zero-debt state.
      *
+     * "Zero-debt state" is the state the hand was *played* from, not the one it leaves
+     * behind: a win that pays off the last of the debt still grants nothing, because
+     * otherwise a single loss followed by a single win reads as a wash and the user is
+     * straight back into the app one hand after losing. Clearing what you owe and being
+     * let in are two separate hands, which is what the loss-debt model is for.
+     *
      * [grantedTodayMillis] is the total already granted to this package today; it
      * only matters when [rules] carries a non-null daily cap. When the cap is spent
      * a win grants nothing and returns a cap lockout until the next local midnight.
@@ -42,14 +50,16 @@ object AccessPolicy {
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): PolicyResult = when (outcome) {
         HandOutcome.PUSH -> PolicyResult(debtMillis = debtMillis, grantedUntil = null)
-        HandOutcome.WIN -> {
-            val remainingDebt = (debtMillis - rules.lossDebtMillis).coerceAtLeast(0L)
-            if (remainingDebt > 0L) {
-                // Debt paid down but not cleared: no access yet, keep gambling.
-                PolicyResult(debtMillis = remainingDebt, grantedUntil = null)
-            } else {
-                grantForWin(rules, nowMillis, grantedTodayMillis, zoneId)
-            }
+        HandOutcome.WIN -> if (debtMillis > 0L) {
+            // Played from debt: this hand pays debt down and grants nothing, whether or not
+            // it happens to be the one that clears the last of it. Keep gambling — the next
+            // hand starts from a clean slate, and that is the one that can open the app.
+            PolicyResult(
+                debtMillis = (debtMillis - rules.lossDebtMillis).coerceAtLeast(0L),
+                grantedUntil = null,
+            )
+        } else {
+            grantForWin(rules, nowMillis, grantedTodayMillis, zoneId)
         }
         HandOutcome.LOSE -> {
             val newDebt = (debtMillis + rules.lossDebtMillis).coerceAtMost(rules.maxDebtMillis)

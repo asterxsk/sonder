@@ -27,7 +27,7 @@ unit tests cover them.
 | --- | --- |
 | Win at zero debt | `grantedUntil = now + 5 min` |
 | Loss | `debt = min(debt + 10 min, 60 min)` — the cap is hard |
-| Win with debt | `debt = max(debt − 10 min, 0)`; no grant until it hits 0 |
+| Win with debt | `debt = max(debt − 10 min, 0)`; no grant, even when that clears the last of it |
 | Push | no change |
 | Walk away with debt | lockout until `now + debt` |
 | Debt at the ceiling | no table: the app waits the debt out (`GateDecider` → LOCKOUT) |
@@ -35,6 +35,10 @@ unit tests cover them.
 | Absence > 60 s during a grant | grant revoked regardless of remaining time |
 
 Worked example: `L, L, W, W, W` → debt 20 → 10 → 0 → access granted.
+
+A grant is earned by a hand played *from* a zero-debt state, so clearing what you owe and
+being let in are two separate hands. `L, W, W` → debt 10 → 0 (still blocked) → access: the
+win that pays off the last of the debt buys the debt, not the way in.
 At the 60-minute cap, further losses change nothing (`55 + 10 → 60`, not 65) — and
 at the cap the table closes: winning hands are the fast way to pay debt down, so the
 loop stays open below the ceiling, but at the ceiling there is nothing another loss

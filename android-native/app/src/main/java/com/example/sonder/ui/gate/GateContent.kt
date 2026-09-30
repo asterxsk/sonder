@@ -34,7 +34,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.example.sonder.domain.model.Card
-import com.example.sonder.domain.model.HandOutcome
 import com.example.sonder.domain.model.Rank
 import com.example.sonder.domain.model.Suit
 import com.example.sonder.theme.MonoTypeScale
@@ -384,24 +383,21 @@ private fun BlackjackBlocker(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // A lost hand has an exit, and it sits directly under the retry rather than at
-            // the bottom of the panel. Losing is the moment the debt just grew, and the
-            // only other way out was past the timer, below the fold on a short screen —
-            // so the cheapest-looking next move was always another hand. This is the same
-            // act as CLOSE APP and grants nothing: it stops the bleeding and takes the
-            // loss already on the books. A won hand has no debt to stop, so it gets no
-            // such offer — CONTINUE is already the way forward.
+            // A hand that leaves debt on the books has an exit, and it sits directly under
+            // the retry rather than at the bottom of the panel. That is the moment the debt
+            // just grew, and the only other way out was past the timer, below the fold on a
+            // short screen — so the cheapest-looking next move was always another hand. This
+            // is the same act as CLOSE APP and grants nothing: it stops the bleeding and
+            // takes the loss already on the books.
             //
-            // A push with nothing on the books gets no such offer either, because there is
-            // nothing for it to take: a push moves no debt and grants nothing, so after one
-            // the books are exactly as they were before the hand. Offering STOP there was
-            // offering to take a loss that the hand never made — the retry is the whole
-            // panel. A push played while debt from earlier hands is still owed keeps the
-            // exit, since that debt is real and that is still the moment to stop adding to
-            // it.
-            val lostSomething = !won &&
-                !(state.lastOutcome == HandOutcome.PUSH && state.debtMinutes == 0L)
-            if (lostSomething) {
+            // The exit is keyed to the debt, not to the hand: STOP means "I am done owing
+            // this", so a hand that leaves nothing owing gets no offer to take. A push
+            // leaves the books exactly as they were, and this win just paid them off —
+            // neither made a loss for STOP to take, so in both the retry is the whole panel.
+            // A loss, a push played while earlier debt is still owed, and a win that only
+            // pays debt down all keep the exit, because in each of those the next hand still
+            // has something to win back or lose.
+            if (!won && state.debtMinutes > 0L) {
                 Spacer(Modifier.height(PixelSpace.Snug))
                 PixelButton(
                     text = "✕  STOP — TAKE THE LOSS",
