@@ -455,6 +455,14 @@ The pill keeps §5's hard grammar, only rounded:
 - 2dp hard frame
 - hard-offset shadow, rounded to match so it cannot poke square corners out from under the pill
 
+The bar is divided into four equal segments, one per tab. The selected segment is lit as
+raised panel and fills the pill's inner height — inset by the frame stroke and no more, so
+the lit key is flush with the dock's own top and bottom edges rather than floating short of
+them — and it never reaches into its neighbour, because each segment is exactly its quarter.
+The two end segments take the pill's curve on their outer side and stay square on the side
+facing the next tab; the middle two are hard squares. The pill clips everything inside it to
+its own shape, so no segment can draw outside the bar.
+
 Each tab is a glyph over a label, and the glyph is the icon: in the platform symbol font,
 because `⌂ ⌖ ▥ ⚙` are symbols the pixel face has no cut of. The label is 10sp DM Mono —
 §4's floor keeps the pixel face at 10sp and above, and the labels are sentence case,

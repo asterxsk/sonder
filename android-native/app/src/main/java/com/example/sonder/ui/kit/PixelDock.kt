@@ -23,8 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
@@ -62,15 +64,41 @@ internal val PixelDockRadius = 32.dp
 private val DockShape = RoundedCornerShape(PixelDockRadius)
 
 /**
+ * The shape of one tab's active ground. The two segments at the ends of the dock are the
+ * only places where a lit square meets the pill's curve, so they take that curve on their
+ * outer side and stay square on the side that faces the next tab — the outer corners round,
+ * the inner ones hard, which is what makes the ground sit *in* the navbar rather than over
+ * it. Everything between is a plain square.
+ *
+ * The radius is the pill's less the frame stroke the segment is inset by, so the nested
+ * corners are concentric with the pill's instead of merely nearby.
+ */
+private fun segmentShape(tab: PixelTab): Shape = when (tab) {
+    PixelTab.entries.first() -> RoundedCornerShape(
+        topStart = SegmentRadius,
+        bottomStart = SegmentRadius,
+    )
+    PixelTab.entries.last() -> RoundedCornerShape(
+        topEnd = SegmentRadius,
+        bottomEnd = SegmentRadius,
+    )
+    else -> RectangleShape
+}
+
+private val SegmentRadius = PixelDockRadius - PixelSpace.Stroke
+
+/**
  * design_v3.md §15: bottom navigation is a console dock that floats as a rounded pill —
- * the one local exception to the pixel world's zero-radius rule. The active tab is a
- * square of raised panel inside the pill: amber glyph and label at full
- * [PixelPalette.Primary] against it, inactive items at TextSoft so
- * labels stay readable (≥7:1) without competing with the active amber. Pressed = 2px
- * translate, pixel-style, on the whole segment. Every tab is a real selected Tab role
- * with the shared keyboard/switch-access focus ring; [PixelDockHeight] tall so the
- * gesture area never eats taps. The fixed tab order, glyphs, and labels come from
- * [PixelTab], not a rebuilt list.
+ * the one local exception to the pixel world's zero-radius rule. The pill is divided into
+ * one segment per tab, and the active tab's segment is lit as raised panel: amber glyph and
+ * label at full [PixelPalette.Primary] against it, inactive items at TextSoft so labels stay
+ * readable (≥7:1) without competing with the active amber. A segment fills the pill's inner
+ * height — the lit key reaches the navbar's own top and bottom edges, and the two end
+ * segments round off on the outside where they meet the pill's curve, so nothing paints
+ * outside the bar. Pressed = 2px translate, pixel-style, on the whole segment. Every tab is
+ * a real selected Tab role with the shared keyboard/switch-access focus ring;
+ * [PixelDockHeight] tall so the gesture area never eats taps. The fixed tab order, glyphs,
+ * and labels come from [PixelTab], not a rebuilt list.
  */
 @Composable
 fun PixelDock(
@@ -97,11 +125,16 @@ fun PixelDock(
                 )
             }
             .background(PixelPalette.Surface, DockShape)
-            .border(PixelSpace.Stroke, PixelPalette.Border, DockShape),
+            .border(PixelSpace.Stroke, PixelPalette.Border, DockShape)
+            // Nothing inside the pill may paint outside it. The active ground is a
+            // full-height rectangle, and at the two ends of the dock that rectangle's
+            // square corners would otherwise stand proud of the pill's curve — the one
+            // thing the floating shape cannot survive. Clipping the row to [DockShape] is
+            // what cuts the end segments into the same curve, so the lit key is flush with
+            // the navbar at every edge and still reads as a square in the middle.
+            .clip(DockShape),
     ) {
         PixelTab.entries.forEach { tab ->
-            // The active ground is a square on purpose: §15 rounds the pill, not the key
-            // inside it, so the two shapes stay legible as two shapes.
             val active = tab == selected
             val interaction = remember { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
@@ -121,9 +154,11 @@ fun PixelDock(
                     .weight(1f)
                     .fillMaxHeight()
                     .offset(y = pressOffset)
-                    // Inset the segment from the pill's edge, leaving a 48dp [PixelSpace.Target]
-                    // tall segment for the active tab to frame without touching the pill.
-                    .padding(vertical = PixelSpace.Snug, horizontal = PixelSpace.Tight)
+                    // The segment fills the pill's inner height — inset by the frame stroke
+                    // and no more, so the lit ground is flush with the navbar's top and
+                    // bottom edges instead of floating short of them. Each tab is exactly
+                    // its quarter, so a ground can never reach into its neighbour.
+                    .padding(vertical = PixelSpace.Stroke, horizontal = PixelSpace.Stroke)
                     .then(
                         if (active) {
                             // A square, quietly-lit ground rather than an amber frame. The
@@ -131,7 +166,12 @@ fun PixelDock(
                             // segment inside it put a second outline in the same object.
                             // Panel on Surface is a small step, so the selection reads as
                             // a key that is lit, and the amber type carries the rest.
-                            Modifier.background(PixelPalette.Panel, RectangleShape)
+                            //
+                            // Square, except where the segment is an end of the dock: there
+                            // its outer side carries the pill's own curve, so the two
+                            // outermost keys round off on the outside and the middle two
+                            // stay hard squares.
+                            Modifier.background(PixelPalette.Panel, segmentShape(tab))
                         } else {
                             Modifier
                         },
@@ -150,6 +190,9 @@ fun PixelDock(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(
+                    // The segment ground now runs the pill's full inner height, so the
+                    // glyph and label keep their own side gap and nothing else moves.
+                    modifier = Modifier.padding(horizontal = PixelSpace.Tight),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
