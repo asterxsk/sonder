@@ -8,7 +8,7 @@ Implementation notes for the native (Kotlin + Compose) Sonder. Read alongside
 The product rules live in pure Kotlin under
 `android-native/app/src/main/java/com/example/sonder/domain/`: `AccessPolicy`,
 `BlackjackRules`, and the enforcement policy — `GateDecider`, `BlockScope`,
-`ShortsCatalog`, `ForegroundWatch`, `ForegroundSurface`. No Android imports; 106
+`ShortsCatalog`, `ForegroundWatch`, `ForegroundSurface`. No Android imports; 109
 unit tests cover them.
 
 **`BlackjackRules.kt`**
@@ -33,13 +33,15 @@ unit tests cover them.
 | Bank > 0 | the app is granted; the bank drains only while it is in front |
 | Bank reaches 0 | the gate comes up, and removal is refused for 12 h |
 
-The stake is a stake, not a claim on the balance: every chip is played at face value even
-from an empty bank, so the table is reachable from nothing and a loss floors at zero. That
-is what makes a win the way back in — the bank *is* access, so there is no separate grant
-to earn and no debt to serve.
+The bet is drawn on the bank: a chip the bank cannot cover is greyed, so a win is always
+paid out of time that was at risk and no hand can mint access out of nothing. A bank spent
+down to nothing is a table with no chip on it — which is why every local day opens each
+bank with the smallest chip, the one stake that is not won, so the way back in is a hand
+rather than a wall. The bank *is* access, so there is no separate grant to earn and no debt
+to serve.
 
-Worked example: `L, L, W` at a 5:00 chip → the two losses floor at 0 (a loss is never a
-debt), and the win credits 5:00 — the third hand is the way in.
+Worked example: bank 5:00, `L` at a 5:00 chip → floored at 0 (a loss is never a debt), and
+the chips grey out until the next morning's 2:00 stake, which is then played for 2:00.
 
 `maxMillis` is the only per-app rule besides the scope, so nothing else can stand between a
 won hand and the app.
@@ -252,9 +254,9 @@ happens at the repository boundary.
 cd android-native && ./gradlew testDebugUnitTest
 ```
 
-- `AccessPolicyTest` (29 tests): the bank arithmetic, chip stakes at face value
-  from an empty bank, the ceiling clamp and the zero floor, the 10 s bill clamp,
-  the daily reset and the 12 h removal lock, state mapping
+- `AccessPolicyTest` (32 tests): the bank arithmetic, the backed-stake rule, the
+  ceiling clamp and the zero floor, the 10 s bill clamp, the day's opening stake
+  and the 12 h removal lock, state mapping
 - `BlackjackRulesTest` (15 tests): hard/soft totals, ace degradation, bust,
   naturals, deal order, dealer stands on hard and soft 17, settlement
 - `GateDeciderTest` (12 tests): pass/granted/gate precedence, and the

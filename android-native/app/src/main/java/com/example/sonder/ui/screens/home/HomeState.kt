@@ -70,9 +70,10 @@ data class HomeState(
  * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here — so
  * countdown text is deterministic in tests.
  *
- * A bank from an earlier day reads as nothing, which is what makes the allowance daily
- * without a table of its own: yesterday's leftovers are not today's access, so every app
- * starts the day gated.
+ * A bank from an earlier day reads as the day's opening stake, which is what makes the
+ * allowance daily without a table of its own: yesterday's leftovers are not today's access,
+ * and a target that has never played reads the same way, because the day is what opens a
+ * table rather than any hand that was played on it.
  */
 internal fun mapHomeState(
     targets: List<TargetEntity>,
@@ -86,14 +87,12 @@ internal fun mapHomeState(
         .filter { it.enabled } // disabled records stay in Room and appear only on Targets
         .map { target ->
             val bank = bankByPackage[target.packageName]
-            val remaining = bank?.let {
-                AccessPolicy.bankAt(
-                    remainingMillis = it.remainingMillis,
-                    epochDay = it.epochDay,
-                    nowMillis = nowMillis,
-                    zoneId = zoneId,
-                )
-            } ?: 0L
+            val remaining = AccessPolicy.bankFor(
+                storedMillis = bank?.remainingMillis,
+                epochDay = bank?.epochDay,
+                nowMillis = nowMillis,
+                zoneId = zoneId,
+            )
             val state = AccessPolicy.stateFor(enabled = true, bankMillis = remaining)
             HomeRow(
                 packageName = target.packageName,

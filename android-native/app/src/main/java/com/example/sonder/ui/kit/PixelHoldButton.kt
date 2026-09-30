@@ -1,5 +1,6 @@
 package com.example.sonder.ui.kit
 
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -26,10 +27,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.example.sonder.theme.PixelFont
-import com.example.sonder.theme.PixelMotion
 import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
+import kotlin.math.floor
 import kotlinx.coroutines.delay
 
 /**
@@ -83,13 +84,22 @@ fun PixelHoldButton(
         armed = true
     }
 
-    // Stepped, like every other motion in the app: the fill advances in whole frames rather
-    // than sliding, so it reads as a progress bar and not as a fade.
+    // Stepped, like every other motion in the app — but stepped to *this wait's* own length
+    // rather than to PixelMotion's four frames. A thirty-second fill quantised to four steps
+    // moves once every seven and a half seconds, so the strip sits empty through the whole
+    // first quarter of the wait and reads as a button that is not filling at all; the second
+    // press then arrives against a bar that was never seen to move. One step a second is
+    // still discrete and still interpolates nothing, and it ticks in time with the countdown
+    // written on the label beside it.
+    val steps = ((holdMillis + 999L) / 1_000L).coerceAtLeast(1L).toInt()
+    val fillEasing = remember(steps) {
+        Easing { fraction -> floor(fraction * steps) / steps }
+    }
     val progress by animateFloatAsState(
         targetValue = if (running) 1f else 0f,
         animationSpec = tween(
             durationMillis = if (running) holdMillis.toInt() else 0,
-            easing = PixelMotion.Stepped,
+            easing = fillEasing,
         ),
         label = "holdFill",
     )

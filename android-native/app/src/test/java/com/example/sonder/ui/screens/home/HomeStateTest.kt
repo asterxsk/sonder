@@ -41,16 +41,18 @@ class HomeStateTest {
     }
 
     @Test
-    fun `an enabled target with nothing banked is idle`() {
+    fun `an enabled target that has never played opens with the day's stake`() {
+        // No row means nothing has been played on this table, not that the table has nothing
+        // on it: the day opens every app with the smallest chip, or there is no hand to deal.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = emptyList(),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
-        assertEquals(0L, state.rows.single().bankMillis)
-        assertEquals("", state.rows.single().remainingText)
+        assertEquals(AccessPolicy.OPENING_STAKE_MILLIS, state.rows.single().bankMillis)
+        assertEquals("02:00", state.rows.single().remainingText)
+        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
     }
 
     @Test
@@ -69,18 +71,17 @@ class HomeStateTest {
     }
 
     @Test
-    fun `a bank from yesterday reads as nothing and the row goes idle`() {
-        // The daily allowance without a daily table: the row survives midnight, it simply
-        // stops counting, and every app starts the day gated.
+    fun `a bank from yesterday reads as the day's stake, not as what it held`() {
+        // The daily allowance without a daily table: the row survives midnight and stops
+        // counting, and the new day opens it at the stake every day opens with.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = listOf(bank("com.example.a", 30 * 60_000L, epochDay = today - 1)),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
-        assertEquals(0L, state.rows.single().bankMillis)
-        assertEquals(EnforcementState.IDLE, state.rows.single().state)
+        assertEquals(AccessPolicy.OPENING_STAKE_MILLIS, state.rows.single().bankMillis)
+        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
     }
 
     @Test
@@ -100,7 +101,7 @@ class HomeStateTest {
     }
 
     @Test
-    fun `rows with no bank fall back to name order`() {
+    fun `rows holding the same bank fall back to name order`() {
         val state = mapHomeState(
             targets = listOf(target("com.example.c"), target("com.example.a")),
             banks = emptyList(),
@@ -114,7 +115,10 @@ class HomeStateTest {
     fun `a granted row outranks an idle one`() {
         val state = mapHomeState(
             targets = listOf(target("com.example.a"), target("com.example.z")),
-            banks = listOf(bank("com.example.z", 60_000L)),
+            banks = listOf(
+                bank("com.example.a", 0L, emptySinceMillis = t0),
+                bank("com.example.z", 60_000L),
+            ),
             nowMillis = t0,
             zoneId = utc,
         )
@@ -135,9 +139,15 @@ class HomeStateTest {
 
     @Test
     fun `the idle count is the number of limited apps`() {
+        // Every bank spent down to nothing on the current day: the panel is what the screen
+        // reads while there is no time anywhere, and the count is the apps it is waiting on.
         val state = mapHomeState(
             targets = listOf(target("com.example.a"), target("com.example.b"), target("com.example.c")),
-            banks = emptyList(),
+            banks = listOf(
+                bank("com.example.a", 0L, emptySinceMillis = t0),
+                bank("com.example.b", 0L, emptySinceMillis = t0),
+                bank("com.example.c", 0L, emptySinceMillis = t0),
+            ),
             nowMillis = t0,
             zoneId = utc,
         )

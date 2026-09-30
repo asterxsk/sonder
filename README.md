@@ -35,7 +35,7 @@ The bank lives in `time_bank` (one row per package); the rules are in
 | Event | Result |
 | --- | --- |
 | Bank above zero | The app opens — no hand, no gate |
-| Bank at zero | The gate: only a won hand gets you in |
+| Bank at zero | The gate, with the chips greyed |
 | Blackjack win | **Bank + the stake**, clamped to the app's maximum |
 | Blackjack loss | **Bank − the stake**, floored at zero — never a debt |
 | Push | Free replay — nothing changes |
@@ -43,11 +43,14 @@ The bank lives in `time_bank` (one row per package); the rules are in
 | Time away from it | Not billed; the bank waits, and nothing revokes it |
 | Bank drained to zero | Removal of that limit is refused for **12 h** (a win clears it) |
 
-Stakes are chips: **2:00**, **5:00**, **10:00**, or **ALL IN** (the whole bank,
-unavailable at zero). So `bet 5:00, win` → 5:00 banked; `bet 5:00, lose` → back
-to 0:00; `ALL IN on 15:00, win` → 30:00, up to the ceiling you set (default
-**60:00**, presets 30:00 / 1:00 / 2:00 / 3:00). Every app starts each day at
-zero, and nothing carries past midnight.
+Stakes are chips: **2:00**, **5:00**, **10:00**, or **ALL IN** (the whole bank).
+A chip is **backed by the bank** — one the bank cannot cover is greyed out, so
+you can only bet time you actually hold. So `bet 5:00, win` → 5:00 banked;
+`bet 5:00, lose` → back to 0:00; `ALL IN on 15:00, win` → 30:00, up to the
+ceiling you set (default **60:00**, presets 30:00 / 1:00 / 2:00 / 3:00). Nothing
+carries past midnight, and every local day opens each bank with the **2:00**
+chip — the one stake that is not won, so a bank spent down to nothing is one
+hand away from being playable again rather than a wall.
 
 Dealer stands on all 17s (including soft 17). Natural blackjack is an instant
 win. No wagers, wallet, ads, analytics, or account — the chips are minutes you
@@ -58,7 +61,7 @@ already won, never money.
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # unit tests (156; 106 of them the pure domain)
+./gradlew testDebugUnitTest    # unit tests (159; 109 of them the pure domain)
 ```
 
 Requires JDK 17 (`JAVA_HOME`) and an Android SDK with platform 37. Gradle

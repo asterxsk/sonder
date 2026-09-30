@@ -84,17 +84,40 @@ class SonderAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            // This assignment replaces the whole flag word the XML declared, so every flag
-            // the service relies on has to be repeated here. FLAG_REPORT_VIEW_IDS is what
-            // populates AccessibilityNodeInfo.viewIdResourceName, which is the only thing
-            // showsMarkers matches on — without it every node reports a null id and no
-            // scoped target could ever detect its surface.
-            flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+        // The declared info is edited in place rather than replaced with a fresh
+        // AccessibilityServiceInfo. `serviceInfo = AccessibilityServiceInfo()` handed the
+        // framework a service whose capabilities were empty, and canRetrieveWindowContent is
+        // a *capability*, not a flag: it is parsed from the XML by the system at bind time
+        // and there is no runtime counterpart to set it back, so a replaced info silently
+        // took window-content access away from a service the user had granted it to.
+        //
+        // The cost of that was invisible and total for the scoped targets: every
+        // AccessibilityWindowInfo.root came back null, so showsMarkers found no tree to walk
+        // and answered "not the surface" for every app, every pass — Instagram's Reels and
+        // YouTube's Shorts were never detected, and a shorts-scoped target therefore never
+        // gated anything at all, while a whole-app target (which reads no window content)
+        // went on working. The XML is the declaration and the only place the capability can
+        // be granted; this method now only top-ups what the XML already said.
+        //
+        // FLAG_REPORT_VIEW_IDS is what populates AccessibilityNodeInfo.viewIdResourceName,
+        // which is the only thing showsMarkers matches on — without it every node reports a
+        // null id and no scoped target could ever detect its surface either.
+        // Never a guard: everything below this point has to run whether or not the declared
+        // info could be read, and a service that returned here would be connected but deaf.
+        val declared = serviceInfo
+        if (declared != null) {
+            declared.flags = declared.flags or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-            notificationTimeout = EVENT_DEBOUNCE_MILLIS
+            declared.notificationTimeout = EVENT_DEBOUNCE_MILLIS
+            serviceInfo = declared
+            // The one fault in this file that cannot be fixed from here: the capability is the
+            // XML's to grant and there is no setter for it, so a service running without it
+            // can read no window tree and no scoped target can ever recognise its surface.
+            // Said out loud rather than left to be inferred from a gate that never fires.
+            if (!declared.canRetrieveWindowContent) {
+                Log.w(TAG, "no window-content capability: scoped surfaces cannot be detected")
+            }
         }
         registerScreenOffReceiver()
         // The event stream is the fast path; this re-checks the real foreground for the
@@ -251,10 +274,27 @@ class SonderAccessibilityService : AccessibilityService() {
                 listed.firstOrNull { it.root?.packageName?.toString() == packageName },
             ).distinct()
 
-            candidates.any { window ->
-                val root = window.root ?: return@any false
+            var unreadable = 0
+            val found = candidates.any { window ->
+                val root = window.root
+                if (root == null) {
+                    unreadable++
+                    return@any false
+                }
                 walkForMarker(root, packageName, markers, coveredByUs)
             }
+            // Every window of the app came back with no tree. That is either a window the
+            // app is swapping out from under the walk, or the service having lost the
+            // capability that makes any tree readable at all — and from here the two look
+            // identical while only one of them is a code fault. Said out loud in debug
+            // builds so a scoped target that never fires can be told apart from a marker
+            // list that no longer matches, which is the other way this probe goes quiet.
+            if (!found && candidates.isNotEmpty() && unreadable == candidates.size &&
+                BuildConfig.DEBUG
+            ) {
+                Log.d(TAG, "SURFACE_PROBE_UNREADABLE(pkg=$packageName windows=${candidates.size})")
+            }
+            found
         }.getOrDefault(false)
     }
 

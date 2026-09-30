@@ -169,7 +169,10 @@ private fun BlackjackBlocker(
             Spacer(Modifier.height(4.dp))
             Text(
                 text = if (state.outOfTime) {
-                    "OUT OF TIME — WIN A HAND TO GET BACK IN"
+                    // Nothing to bet and nothing to win with: the day's opening stake is what
+                    // this screen is waiting for, so it names when that arrives rather than
+                    // inviting a hand the table will not deal.
+                    "OUT OF TIME — THE BANK OPENS AGAIN AT MIDNIGHT"
                 } else {
                     "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}"
                 },
@@ -295,7 +298,12 @@ private fun BlackjackBlocker(
                 enabled = true,
             )
             Spacer(Modifier.height(PixelSpace.Snug))
-            PixelButton(text = "♠  DEAL HAND", onClick = onDeal, modifier = Modifier.fillMaxWidth())
+            PixelButton(
+                text = "♠  DEAL HAND",
+                onClick = onDeal,
+                enabled = state.stakeBacked,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         TableState.Phase.PLAYER_TURN -> {
@@ -339,11 +347,13 @@ private fun BlackjackBlocker(
                     text = "♠  PLAY AGAIN",
                     onClick = onDeal,
                     style = PixelButtonStyle.SECONDARY,
+                    enabled = state.stakeBacked,
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                // Nothing left to bet with and nothing left to spend: another hand is the
-                // only move, and its stake is staked at face value either way.
+                // The hand took the lot. Nothing is left to spend and nothing is left to bet,
+                // so the chips come up greyed and this is the wall the day opens from: the
+                // stake it opens with is the next chip the player has.
                 StakeChooser(
                     state = state,
                     onStake = onStake,
@@ -354,6 +364,7 @@ private fun BlackjackBlocker(
                 PixelButton(
                     text = "♠  PLAY AGAIN",
                     onClick = onDeal,
+                    enabled = state.stakeBacked,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -373,12 +384,16 @@ private fun BlackjackBlocker(
 /**
  * The chips: three fixed bets plus the whole bank.
  *
- * A chip is a bet, not a claim on the balance — every one of them is playable from an empty
- * bank, which is the point, since an empty bank is the only state the table is ever shown in.
- * ALL IN is the one bet that is not playable from nothing, because there is nothing to put in.
+ * A chip is a bet drawn on the bank, so a chip the bank cannot cover is greyed: there is no
+ * time behind it, and the win it would pay out would be time invented rather than won. ALL IN
+ * greys out with them, since it is the whole bank and there is no bank to put in.
  *
- * The selected bet is the filled chip. A chip that is not selected is still pressable; the
- * only disabled control is ALL IN at zero.
+ * When every chip is greyed there is nothing to bet and nothing to deal, and the line under
+ * the row says so — the table is waiting for the day's opening stake rather than for a
+ * decision the player cannot improve on.
+ *
+ * The selected bet is the filled chip. A chip that is not selected is still pressable, as long
+ * as the bank covers it.
  */
 @Composable
 private fun StakeChooser(
@@ -397,7 +412,8 @@ private fun StakeChooser(
                 text = formatRemaining(chip),
                 onClick = { onStake(chip) },
                 style = if (selected) PixelButtonStyle.PRIMARY else PixelButtonStyle.SECONDARY,
-                enabled = enabled,
+                // Backed by the bank, or nothing: a bet is played with time the player holds.
+                enabled = enabled && AccessPolicy.canStake(state.bankMillis, chip),
                 modifier = Modifier.weight(1f),
             )
         }
@@ -405,15 +421,26 @@ private fun StakeChooser(
             text = "ALL IN",
             onClick = onAllIn,
             style = if (state.allIn) PixelButtonStyle.PRIMARY else PixelButtonStyle.SECONDARY,
-            // Disabled at nothing: there is no bank to be all in with, and the chip bets
-            // beside it are the ones that still work.
+            // Disabled at nothing: there is no bank to be all in with. It is the one chip that
+            // stops being affordable above zero, since it is whatever the bank holds.
             enabled = enabled && !state.outOfTime,
             modifier = Modifier.weight(1f),
         )
     }
     Spacer(Modifier.height(4.dp))
     Text(
-        text = "BET ${formatRemaining(state.stakeMillis)}  ·  BANK ${formatRemaining(state.bankMillis)}",
+        text = if (state.stakeBacked) {
+            "BET ${formatRemaining(state.stakeMillis)}  ·  BANK ${formatRemaining(state.bankMillis)}"
+        } else {
+            // The bet is unaffordable in every denomination, so the readout is replaced by the
+            // one thing that changes it. Two reasons, and they read differently: an empty bank
+            // is out of time, and a bank too thin for the smallest chip is too little to bet.
+            if (state.outOfTime) {
+                "OUT OF TIME — THE BANK OPENS AGAIN AT MIDNIGHT"
+            } else {
+                "TOO LITTLE TO BET — THE BANK OPENS AGAIN AT MIDNIGHT"
+            }
+        },
         style = MonoTypeScale.Metadata,
         color = PixelPalette.Muted,
     )

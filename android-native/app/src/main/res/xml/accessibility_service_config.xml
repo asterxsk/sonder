@@ -9,9 +9,9 @@
    What is read is a view id and nothing else — no text, no content descriptions, no images —
    and only for a package the user has scoped, only as a yes/no against markers this app
    supplies. canRetrieveWindowContent has no runtime counterpart, so this file is the only
-   place it can be set; the flags it needs are ALSO repeated in
-   SonderAccessibilityService.onServiceConnected, because assigning AccessibilityServiceInfo
-   there replaces the whole flag word rather than adding to it.
+   place it can be set: it is a capability the system parses at bind time, and the service
+   therefore edits the info it is handed in SonderAccessibilityService.onServiceConnected
+   rather than assigning a fresh AccessibilityServiceInfo over it and losing it.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"

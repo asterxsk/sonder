@@ -110,18 +110,29 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a chip stakes at face value even from an empty bank`() {
-        // The table has to be playable from nothing: a loss floors, so the player risks only
-        // time they do not have, and the win is the way back in.
-        assertEquals(
-            2 * 60_000L,
-            AccessPolicy.onHandResult(HandOutcome.WIN, bankMillis = 0L, stakeMillis = AccessPolicy.CHIPS.first()),
-        )
+    fun `a chip is playable only when the bank covers it`() {
+        // The bank backs the bet. An empty bank backs nothing, which is what stops a win from
+        // being paid out of time that was never at risk.
+        assertTrue(AccessPolicy.canStake(bankMillis = 2 * 60_000L, stakeMillis = 2 * 60_000L))
+        assertTrue(AccessPolicy.canStake(bankMillis = 10 * 60_000L, stakeMillis = 5 * 60_000L))
+        assertTrue(AccessPolicy.canStake(bankMillis = 60 * 60_000L, stakeMillis = 10 * 60_000L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 2 * 60_000L - 1L, stakeMillis = 2 * 60_000L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 2 * 60_000L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 1L))
     }
 
     @Test
     fun `the chips are two, five and ten minutes`() {
         assertEquals(listOf(2 * 60_000L, 5 * 60_000L, 10 * 60_000L), AccessPolicy.CHIPS)
+    }
+
+    @Test
+    fun `the day opens with the smallest chip on the table`() {
+        // The one stake that is not won: small enough to be the least a hand can be played
+        // for, and non-zero so that a bank the player has spent down to nothing is a table
+        // they can sit back down at.
+        assertEquals(2 * 60_000L, AccessPolicy.OPENING_STAKE_MILLIS)
+        assertEquals(AccessPolicy.CHIPS.first(), AccessPolicy.OPENING_STAKE_MILLIS)
     }
 
     // --- billing ---------------------------------------------------------------
@@ -178,10 +189,11 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank from an earlier day reads as nothing`() {
-        // What the deleted daily_usage table used to do: every day starts gated.
+    fun `a bank from an earlier day reads as the day's opening stake`() {
+        // What the deleted daily_usage table used to do, with a stake on it: yesterday's
+        // leftovers are not today's access, and today does not open on nothing.
         assertEquals(
-            0L,
+            AccessPolicy.OPENING_STAKE_MILLIS,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) - 1,
@@ -192,13 +204,50 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank from a later day reads as nothing`() {
+    fun `a bank from a later day reads as the day's opening stake`() {
         // A clock set back a day is the same problem in the other direction.
         assertEquals(
-            0L,
+            AccessPolicy.OPENING_STAKE_MILLIS,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) + 1,
+                nowMillis = noon,
+                zoneId = utc,
+            ),
+        )
+    }
+
+    @Test
+    fun `a bank with no row reads as the day's opening stake`() {
+        // A target added this morning has never played, and has to be playable this morning.
+        assertEquals(
+            AccessPolicy.OPENING_STAKE_MILLIS,
+            AccessPolicy.bankFor(
+                storedMillis = null,
+                epochDay = null,
+                nowMillis = noon,
+                zoneId = utc,
+            ),
+        )
+    }
+
+    @Test
+    fun `a stored bank is read through the day check`() {
+        val today = AccessPolicy.epochDayOf(noon, utc)
+        assertEquals(
+            12 * 60_000L,
+            AccessPolicy.bankFor(
+                storedMillis = 12 * 60_000L,
+                epochDay = today,
+                nowMillis = noon,
+                zoneId = utc,
+            ),
+        )
+        assertEquals(
+            AccessPolicy.OPENING_STAKE_MILLIS,
+            AccessPolicy.bankFor(
+                storedMillis = 12 * 60_000L,
+                epochDay = today - 1,
                 nowMillis = noon,
                 zoneId = utc,
             ),

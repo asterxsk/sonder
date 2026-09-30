@@ -38,6 +38,7 @@ import com.example.sonder.ui.kit.PixelConfirmDialog
 import com.example.sonder.ui.kit.PixelHoldButton
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
+import com.example.sonder.ui.kit.PixelSweepButton
 import com.example.sonder.ui.kit.PixelTabs
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -64,20 +65,13 @@ fun AppSettingsScreen(
     LaunchedEffect(packageName) { viewModel.bind(packageName) }
     val ui by viewModel.ui.collectAsStateWithLifecycle()
 
-    // The screen closes for both completed acts: a saved limit and a removed one. The SAVED
-    // step is held on screen for a beat so the confirmation is read before the page goes.
-    var completed by remember { mutableStateOf(false) }
+    // The screen closes for both completed acts: a saved limit and a removed one. Each holds
+    // the page for the length of one sweep, drawn on the control that was pressed and in that
+    // control's own colour, and the navigation follows the fill rather than racing it — so the
+    // write is seen to land on the button the user was holding.
+    var finishing by remember { mutableStateOf<AppSettingsFinish?>(null) }
     LaunchedEffect(Unit) {
-        viewModel.finished.collect { finish ->
-            when (finish) {
-                AppSettingsFinish.SAVED -> {
-                    completed = true
-                    delay(SavedLingerMillis)
-                }
-                AppSettingsFinish.REMOVED -> Unit
-            }
-            onBack()
-        }
+        viewModel.finished.collect { finishing = it }
     }
 
     var confirmingExit by remember { mutableStateOf(false) }
@@ -151,16 +145,29 @@ fun AppSettingsScreen(
         // and the fill is cancelled by tapping it again. Same shape as REMOVE LIMIT below, and
         // deliberately so — the two controls that change the rule are the two that take thirty
         // seconds, and the one that changes nothing (the scope, the presets) takes none.
-        if (completed) {
-            PixelButton(
+        when (finishing) {
+            // The hold's own fill is the wait; this is the write landing, and it sweeps in the
+            // colour of the act (green here, red on REMOVE LIMIT) so the two endings of the
+            // same gesture cannot be confused for each other.
+            AppSettingsFinish.SAVED -> PixelSweepButton(
                 text = "SAVED",
-                style = PixelButtonStyle.SUCCESS,
+                fillColor = PixelPalette.Success,
+                description = "Saved. Returning to the targets list.",
+                onSwept = onBack,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // A removal in flight: the page is closing, and the act's own sweep is on the
+            // control below. This one goes inert rather than sitting armed behind it.
+            AppSettingsFinish.REMOVED -> PixelButton(
+                text = "SAVE",
+                style = PixelButtonStyle.SECONDARY,
                 enabled = false,
                 onClick = {},
                 modifier = Modifier.fillMaxWidth(),
             )
-        } else {
-            PixelHoldButton(
+
+            null -> PixelHoldButton(
                 text = "SAVE",
                 holdMillis = ConfirmHoldMillis,
                 onComplete = viewModel::save,
@@ -171,7 +178,12 @@ fun AppSettingsScreen(
 
         Spacer(Modifier.height(PixelSpace.Base))
 
-        RemoveLimit(ui = ui, onRemove = viewModel::removeLimit)
+        RemoveLimit(
+            ui = ui,
+            onRemove = viewModel::removeLimit,
+            sweeping = finishing == AppSettingsFinish.REMOVED,
+            onSwept = onBack,
+        )
 
         Spacer(Modifier.height(PixelSpace.Edge))
     }
@@ -200,8 +212,25 @@ fun AppSettingsScreen(
  * answered by switching the rule off.
  */
 @Composable
-private fun RemoveLimit(ui: AppSettingsUiState, onRemove: () -> Unit) {
+private fun RemoveLimit(
+    ui: AppSettingsUiState,
+    onRemove: () -> Unit,
+    /** True once the removal has landed: the button sweeps out in red and the page closes. */
+    sweeping: Boolean = false,
+    onSwept: () -> Unit = {},
+) {
     val remaining = rememberLockRemaining(ui.removalLockedUntilMillis)
+
+    if (sweeping) {
+        PixelSweepButton(
+            text = "✕  REMOVE LIMIT",
+            fillColor = PixelPalette.Danger,
+            description = "Limit removed. The app is no longer gated. Returning to the list.",
+            onSwept = onSwept,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        return
+    }
 
     if (ui.removalLocked) {
         PixelButton(
@@ -356,9 +385,6 @@ private val BankSizePresets = listOf(
 
 /** How long SAVE and REMOVE LIMIT hold before a second press counts. */
 private const val ConfirmHoldMillis = 30_000L
-
-/** How long SAVED stays on screen before the page closes onto Targets. */
-private const val SavedLingerMillis = 600L
 
 /** Millis to `H:MM:SS`, for a lock that is hours away. */
 private fun formatDuration(millis: Long): String {

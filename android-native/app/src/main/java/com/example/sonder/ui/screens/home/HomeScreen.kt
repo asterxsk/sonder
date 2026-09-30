@@ -34,6 +34,7 @@ import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.PixelTab
 import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
+import com.example.sonder.ui.kit.PixelCat
 import com.example.sonder.ui.kit.PixelLoader
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
@@ -145,6 +146,12 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // The house cat sits above every reading of the state — ready, watching an app, or
+            // nothing limited yet — because it is the panel's, not one summary's, and a cat
+            // that appeared and vanished with the state would be a second thing to read.
+            PixelCat()
+            Spacer(Modifier.height(PixelSpace.Base))
+
             when (summary) {
                 HomeSummary.NoTargets -> {
                     androidx.compose.material3.Text(

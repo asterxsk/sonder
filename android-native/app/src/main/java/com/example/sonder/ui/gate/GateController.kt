@@ -46,6 +46,9 @@ data class TableState(
 
     /** Whether the RESOLVED panel can offer another hand against the bank just built. */
     val canPlayAgain: Boolean get() = bankMillis > 0L
+
+    /** Whether the selected bet is one the bank covers, and so a hand that can be dealt. */
+    val stakeBacked: Boolean get() = AccessPolicy.canStake(bankMillis, stakeMillis)
 }
 
 /**
@@ -113,6 +116,10 @@ class GateController @Inject constructor(
      * Called on start and after every settled hand, since a hand moves the bank and a bank of
      * nothing changes what the bets mean. An ALL IN bet is re-pointed at the new balance, and
      * falls back to a chip when there is no balance left to be all in with.
+     *
+     * A chip bet is left exactly where the player put it. Only ALL IN follows the bank: it is
+     * the bet that *is* the balance, and a table that reset a chosen chip to the first one
+     * every time the bank was re-read would undo the player's pick on every settled hand.
      */
     private suspend fun refreshBank() {
         val pkg = _state.value.targetPackage
@@ -121,26 +128,40 @@ class GateController @Inject constructor(
         val max = repository.cachedMaxMillis(pkg)
         val current = _state.value
         val keepAllIn = current.allIn && bank > 0L
+        val stake = when {
+            keepAllIn -> bank
+            // A bet the bank has shrunk below is not a bet: it falls back to the largest chip
+            // the bank still covers, or to the smallest one — selected and greyed — when it
+            // covers none, which is the table showing what a bet would cost from nothing.
+            !AccessPolicy.canStake(bank, current.stakeMillis) -> affordableChip(bank)
+            else -> current.stakeMillis
+        }
         _state.value = current.copy(
             bankMillis = bank,
             maxMillis = max,
             allIn = keepAllIn,
-            stakeMillis = if (keepAllIn) bank else AccessPolicy.CHIPS.first(),
+            stakeMillis = stake,
         )
     }
+
+    /** The largest chip [bankMillis] covers, or the smallest chip when it covers none. */
+    private fun affordableChip(bankMillis: Long): Long =
+        AccessPolicy.CHIPS.lastOrNull { AccessPolicy.canStake(bankMillis, it) }
+            ?: AccessPolicy.CHIPS.first()
 
     /**
      * Choose the bet: a chip at face value, or the whole bank.
      *
-     * A chip is staked at its face value even when the bank holds less, and that is the
-     * point of the economy rather than an oversight: a player who has lost everything can
-     * still sit down, and the bet they cannot cover is a bet they can lose — floored at
-     * nothing — or win their way back with.
+     * A chip the bank does not cover is refused rather than clamped. The bet is drawn on the
+     * bank, and a stake drawn on time that is not there would be paid out of nothing on a win
+     * — the table's chips are greyed for the same reason, and this is the same rule kept
+     * where a tap cannot get around it.
      */
     fun stake(chipMillis: Long) {
         if (chipMillis !in AccessPolicy.CHIPS) return
         val current = _state.value
         if (current.phase != TableState.Phase.IDLE && current.phase != TableState.Phase.RESOLVED) return
+        if (!AccessPolicy.canStake(current.bankMillis, chipMillis)) return
         _state.value = current.copy(stakeMillis = chipMillis, allIn = false)
     }
 
@@ -160,6 +181,9 @@ class GateController @Inject constructor(
         // off the books without ever settling it.
         val phase = _state.value.phase
         if (phase != TableState.Phase.IDLE && phase != TableState.Phase.RESOLVED) return
+        // A hand is dealt for a bet the bank backs. An empty bank has no seat at the table —
+        // the way back in is the stake the day opens with, not a hand played for nothing.
+        if (!_state.value.stakeBacked) return
 
         deck = BlackjackRules.shuffledDeck()
         dealt = BlackjackRules.deal(deck)

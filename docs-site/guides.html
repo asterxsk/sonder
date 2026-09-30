@@ -60,25 +60,26 @@
     <table>
       <thead><tr><th>Constant</th><th>Value</th></tr></thead>
       <tbody>
-        <tr><td>Chips</td><td>2:00 / 5:00 / 10:00, or ALL IN</td></tr>
+        <tr><td>Chips</td><td>2:00 / 5:00 / 10:00, or ALL IN — each one only while the bank covers it</td></tr>
+        <tr><td>Stake each day opens with</td><td>2:00</td></tr>
         <tr><td>Billing step</td><td>≤ 10 s of foreground time</td></tr>
         <tr><td>Maximum bank</td><td>your setting, default 60:00</td></tr>
         <tr><td>Removal lock after a drained bank</td><td>12 h</td></tr>
       </tbody>
     </table>
-<pre data-copy="# on a target app with an empty bank:
-# 1. open it → the gate, with the chips on it
+<pre data-copy="# on a target app with the day's 2:00 stake on the bank:
+# 1. open it → the gate, with the 2:00 chip lit
 # 2. bet the 2:00 chip and win → you're in, no second screen
 # 3. sit in the app for a minute → Home shows the bank about a minute lighter
 # 4. leave for two minutes, come back → the bank is where you left it
-# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT is locked
-# 6. reopen the target → the gate is back, playable from nothing"># on a target app with an empty bank:
-# 1. open it → the gate, with the chips on it
+# 5. bet ALL IN and lose → bank 0, chips greyed, Home reads LOCKED, REMOVE LIMIT locked
+# 6. reopen the target → the gate is back, and the stake arrives with the next morning"># on a target app with the day's 2:00 stake on the bank:
+# 1. open it → the gate, with the 2:00 chip lit
 # 2. bet the 2:00 chip and win → you're in, no second screen
 # 3. sit in the app for a minute → Home shows the bank about a minute lighter
 # 4. leave for two minutes, come back → the bank is where you left it
-# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT is locked
-# 6. reopen the target → the gate is back, playable from nothing</pre>
+# 5. bet ALL IN and lose → bank 0, chips greyed, Home reads LOCKED, REMOVE LIMIT locked
+# 6. reopen the target → the gate is back, and the stake arrives with the next morning</pre>
     <p>Watch the state badges on Home: <span class="badge granted">✓ GRANTED</span>
     <span class="badge locked">▣ LOCKED</span>. The gate itself carries the other two:
     <span class="badge playing">♠ PLAYING</span>

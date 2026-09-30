@@ -51,18 +51,19 @@
 
   <main class="content" id="main">
     <h1>ACCESS RULES</h1>
-    <p class="lede">The complete contract between you and the machine. One number per app — a bank of usable time — and a blackjack hand that moves it. These rules are implemented in pure Kotlin and covered by 106 unit tests.</p>
+    <p class="lede">The complete contract between you and the machine. One number per app — a bank of usable time — and a blackjack hand that moves it. These rules are implemented in pure Kotlin and covered by 109 unit tests.</p>
 
     <h2 id="bank">The time bank</h2>
     <p>Each limited app has a bank of time measured in milliseconds. The bank is the
     <em>only</em> thing that decides whether you get in:</p>
     <ul>
       <li>Bank above zero → the app opens, no questions asked.</li>
-      <li>Bank at zero → the gate, and only a won hand gets you past it.</li>
+      <li>Bank at zero → the gate, chips greyed, and the morning's stake is what reopens it.</li>
     </ul>
-    <p>Every app starts each day at <strong>zero</strong>. There is no free allowance and
-    nothing carries over from yesterday: a bank belongs to a local calendar day, and a
-    read on a later day reports nothing in it.</p>
+    <p>A bank belongs to a local calendar day, and it opens every morning with the
+    <strong>2:00</strong> chip already on it. Nothing else carries over — yesterday's
+    leftovers are not today's access — but a day never opens on nothing, because a table
+    with no chip on it is a table with no way back in.</p>
 
     <h2 id="outcomes">Hand outcomes</h2>
     <table>
@@ -74,16 +75,19 @@
       </tbody>
     </table>
     <p>You choose the stake before the deal: a <strong>2:00</strong>, <strong>5:00</strong> or
-    <strong>10:00</strong> chip, or <strong>ALL IN</strong> — the whole bank, which is why
-    ALL IN is unavailable at zero. A chip stakes at face value even from an empty bank,
-    so a loss costs you nothing you did not already have and the win is the way back in.</p>
+    <strong>10:00</strong> chip, or <strong>ALL IN</strong> — the whole bank. A chip is
+    <strong>backed by the bank</strong>: you can only bet what you hold, so the 5:00 chip
+    stays greyed out until the bank covers it, and a win is always paid out of time that
+    was at risk. A bank too thin for the smallest chip is a table with nothing to deal at
+    all — chips greyed, DEAL greyed, and the gate waiting for the morning.</p>
 
     <div class="panel">
       <p class="panel-title">Worked example</p>
-      <p style="margin:0">Empty bank, you bet the 5:00 chip and win: bank 5:00. Bet 5:00
-      again and lose: bank 0:00, out of time, back to the gate. Bet ALL IN on 5:00 and win:
-      bank 10:00. Two more all-in wins would read 20:00 and 40:00 — and the ceiling stops
-      it there, whatever the app's maximum is set to.</p>
+      <p style="margin:0">Bank 2:00 from the morning's stake, you bet the 2:00 chip and win:
+      bank 4:00. Bet ALL IN on 4:00 and win: bank 8:00. Two more all-in wins would read
+      16:00 and 32:00 — and the ceiling stops it there, whatever the app's maximum is set
+      to. Lose the 4:00 instead and the bank is 0:00: out of time, the chips greyed, and
+      the table opens again at the next morning's stake.</p>
     </div>
 
     <h2 id="billing">What the clock counts</h2>
@@ -103,6 +107,7 @@
     <table>
       <thead><tr><th>Rule</th><th>Value</th></tr></thead>
       <tbody>
+        <tr><td>Stake every bank opens the day with</td><td>2:00 — the smallest chip</td></tr>
         <tr><td>Maximum bank (per app, your setting)</td><td>default 60:00 — presets 30:00 / 1:00 / 2:00 / 3:00</td></tr>
         <tr><td>Billing step</td><td>≤ 10 s of foreground time, per charge</td></tr>
         <tr><td>Removal of a limit after the bank hits zero</td><td>refused for 12 h</td></tr>
@@ -127,8 +132,9 @@
 
     <h2 id="state-machine">State machine</h2>
 <pre>   ┌──────────────┐   open target    ┌──────────────┐
-   │     IDLE     │ ───────────────▶ │     GATE     │
-   │   bank = 0   │                  │   bet chip   │
+   │     GATE     │ ───────────────▶ │    TABLE     │
+   │ bank ≤ 1:59  │                  │ bet a backed │
+   │ chips greyed │                  │     chip     │
    └──────────────┘                  └───────┬──────┘
           ▲                                  │
           │                        win ┌─────┴─────┐ lose
@@ -146,8 +152,10 @@
    │  in front    │
    └──────┬───────┘
           │ bank reaches 0, by use or by a loss
-          └──────▶ GATE again, removal locked for 12 h</pre>
-    <p>There is no lockout state and no debt state to leave: the machine is the bank.
+          └──────▶ GATE again, removal locked for 12 h
+                   until the day opens the next stake</pre>
+    <p>There is no lockout state and no debt state to leave: the machine is the bank, and
+    the day is what puts the first chip on it.
     Source of truth: <code>domain/AccessPolicy.kt</code> +
     <code>domain/GateDecider.kt</code> + <code>domain/BlackjackRules.kt</code>.</p>
 

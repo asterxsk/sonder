@@ -104,15 +104,38 @@ class EnforcementRepository @Inject constructor(
     fun cachedBank(pkg: String): TimeBankEntity? = _banks.value[pkg]
 
     /**
+     * Fold a bank row that was just written into the warm cache.
+     *
+     * The cache is otherwise only rebuilt when Room's own flow re-emits, which is a round
+     * trip through the invalidation tracker and a fresh query — long enough that the reader
+     * that follows a write in the same coroutine (the gate panel re-reading the bank the
+     * hand it just settled moved) sees the row as it was *before* it. A won hand therefore
+     * showed the bank it had when the hand was dealt, which at the gate is always nothing:
+     * the panel stayed on OUT OF TIME over the result, ALL IN stayed disabled, and CONTINUE
+     * was never offered on a bank the player had just won. Writing through here is what
+     * makes the cache warm rather than merely eventually warm; the flow's own emission
+     * arrives shortly after with the same row.
+     */
+    private fun rememberBank(row: TimeBankEntity) {
+        _banks.value = _banks.value + (row.packageName to row)
+    }
+
+    /** Drop a bank row that is no longer stored, so a removed target reads as never played. */
+    private fun forgetBank(packageName: String) {
+        _banks.value = _banks.value - packageName
+    }
+
+    /**
      * Unspent access right now, from the warm cache.
      *
-     * Day-aware: a row left over from an earlier local day reads as zero, which is the whole
-     * of what the old `daily_usage` table used to enforce. Read on the foreground hot path,
-     * so it may not wait on Room.
+     * Day-aware: a row left over from an earlier local day reads as the day's opening stake,
+     * which is the whole of what the old `daily_usage` table used to enforce, and a package
+     * with no row reads the same way — nothing has been stored for today rather than nothing
+     * being available. Read on the foreground hot path, so it may not wait on Room.
      */
     fun cachedRemaining(pkg: String, nowMillis: Long = System.currentTimeMillis()): Long {
-        val row = _banks.value[pkg] ?: return 0L
-        return AccessPolicy.bankAt(row.remainingMillis, row.epochDay, nowMillis)
+        val row = _banks.value[pkg]
+        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
     }
 
     /**
@@ -227,15 +250,15 @@ class EnforcementRepository @Inject constructor(
         packageName: String,
         nowMillis: Long = System.currentTimeMillis(),
     ): Long {
-        val row = timeBankDao.get(packageName) ?: return 0L
-        return AccessPolicy.bankAt(row.remainingMillis, row.epochDay, nowMillis)
+        val row = timeBankDao.get(packageName)
+        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
     }
 
     /** The bank as it stands, re-emitted whenever the row changes or the day rolls over. */
     fun observeRemaining(packageName: String): Flow<Long> =
         timeBankDao.observeAll().map { rows ->
-            val row = rows.find { it.packageName == packageName } ?: return@map 0L
-            AccessPolicy.bankAt(row.remainingMillis, row.epochDay, System.currentTimeMillis())
+            val row = rows.find { it.packageName == packageName }
+            AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, System.currentTimeMillis())
         }
 
     /** Remaining removal lock in millis, or 0 when removal is allowed. */
@@ -252,9 +275,7 @@ class EnforcementRepository @Inject constructor(
             val row = banks.find { it.packageName == packageName }
             AccessPolicy.stateFor(
                 enabled = target?.enabled ?: false,
-                bankMillis = row?.let {
-                    AccessPolicy.bankAt(it.remainingMillis, it.epochDay, now)
-                } ?: 0L,
+                bankMillis = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, now),
             )
         }
 
@@ -277,8 +298,12 @@ class EnforcementRepository @Inject constructor(
     ): Long = database.withTransaction {
         val row = timeBankDao.get(packageName)
         val today = epochDay(nowMillis)
-        val bankBefore = row?.let { AccessPolicy.bankAt(it.remainingMillis, it.epochDay, nowMillis) } ?: 0L
-        val stake = stakeMillis.coerceAtLeast(0L)
+        val bankBefore = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
+        // Clamped to what the bank covers rather than trusted: the bank is what backs a bet,
+        // and a stake drawn on time that does not exist would be paid out of nothing on a
+        // win. A hand that arrives here with more than the bank holds settles for what the
+        // bank holds — the same rule the table enforces before the cards are dealt.
+        val stake = stakeMillis.coerceIn(0L, bankBefore)
         val bankAfter = AccessPolicy.onHandResult(
             outcome = outcome,
             bankMillis = bankBefore,
@@ -296,18 +321,20 @@ class EnforcementRepository @Inject constructor(
             else -> row?.emptySinceMillis?.takeIf { it > 0L } ?: nowMillis
         }
 
-        timeBankDao.upsert(
-            TimeBankEntity(
-                packageName = packageName,
-                remainingMillis = bankAfter,
-                epochDay = today,
-                // The stamp is written to *now* even though nothing has been billed: the
-                // next drain measures from it, and a stamp left at the moment before the
-                // hand would bill the user for the time the table was open.
-                lastSeenMillis = nowMillis,
-                emptySinceMillis = emptySince,
-            ),
+        val bankRow = TimeBankEntity(
+            packageName = packageName,
+            remainingMillis = bankAfter,
+            epochDay = today,
+            // The stamp is written to *now* even though nothing has been billed: the
+            // next drain measures from it, and a stamp left at the moment before the
+            // hand would bill the user for the time the table was open.
+            lastSeenMillis = nowMillis,
+            emptySinceMillis = emptySince,
         )
+        timeBankDao.upsert(bankRow)
+        // Warm before the block returns, so the panel that draws this result reads the bank
+        // this hand left rather than the one it was played against.
+        rememberBank(bankRow)
         handDao.insert(
             HandEntity(
                 packageName = packageName,
@@ -359,14 +386,18 @@ class EnforcementRepository @Inject constructor(
             else -> row.emptySinceMillis
         }
 
-        timeBankDao.upsert(
-            row.copy(
-                remainingMillis = bankAfter,
-                epochDay = today,
-                lastSeenMillis = nowMillis,
-                emptySinceMillis = emptySince,
-            ),
+        val billed = row.copy(
+            remainingMillis = bankAfter,
+            epochDay = today,
+            lastSeenMillis = nowMillis,
+            emptySinceMillis = emptySince,
         )
+        timeBankDao.upsert(billed)
+        // The drain is the one write the enforcement hot path reads back the same frame: an
+        // empty bank decides GATE on the very next pass, and a cache left holding the row
+        // from before the billing would hand out one more grant for the time the flow took
+        // to re-emit.
+        rememberBank(billed)
         if (emptied) notifyBankDrained(packageName)
         bankAfter
     }
@@ -379,13 +410,13 @@ class EnforcementRepository @Inject constructor(
      */
     suspend fun clearBank(packageName: String, nowMillis: Long = System.currentTimeMillis()) {
         val row = timeBankDao.get(packageName) ?: return
-        timeBankDao.upsert(
-            row.copy(
-                remainingMillis = 0L,
-                epochDay = epochDay(nowMillis),
-                emptySinceMillis = row.emptySinceMillis.takeIf { it > 0L } ?: nowMillis,
-            ),
+        val cleared = row.copy(
+            remainingMillis = 0L,
+            epochDay = epochDay(nowMillis),
+            emptySinceMillis = row.emptySinceMillis.takeIf { it > 0L } ?: nowMillis,
         )
+        timeBankDao.upsert(cleared)
+        rememberBank(cleared)
     }
 
     /**
@@ -407,6 +438,7 @@ class EnforcementRepository @Inject constructor(
         }
         targetDao.delete(packageName)
         timeBankDao.delete(packageName)
+        forgetBank(packageName)
         true
     }
 
