@@ -54,11 +54,27 @@ object AppModule {
         }
     }
 
+    /**
+     * v2 → v3: the per-target block scope.
+     *
+     * `NOT NULL DEFAULT 'WHOLE_APP'` rather than a nullable column, because a target has no
+     * third state to express and every existing row meant "gate the whole app" — which is
+     * exactly what this default says, so the migration and Room's expected schema agree
+     * without anything having to read null as a synonym for the default at every call site.
+     */
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE targets ADD COLUMN blockScope TEXT NOT NULL DEFAULT 'WHOLE_APP'",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): SonderDatabase =
         Room.databaseBuilder(context, SonderDatabase::class.java, "sonder.db")
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build()
 
     @Provides fun provideTargetDao(db: SonderDatabase): TargetDao = db.targetDao()

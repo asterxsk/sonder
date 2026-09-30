@@ -2,6 +2,8 @@ package com.example.sonder.ui.screens.targets
 
 import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.data.repo.InstalledApp
+import com.example.sonder.domain.BlockScope
+import com.example.sonder.domain.ShortsCatalog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -58,6 +60,17 @@ sealed interface TargetPickerViewState {
 fun normalizeTargetsQuery(raw: String): String = raw.trim().lowercase()
 
 /**
+ * The line a row shows for a target that does not gate the whole app, or null for one that
+ * does — null rather than a "WHOLE APP" label, because that is the default and labelling the
+ * default on every row is noise. One definition, used by the Targets row and the app's
+ * settings screen, so the two cannot describe the same scope differently.
+ */
+fun blockScopeNote(scope: BlockScope): String? = when (scope) {
+    BlockScope.WHOLE_APP -> null
+    BlockScope.SHORTS_ONLY -> "REELS & SHORTS ONLY"
+}
+
+/**
  * The added apps, in list order — enabled targets only. A soft-removed row
  * (`enabled = false`) keeps its overrides in Room but is no longer a target, so it
  * must not appear here; re-adding it through the picker brings it back.
@@ -101,6 +114,14 @@ fun mergeTargetPicks(
  *
  * Carrying no overrides is the point: this entity is only ever inserted where there was
  * nothing, so there is nothing for its nulls to overwrite.
+ *
+ * [ShortsCatalog.defaultScopeFor] is the one field that is not null here, and it is not an
+ * override: it is the scope a target of this package starts with, and it is a real decision
+ * rather than a missing one. Adding Instagram means "stop me watching Reels", so a new
+ * Instagram row is born [BlockScope.SHORTS_ONLY]; every app without a short-form surface is
+ * born [BlockScope.WHOLE_APP], which is also what an inserted row has always meant. Because
+ * this entity is only ever inserted where there was nothing, it cannot overwrite a scope the
+ * user has since chosen — `TargetDao.insertIfAbsent` ignores a row that already exists.
  */
 fun newTarget(packageName: String, label: String, nowMillis: Long): TargetEntity =
     TargetEntity(
@@ -108,6 +129,7 @@ fun newTarget(packageName: String, label: String, nowMillis: Long): TargetEntity
         label = label,
         enabled = true,
         createdAtMillis = nowMillis,
+        blockScope = ShortsCatalog.defaultScopeFor(packageName).stored,
     )
 
 /** Pure mapping from the enumeration to the added-only Targets state. */

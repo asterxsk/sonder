@@ -52,6 +52,17 @@ interface TargetDao {
     @Query("UPDATE targets SET enabled = :enabled WHERE packageName = :pkg")
     suspend fun setEnabled(pkg: String, enabled: Boolean)
 
+    /**
+     * Set how much of [pkg] is gated, naming only that column.
+     *
+     * A separate statement rather than a field on [setOverrides], for the same reason that
+     * one exists: the scope is chosen on its own control, and a whole-row write built from a
+     * value read a moment earlier would revert a concurrent edit to a knob this call does
+     * not own. Writes the stored form — see [com.example.sonder.domain.BlockScope.stored].
+     */
+    @Query("UPDATE targets SET blockScope = :scope WHERE packageName = :pkg")
+    suspend fun setBlockScope(pkg: String, scope: String)
+
     @Query("DELETE FROM targets WHERE packageName = :pkg")
     suspend fun delete(pkg: String)
 }

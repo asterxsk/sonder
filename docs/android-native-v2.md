@@ -5,8 +5,11 @@ Implementation notes for the native (Kotlin + Compose) Sonder. Read alongside
 
 ## 1. Rules engine
 
-Two pure Kotlin objects under `android-native/app/src/main/java/com/example/sonder/domain/`
-carry the product rules. No Android imports; 27 unit tests cover them.
+The product rules live in pure Kotlin under
+`android-native/app/src/main/java/com/example/sonder/domain/`: `AccessPolicy`,
+`BlackjackRules`, and the enforcement policy — `GateDecider`, `BlockScope`,
+`ShortsCatalog`, `ForegroundWatch`, `ForegroundSurface`. No Android imports; 105
+unit tests cover them.
 
 **`BlackjackRules.kt`**
 
@@ -72,6 +75,7 @@ EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
   ├─ HOME / OWN → release the blocker, unless the real foreground says otherwise
   ├─ active grant? → absence check (now − lastSeen > 60 s ⇒ revoke) → touch lastSeen
   ├─ not an enabled target? → release the blocker
+  ├─ SHORTS_ONLY target, and the probe finds no Reels/Shorts marker? → PASS (no blocker)
   ├─ lockout active? → lockout blocker only ("WAIT IT OUT")
   └─ otherwise → GateOverlayHost.showGate (the blackjack table)
 
@@ -109,8 +113,8 @@ ForegroundWatch (pure policy)
   event can land *after* the blocked app's. Releasing on that one event uncovered an
   app the user was looking at, and the post-release verification raised the blocker
   again 400 ms later — two decisions in opposition, which is the flicker overlay →
-  app → overlay → app around Recent Apps. Now a release has to survive two
-  independent pieces of evidence, and is refused when either says the user has not
+  app → overlay → app around Recent Apps. Now a release has to survive several
+  independent pieces of evidence, and is refused when any says the user has not
   actually left:
   - **`ForegroundWindows`** — the accessibility window list the service already
     receives. If the window that reported the release is still listed while another
@@ -123,6 +127,16 @@ ForegroundWatch (pure policy)
     the events by a moment and needs usage access granted, so it cannot be the only
     evidence: a device without that permission would decide every release on nothing,
     which is how a blocked app becomes usable again after a Recents round trip.
+  - **`ActiveWindowPackage`** — the focused window's package, read straight off the
+    window list. This is the answer to the 500 ms re-check, whose release path
+    otherwise rested entirely on `ForegroundResolver`: a usage-stats lookup that had
+    not yet caught up with the user's entry into Shorts reported the launcher as the
+    last resumed activity, so the re-check released the blocker twice a second while
+    the user was demonstrably in Shorts. The focused window has no such lag — the
+    list describes the screen as it is now. It answers null when it cannot tell (no
+    focused window, a system or IME window in front, an unreadable root), and null is
+    treated as no corroboration *against* a release rather than as reason to refuse
+    one, so a device that cannot answer does not lose the release path.
   Nothing needs undoing afterwards, so the post-release verification pass is gone.
 - **`ForegroundResolver`** is that authoritative lookup (usage access, not
   content): the last *resumed activity*. Launching from the launcher, Recents,
@@ -149,6 +163,13 @@ ForegroundWatch (pure policy)
 - **Self-events are ignored**: the blocker's own window reports the detox app's
   package, so the classifier only treats the app's *Activities* as "the detox app
   opened" — otherwise the blocker would dismiss itself the moment it appears.
+- **Scope is chosen when the target is born.** `TargetsFilter.newTarget` is the
+  single place a target is created, and it sets `blockScope` from
+  `ShortsCatalog.defaultScopeFor`: Instagram and YouTube arrive
+  `SHORTS_ONLY`, everything else `WHOLE_APP`. The user can override it in the
+  edit tab, and the stored value is a raw `"WHOLE_APP" | "SHORTS_ONLY"` string
+  read through `BlockScope.fromStored`, so an unrecognised value degrades to the
+  conservative whole-app block rather than to no block at all.
 - Absence tracking: `lastSeenMillis` is updated on every window event for a
   granted package. Absence is only *detected* on the next event (e.g. the user
   returning), which is exactly when revocation matters.
@@ -172,15 +193,20 @@ ForegroundWatch (pure policy)
 - Package visibility uses a `<queries>` block for `MAIN`/`LAUNCHER` intents —
   **no `QUERY_ALL_PACKAGES`**
 
-The accessibility service config declares `canRetrieveWindowContent="false"`
-and only listens to window-state events. It reads the foreground package name
-and nothing else — no text, no view tree, no content.
+Accessibility reads differ by target scope. A `WHOLE_APP` target needs only the
+foreground package name. A `SHORTS_ONLY` target additionally needs view
+identifiers, so the service config declares `canRetrieveWindowContent="true"`
+and advertises `flagReportViewIds`; without the flag `viewIdResourceName` comes
+back null and the probe can never match. The node walk is bounded (400 nodes,
+breadth-first, first match wins) and reads **only** `viewIdResourceName` on the
+nodes of the one package being decided — no text, no content descriptions, no
+images. The service description string and onboarding state this.
 
 ## 5. Persistence
 
-Room database `sonder.db` (schema v1):
+Room database `sonder.db` (schema v3):
 
-- `targets` — gated packages (package name PK, label, enabled)
+- `targets` — gated packages (package name PK, label, enabled, `blockScope`)
 - `grants` — one per package: `endAtMillis`, `lastSeenMillis`
 - `debt` — one row per package: accumulated millis (cap applied by policy)
 - `lockouts` — one per package: `untilMillis`
@@ -196,11 +222,20 @@ happens at the repository boundary.
 cd android-native && ./gradlew testDebugUnitTest
 ```
 
-- `AccessPolicyTest` (12 tests): your L,L,W,W,W example, the 60-minute cap,
+- `AccessPolicyTest` (29 tests): the L,L,W,W,W example, the 60-minute cap,
   pay-down wins, push neutrality, lockout windows, absence boundaries
   (59 s safe / 61 s revoked), grant expiry, state mapping
 - `BlackjackRulesTest` (15 tests): hard/soft totals, ace degradation, bust,
   naturals, deal order, dealer stands on hard and soft 17, settlement
+- `GateDeciderTest` (21 tests): grant/lockout/pass precedence, the lockout
+  ceiling, and the scoped-surface rule — a `SHORTS_ONLY` target with no surface
+  present passes even while a grant is live, so an Instagram grant never unlocks
+  Reels-only gating for the feed
+- `ShortsCatalogTest` (12) and `BlockScopeTest` (4): marker matching both ways,
+  `defaultScopeFor` for Instagram/YouTube/everything else, and `fromStored`
+  mapping null and garbage to `WHOLE_APP`
+- `ForegroundWatchTest` (14) and `ForegroundSurfaceTest` (10): the pure
+  re-check policy and the surface classifier
 
 CI (`.github/workflows/android-v2.yml`) runs the same suite on every push/PR
 touching `android-native/`, plus a release-variant compile check (no artifact,
@@ -212,8 +247,22 @@ GitHub Release.
 
 ## 7. Known limitations
 
-- Whole-app enforcement only — no Shorts/Reels surface detection. Whole-app
-  targets are the reliable path.
+- Reels/Shorts detection is a view-id probe, not a content parse. It reads
+  `AccessibilityNodeInfo.viewIdResourceName` on the nodes of the one app it was
+  asked about, breadth-first, capped at 400 nodes, and matches them against the
+  marker list in `ShortsCatalog`. Nothing else is read — no text, no content
+  descriptions, no images.
+- The probe cannot see past our own blocker, and that is measured, not assumed:
+  on YouTube, `reel_recycler` reports `isVisibleToUser=false` while the blocker
+  covers the app and `true` the moment it goes, same node, same bounds. A probe
+  that treated the covered answer as "the surface is gone" released the blocker
+  and let the next pass raise it again, twice a second. So while our own window
+  covers the target the surface counts as present, and leaving the surface from
+  *behind* the blocker — pressing Back out of Shorts onto the feed — is not
+  noticed. The blocker comes down when the user leaves the app, or on CLOSE.
+- Whole-app targets are the reliable path. A scoped target also degrades to
+  "never gated" rather than "always gated" if the accessibility service is not
+  connected, since a missing probe answers false.
 - Absence revocation is event-driven: if the user stays inside the granted
   app, nothing needs to fire; revocation lands when they return or the window
   changes. Grant end is alarm-driven, not absence-driven
@@ -229,7 +278,8 @@ GitHub Release.
 
 - No gambling imagery: no chips, coins, felt, or money. Copy says "hand",
   "earn", "grant" — never bet/wager/pot. The debt is time, not money
-- Accessibility disclosure: foreground package only, stated in the service
-  description string and during onboarding
+- Accessibility disclosure: the foreground package for every target, plus view
+  identifiers for `SHORTS_ONLY` targets, stated in the service description
+  string and during onboarding
 - Data safety: all storage is local (Room + DataStore); no network, no
   analytics, no account

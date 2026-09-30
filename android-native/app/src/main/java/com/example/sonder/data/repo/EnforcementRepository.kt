@@ -17,6 +17,7 @@ import androidx.room.withTransaction
 import com.example.sonder.di.ApplicationScope
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.AccessRules
+import com.example.sonder.domain.BlockScope
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.HandOutcome
@@ -133,6 +134,17 @@ class EnforcementRepository @Inject constructor(
             .coerceAtLeast(MIN_MAX_DEBT_MILLIS)
 
     /**
+     * How much of the package is gated, from the warm cache.
+     *
+     * Cached rather than resolved through Room for the same reason as [cachedMaxDebt]: the
+     * live decision path runs on every foreground event and every re-check pass, and a
+     * package with no row reads as [BlockScope.WHOLE_APP] — which is what an un-gated
+     * package is anyway, and what every row stored before the column existed meant.
+     */
+    fun cachedBlockScope(pkg: String): BlockScope =
+        BlockScope.fromStored(_targets.value[pkg]?.blockScope)
+
+    /**
      * The absence window in force for the package: its override, else the build default.
      *
      * Cached rather than resolved through [rulesFor] for the same reason as [cachedMaxDebt]:
@@ -221,6 +233,53 @@ class EnforcementRepository @Inject constructor(
             dailyCap = overrides.dailyCapMillis?.let { clamped.dailyCapMillis },
         )
     }
+
+    /** The scope stored for [packageName], or [BlockScope.WHOLE_APP] when it has no row. */
+    suspend fun blockScopeFor(packageName: String): BlockScope =
+        BlockScope.fromStored(targetDao.get(packageName)?.blockScope)
+
+    /** The stored scope, re-emitted whenever any target row changes. */
+    fun observeBlockScope(packageName: String): Flow<BlockScope> =
+        targetDao.observeAll().map { targets ->
+            BlockScope.fromStored(targets.find { it.packageName == packageName }?.blockScope)
+        }
+
+    /**
+     * Persist the scope for [packageName], materialising the row if it is missing.
+     *
+     * Materialises for the same reason [updateOverrides] does: the settings screen is
+     * reachable for every launchable app, including ones never enabled as targets, and a
+     * scope the user chose must not be dropped for want of a row. The new row is disabled,
+     * so choosing a scope is still not the same act as gating the app — ADD does that.
+     */
+    suspend fun setBlockScope(packageName: String, scope: BlockScope) {
+        targetDao.insertIfAbsent(
+            TargetEntity(
+                packageName = packageName,
+                label = packageName,
+                enabled = false,
+                createdAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        targetDao.setBlockScope(packageName, scope.stored)
+    }
+
+    /**
+     * The rules a set of raw overrides would produce, with no database in the way.
+     *
+     * Exists for the settings screen's unsaved draft: the screen has to draw the knobs as
+     * the user has them *right now*, minutes before anything is written, and reading the
+     * draft's effect through a Room round-trip would show the stored value instead. Same
+     * defaults and same clamp as [TargetEntity?.toRules], which delegates here, so a draft
+     * and the row it is eventually saved as cannot disagree.
+     */
+    fun rulesOf(overrides: TargetOverrides): AccessRules = AccessRules(
+        winGrantMillis = overrides.winGrantMillis ?: RuleDefaults.WIN_GRANT_MILLIS,
+        lossDebtMillis = overrides.lossDebtMillis ?: AccessPolicy.LOSS_DEBT_MILLIS,
+        maxDebtMillis = overrides.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS,
+        absenceRevokeMillis = overrides.absenceRevokeMillis ?: RuleDefaults.ABSENCE_REVOKE_MILLIS,
+        dailyCapMillis = overrides.dailyCapMillis,
+    ).clamped()
 
     /** Access already granted to [packageName] on the local day containing [nowMillis]. */
     suspend fun dailyGrantedMillis(
@@ -518,13 +577,7 @@ class EnforcementRepository @Inject constructor(
      * written before the clamp existed — or by any future caller that bypasses the
      * screen — cannot reach the policy with a value it has no state for.
      */
-    private fun TargetEntity?.toRules(): AccessRules = AccessRules(
-        winGrantMillis = this?.winGrantMillis ?: RuleDefaults.WIN_GRANT_MILLIS,
-        lossDebtMillis = this?.lossDebtMillis ?: AccessPolicy.LOSS_DEBT_MILLIS,
-        maxDebtMillis = this?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS,
-        absenceRevokeMillis = this?.absenceRevokeMillis ?: RuleDefaults.ABSENCE_REVOKE_MILLIS,
-        dailyCapMillis = this?.dailyCapMillis,
-    ).clamped()
+    private fun TargetEntity?.toRules(): AccessRules = rulesOf(this.toOverrides())
 
     private fun epochDay(nowMillis: Long): Long =
         Instant.ofEpochMilli(nowMillis).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()

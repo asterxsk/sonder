@@ -7,16 +7,22 @@ import android.util.Log
 import com.example.sonder.BuildConfig
 import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.AccessPolicy
+import com.example.sonder.domain.BlockScope
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.domain.ForegroundWatch
 import com.example.sonder.domain.GateDecision
 import com.example.sonder.domain.GateDecider
+import com.example.sonder.domain.ShortsCatalog
 import com.example.sonder.domain.model.GrantSnapshot
 import com.example.sonder.domain.model.LockoutSnapshot
+import com.example.sonder.platform.accessibility.ActiveWindowContent
+import com.example.sonder.platform.accessibility.ActiveWindowPackage
+import com.example.sonder.platform.accessibility.AppCloser
 import com.example.sonder.platform.accessibility.ForegroundWindows
 import com.example.sonder.platform.foreground.ForegroundResolver
 import com.example.sonder.platform.overlay.GateOverlayHost
 import com.example.sonder.platform.scheduling.GrantExpiryScheduler
+import com.example.sonder.ui.gate.GateController
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -64,6 +70,7 @@ class EnforcementCoordinator @Inject constructor(
     private val overlayHost: GateOverlayHost,
     private val foregroundResolver: ForegroundResolver,
     private val expiryScheduler: GrantExpiryScheduler,
+    private val controller: GateController,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
     private val ownPackage: String = context.packageName
@@ -85,6 +92,27 @@ class EnforcementCoordinator @Inject constructor(
      * on the service's own callback path, which is the path that has to be fast.
      */
     @Volatile private var foregroundWindows: ForegroundWindows? = null
+
+    /**
+     * Which app the accessibility window list says is in front, supplied by the service
+     * while it is connected. Immediate where the usage-stats probe lags, and used only to
+     * corroborate a release the re-check decided on that probe: see [releaseIsCorroborated].
+     */
+    @Volatile private var activeWindowPackage: ActiveWindowPackage? = null
+
+    /**
+     * The scoped-surface probe, supplied by the service while it is connected. Null when the
+     * service is not, in which case no scoped target can recognise its surface and every one
+     * of them passes — the reason a scoped target is safe to have enabled but never why it is
+     * safe to be *the* gate: see [scopedSurfacePresent].
+     */
+    @Volatile private var activeWindowContent: ActiveWindowContent? = null
+
+    /** Leave-a-gated-app, supplied by the service while it is connected. */
+    @Volatile private var appCloser: AppCloser? = null
+
+    /** Collector for the gate's CLOSE control; alive for as long as the service is. */
+    private var closeJob: Job? = null
 
     /** Package the last re-check pass decided for, and what it decided. */
     @Volatile private var watchedPackage: String? = null
@@ -123,12 +151,43 @@ class EnforcementCoordinator @Inject constructor(
      * Idempotent, because the service announces every connection and every screen-on
      * through it.
      */
-    fun onServiceConnected(windows: ForegroundWindows) {
+    fun onServiceConnected(
+        windows: ForegroundWindows,
+        activePackage: ActiveWindowPackage,
+        content: ActiveWindowContent,
+        appCloser: AppCloser,
+    ) {
         foregroundWindows = windows
+        activeWindowPackage = activePackage
+        activeWindowContent = content
+        this.appCloser = appCloser
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0
         startWatching()
+        startCloseRequests()
+    }
+
+    /**
+     * Handle the gate's CLOSE control.
+     *
+     * The action belongs here rather than in the overlay host because it is the coordinator
+     * that owns both ends: the host knows the window is up, and only the coordinator holds
+     * the service capabilities. Starting the collector is idempotent, so the service
+     * announcing a reconnection on every screen-on does not stack watchers — and a duplicate
+     * would be the worse bug of the two, since two closes mean two Home actions and a kill
+     * for a package the user has since left.
+     */
+    private fun startCloseRequests() {
+        if (closeJob?.isActive == true) return
+        closeJob = scope.launch {
+            controller.closeRequested.collect { pkg ->
+                // Blocker first, in case the app ignores Home: the user must not be left
+                // staring at a wall over an app they asked to leave.
+                overlayHost.dismiss(reason = "closed by user: $pkg")
+                appCloser?.closePackage(pkg)
+            }
+        }
     }
 
     private fun startWatching() {
@@ -201,8 +260,20 @@ class EnforcementCoordinator @Inject constructor(
                     touchLastSeen(observed, now)
                 }
 
+            // Releasing is the dangerous direction from a pass as well as from an event.
+            // The probe this pass decided on reads usage events, which the platform
+            // batches, so right after an app comes up it can still name the app that was
+            // in front before it — and a release decided on that answer takes down a
+            // blocker that has only just gone up, leaving the app the user is looking at
+            // uncovered. The event path already refuses a release the window list
+            // disagrees with (see [releaseIsTrailing]); a pass has no event to check, so
+            // it asks the same list directly.
             ForegroundWatch.Action.RELEASE ->
-                overlayHost.dismiss(reason = "foreground watch: $observed")
+                if (releaseIsCorroborated(observed)) {
+                    overlayHost.dismiss(reason = "foreground watch: $observed")
+                } else if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "RELEASE_REFUSED(observed=$observed active=${activeWindow()})")
+                }
 
             ForegroundWatch.Action.DECIDE ->
                 if (screenIsInUse() && isCurrent(mine)) {
@@ -290,6 +361,24 @@ class EnforcementCoordinator @Inject constructor(
         return probeTrailing
     }
 
+    /** Which package the accessibility window list says is in front, or null. */
+    private fun activeWindow(): String? = activeWindowPackage?.activePackage()
+
+    /**
+     * Whether the accessibility window list agrees that [observed] is really the app on
+     * screen, so a release the re-check decided for it can be applied.
+     *
+     * Only an explicit disagreement refuses. A missing answer — no connected service, no
+     * focused window, an IME or system window holding focus — leaves the release as it was
+     * before this check existed, because refusing on no evidence would strand the blocker
+     * over Home on the devices where the list cannot be read, which is the failure the
+     * re-check release exists to prevent.
+     */
+    private fun releaseIsCorroborated(observed: String): Boolean {
+        val active = activeWindow() ?: return true
+        return active == observed
+    }
+
     /** One line per applied state, so a logcat trace shows which event won a transition. */
     private fun blockState(decision: GateDecision, pkg: String, reason: String) {
         if (!BuildConfig.DEBUG) return
@@ -314,6 +403,32 @@ class EnforcementCoordinator @Inject constructor(
         powerManager.isInteractive && !keyguardManager.isKeyguardLocked
 
     /**
+     * Whether the app the caller is asking about is showing the surface its scope gates.
+     *
+     * For [BlockScope.WHOLE_APP] this is vacuously true — every window of the app is the
+     * surface. For [BlockScope.SHORTS_ONLY] it is the probe, and it is the one place in the
+     * enforcement path that reads anything but a package name.
+     *
+     * Deliberately not memoized. The 400ms memo on [foregroundPackage] exists because that
+     * lookup is a 60-second `queryEvents` binder call made twice in one pass; this one is a
+     * bounded walk of a tree the service already holds, and paying for it twice rather than
+     * delaying a gate is the right trade for a feature whose whole value is that the blocker
+     * lands *while* the user is watching a reel. A memo would also hold a stale "not the
+     * surface" across the exact transition this exists to catch.
+     *
+     * A missing capability answers false, which passes the app. That is the safe direction —
+     * the alternative is gating an app on no evidence — but it also means a scoped target
+     * degrades to "not gated at all" rather than to "gated everywhere" without a connected
+     * service, which is why the first is the thing to check when one appears not to work.
+     */
+    private fun scopedSurfacePresent(pkg: String, scope: BlockScope): Boolean {
+        if (scope != BlockScope.SHORTS_ONLY) return true
+        val markers = ShortsCatalog.markersFor(pkg)
+        if (markers.isEmpty()) return false
+        return activeWindowContent?.showsMarkers(pkg, markers) == true
+    }
+
+    /**
      * Whether what the last re-check pass decided for [pkg] still holds, so the app does
      * not have to be decided again.
      *
@@ -323,6 +438,14 @@ class EnforcementCoordinator @Inject constructor(
      * waiting for the user to leave and come back. A passing app is never settled —
      * re-deciding is what lets a target enabled while its app is open start being
      * blocked, and it covers the enforcement cache still being cold on the first passes.
+     *
+     * A [BlockScope.SHORTS_ONLY] gate is settled like any other, which it was not at first.
+     * The exception existed to notice the user leaving Reels for the Instagram feed, where no
+     * activity is resumed and so no window event is delivered. That cannot be noticed from
+     * here either: the scoped-surface probe is blind while our own blocker covers the app
+     * (see [ActiveWindowContent]), so re-deciding each pass only re-reads the same "still on
+     * the surface" answer and logs it twice a second. Leaving the app is what brings a scoped
+     * blocker down, and that arrives as a window event.
      */
     private fun stillSettled(pkg: String): Boolean = when (watchedDecision) {
         GateDecision.PASS -> false
@@ -330,8 +453,7 @@ class EnforcementCoordinator @Inject constructor(
         GateDecision.GRANTED ->
             repository.cachedGrant(pkg)?.endAtMillis?.let { it > System.currentTimeMillis() } == true
 
-        GateDecision.GATE, GateDecision.REVOKE ->
-            overlayHost.shownForPackage == pkg
+        GateDecision.GATE, GateDecision.REVOKE -> overlayHost.shownForPackage == pkg
 
         // A lockout is settled only while its deadline is still ahead. Past it the wait has
         // been served and the pass has to decide again, or the panel sits over the app
@@ -416,6 +538,8 @@ class EnforcementCoordinator @Inject constructor(
         val target = repository.enabledTarget(pkg)
         val debtMillis = if (debtServed) 0L else repository.cachedDebt(pkg)
         val debtAtCap = AccessPolicy.isDebtAtCap(debtMillis, repository.cachedMaxDebt(pkg))
+        val scope = repository.cachedBlockScope(pkg)
+        val scopedSurface = scopedSurfacePresent(pkg, scope)
         val decision = GateDecider.decide(
             targetEnabled = target != null,
             grant = repository.cachedGrant(pkg)?.let {
@@ -434,6 +558,8 @@ class EnforcementCoordinator @Inject constructor(
             // paths used to disagree, so a per-app override changed what the repository's
             // own check said and nothing about what the live gate did.
             absenceRevokeMillis = repository.cachedAbsenceRevoke(pkg),
+            blockScope = scope,
+            scopedSurfacePresent = scopedSurface,
         )
 
         val label = target?.label?.takeIf { it.isNotBlank() }
@@ -485,7 +611,8 @@ class EnforcementCoordinator @Inject constructor(
         if (BuildConfig.DEBUG) {
             Log.d(
                 TAG,
-                "pkg=$pkg surface=$surface class=$className decision=$decision " +
+                "pkg=$pkg surface=$surface class=$className scope=$scope " +
+                    "scopedSurface=$scopedSurface decision=$decision " +
                     "blocker=${overlayHost.shownForPackage}",
             )
         }
@@ -509,7 +636,12 @@ class EnforcementCoordinator @Inject constructor(
     /** Service torn down / unbound: the blocker must not outlive it. */
     fun onServiceStopped() {
         stopWatching()
+        closeJob?.cancel()
+        closeJob = null
         foregroundWindows = null
+        activeWindowPackage = null
+        activeWindowContent = null
+        appCloser = null
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0

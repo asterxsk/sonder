@@ -75,6 +75,21 @@ class GateController @Inject constructor(
     private val _unlocked = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val unlocked: SharedFlow<String> = _unlocked
 
+    /**
+     * Emits the package when the user asks to leave the blocked app entirely.
+     *
+     * Separate from [unlocked] because the two are not the same act and must not be
+     * conflated by anything downstream: one says "the user earned time here", the other says
+     * "the user wants out". Handling the second as the first would hand out access as a
+     * reward for closing the app.
+     *
+     * The controller only announces the request. Nothing here knows how to leave an app —
+     * that is a service capability — so the coordinator, which owns the service, does the
+     * work. See EnforcementCoordinator.startCloseRequests.
+     */
+    private val _closeRequested = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val closeRequested: SharedFlow<String> = _closeRequested
+
     private var deck: List<Card> = emptyList()
     private var dealt: DealtHand? = null
 
@@ -208,6 +223,23 @@ class GateController @Inject constructor(
         deck = emptyList()
         dealt = null
         _unlocked.tryEmit(pkg)
+    }
+
+    /**
+     * User wants out of the blocked app rather than a hand.
+     *
+     * Grants nothing: the grant a win would have produced is exactly what this must not
+     * hand out, or closing the blocker would be the cheapest way to open the app. The table
+     * is reset so a later visit starts clean, and the request goes out for the coordinator to
+     * act on.
+     */
+    fun closeApp() {
+        val pkg = _state.value.targetPackage
+        if (pkg.isEmpty()) return
+        _state.value = TableState(targetPackage = pkg)
+        deck = emptyList()
+        dealt = null
+        _closeRequested.tryEmit(pkg)
     }
 
     private fun standInternal(pkg: String, dealtHand: DealtHand) {

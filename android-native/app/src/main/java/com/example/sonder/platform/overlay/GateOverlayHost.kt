@@ -246,6 +246,9 @@ class GateOverlayHost @Inject constructor(
                 onStand = controller::stand,
                 onAccessGranted = controller::releaseAccess,
                 onPlayAgain = controller::playAgain,
+                // The host only announces this; leaving the app is a service capability and
+                // is handled by the coordinator, which is the layer that owns one.
+                onClose = controller::closeApp,
             )
         }
     }

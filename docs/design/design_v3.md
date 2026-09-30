@@ -214,6 +214,12 @@ The row gets:
 - app icon bare on the row's own ground, in a 40dp slot
 - two 48dp framed glyph buttons — `✎` edit and `✕` remove
 
+A target that gates only Reels/Shorts carries a third metadata line,
+`REELS & SHORTS ONLY`, under the package id. Without it a shorts-scoped
+YouTube and a whole-app YouTube render identically, and the row would say a
+blocked app is blocked in full when it is not. The line is drawn only for a
+scoped target, so whole-app rows keep the two-line metadata.
+
 The icon is the one thing in the row that is not framed. The row is already one framed
 object, so putting a second border around the icon made a picture inside a box rather
 than a list row; the icon reads as the row's own content, the buttons as its controls.
@@ -222,6 +228,21 @@ than a list row; the icon reads as the row's own content, the buttons as its con
 Both controls are delayed, and a served `✕` wait is not permission to remove: it raises a
 confirmation whose confirm control is red (`DANGER`). The wait buys time to think; the
 question is what the thinking is for.
+
+### The edit screen commits on SAVE
+
+`✎` opens a per-app panel of numeric knobs and, for a catalogued app, a
+`[ WHOLE APP ] [ REELS & SHORTS ]` scope tab. Edits buffer in the screen and
+land in storage only on a full-width `SAVE`; the screen is not live-writing, so
+SAVE is not decoration — it is the only thing that persists.
+
+Everything else on the screen follows from that. The badge next to the title
+reads `UNSAVED` while the draft differs from storage and `SAVED` after a commit,
+because a button that may or may not have done something is worse than no button.
+`SAVE` is disabled when there is nothing to commit. And leaving with a live draft
+— `‹ TARGETS` or system Back — raises a confirmation rather than dropping the
+work silently; without that guard, buffering would be strictly worse than writing
+each tap straight through.
 
 Do not use large modern cards.
 
@@ -285,10 +306,52 @@ Example:
   │ PLAY BLACKJACK → │
   └──────────────────┘
 
-        Not Now
+  ┌──────────────────┐
+  │  ✕  CLOSE APP    │
+  └──────────────────┘
 ```
 
 The environment is decoration; the framed content is the functional layer.
+
+### The way out
+
+CLOSE is not part of this section's original sketch and is now mandatory. A blocker that
+only offers a way *in* is a wall: the user has to know to press Back or Home, and inside an
+app that intercepts Back that is not an escape at all. It is rendered once, below whichever
+panel is showing — table or lockout — as a full-width secondary button, so the way out is
+never competing with the way in and is never the control that gets clipped off the bottom.
+
+It sends Home and then a best-effort `killBackgroundProcesses`. On modern Android that call
+does not kill a foreground app, so Home is the real effect; the kill is a nudge for an app
+that is already backgrounded.
+
+### A second exit, on a lost hand
+
+CLOSE is the way out of the block screen; on a *settled loss* there is a second one, directly
+under the replay button: `✕  STOP — TAKE THE LOSS`. It is the same act as CLOSE and grants
+nothing, but it exists because of where the first one sits. A loss is the moment the debt
+just grew, and on a short screen the only other way out is below the timer, off the fold —
+so the cheapest-looking next move is always another hand, and the player who wants to stop
+bleeding has to go looking for the exit at the exact moment they are least inclined to. The
+button puts the exit next to the decision instead.
+
+It appears only on a loss. A hand that granted access has no debt to stop, and CONTINUE is
+already the way forward; a hand that won under a spent cap has nothing to continue to, so it
+takes the same loss treatment as any other hand that granted nothing.
+
+The bottom CLOSE is not replaced by it. It still renders in every state — table or lockout,
+live hand, settled hand, debt at its 60-minute ceiling — so the way out is never something
+the player has to earn, outlast or scroll to find.
+
+### Centring
+
+The stack is centred vertically, not top-anchored. Against a 360×800dp baseline the
+difference is small, but on a tall screen a top-anchored blocker leaves the whole lower half
+empty and reads as a layout that failed rather than as a deliberate screen. The centring
+comes from a `Box(contentAlignment = Center)` around the column and **not** from
+`Column(verticalArrangement = ...)`: the column scrolls (§19, so CLOSE is never clipped) and
+a scrolling column is measured against an unbounded height, which leaves it no spare space
+to distribute, so the arrangement never applies.
 
 ## 11. Win screen
 
@@ -379,7 +442,7 @@ contradicts §5.
 
 ```text
    ╭──────────────────────────────────╮
-   │   ⌂      ◎      ▥       ⚙       │
+   │   ⌂      ⌖      ▥       ⚙       │
    │  Home  Targets  Stats  Settings  │
    ╰──────────────────────────────────╯
 ```
@@ -390,25 +453,41 @@ The pill keeps §5's hard grammar, only rounded:
 - hard-offset shadow, rounded to match so it cannot poke square corners out from under the pill
 
 Each tab is a glyph over a label, and the glyph is the icon: in the platform symbol font,
-because `⌂ ◎ ▥ ⚙` are symbols the pixel face has no cut of. The label is 10sp DM Mono —
+because `⌂ ⌖ ▥ ⚙` are symbols the pixel face has no cut of. The label is 10sp DM Mono —
 §4's floor keeps the pixel face at 10sp and above, and the labels are sentence case,
 which the pixel face has no lowercase cut for. Under a glyph that size the label is the
 caption, not the icon, so it is small and quiet.
 
-Each tab sets its **own** glyph size, because a symbol font's characters fill their em
-boxes by very different amounts: at a shared 26sp, `◎` drew a 30px ring while `⚙` drew
-58px, so Targets read as the tab that had been shrunk. Sizes are chosen so the four land
-at the same optical height, and any future change to the glyphs has to be checked the
-same way, by measuring the marks rather than by trusting the sp value.
+Sizes are chosen so the four land at the same optical height, and any future change to the
+glyphs has to be checked the same way, by measuring the marks rather than by trusting the
+sp value. Measured on an API 36 emulator at 420dpi, ink bounding boxes of the rendered
+marks at a shared 26sp:
 
-That optical goal has a hard ceiling the first cut of this section missed: the dock is a
-64dp pill with 8dp of padding, so a tab has a 48dp column for a glyph *and* a label. The
-glyph is measured first and the label is measured with whatever height is left, so a glyph
-whose line box fills that column does not overlap the label — it leaves the label zero
-height, and the tab renders as a bare glyph. The 38sp `◎` this section originally chose
-did exactly that on device: Targets showed a ring and no "Targets". All four tabs are
-26sp, which is the largest size the dock holds; a larger glyph would need a taller pill,
-and the 96dp navigation reservation in §19 does not have the room.
+| tab | glyph | code point | ink |
+| --- | --- | --- | --- |
+| Home | `⌂` | U+2302 | 43 × 49px |
+| Targets | `⌖` | U+2316 | 43 × 43px |
+| Stats | `▥` | U+25A5 | 41 × 41px |
+| Settings | `⚙` | U+2699 | 58 × 58px |
+
+Targets is `⌖` U+2316 (POSITION INDICATOR — a ring with crosshairs), **not** the `◎` this
+section originally specified. `◎` drew a 30px ring at 26sp against `⌂`'s 43, so Targets
+read as the tab that had been shrunk. That is not a size the sp value can fix: the gap
+comes from how much of its em box the glyph is drawn in, and the Geometric Shapes block is
+drawn small — its alternatives `◉` U+25C9 and `◍` U+25CD measure 31px at the same 26sp,
+against `⌖`'s 43. `⌖` comes from the Miscellaneous Technical block alongside `⌂`, and its
+ink width matches Home's exactly. Any replacement glyph has to be measured the same way —
+a per-tab `glyphSize` would paper over the difference, and would then have to be re-tuned
+per device if the symbol font ever changed.
+
+Making the size the lever has a hard ceiling besides. The dock is a 64dp pill with 8dp of
+padding, so a tab has a 48dp column for a glyph *and* a label. The glyph is measured first
+and the label with whatever height is left, so a glyph whose line box fills that column
+does not overlap the label — it leaves the label zero height, and the tab renders as a
+bare glyph. The 38sp `◎` this section originally chose did exactly that on device: Targets
+showed a ring and no "Targets". All four tabs are 26sp, which is the largest size the dock
+holds; a larger glyph would need a taller pill, and the 96dp navigation reservation in §19
+does not have the room.
 
 Active tab:
 - a square of raised panel behind the tab — square on purpose, because §15 rounds the
@@ -482,6 +561,26 @@ Avoid:
 - spring physics
 - smooth floating
 - continuous gradients/glows
+
+### The cards
+
+The table is the one place the UI has objects rather than panels, so it is the one place
+motion carries meaning, and both of its motions are still discrete:
+
+**Deal.** A card lands — a 16dp drop and a four-step fade over 200ms, its slot reserved from
+the first frame so nothing reflows under it. Cards of the same hand are 90ms apart, so a
+hand arrives card by card; a card drawn mid-hand arrives alone and lands at once, because a
+HIT has to feel like a HIT rather than like a queue.
+
+**Flip.** The dealer's hole card turns over on `rotationY` through four hard frames, swapping
+which face is drawn at the halfway point — a card caught edge-on, not a crossfade. The
+duration is 240ms, not the "2 frames" above: at 60fps two frames is 33ms, which is a card
+that has already turned over before the eye catches it. Four frames at that length is the
+same hard-edged turn, at a speed that can be read as one.
+
+The reveal only works if the hole card is a single composable whose `faceDown` changes.
+Composing the back and the revealed card as two different call sites disposes one and builds
+the other, and the turn is never seen — it reads as a swap.
 
 ### Screen transitions
 

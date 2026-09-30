@@ -41,6 +41,11 @@ object GateDecider {
      *   nothing here silently applied the 60-second global default to every app, so a per-app
      *   override changed what `EnforcementRepository.evaluateAbsence` said and nothing about
      *   what the live gate did.
+     * @param blockScope how much of the target is gated — the whole app, or only its
+     *   short-form video surface.
+     * @param scopedSurfacePresent whether that surface is the one on screen. Answered by the
+     *   caller because recognising it means reading a window's node tree, which this core
+     *   cannot do; ignored entirely for [BlockScope.WHOLE_APP].
      */
     fun decide(
         targetEnabled: Boolean,
@@ -49,8 +54,18 @@ object GateDecider {
         nowMillis: Long,
         debtAtCap: Boolean = false,
         absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        blockScope: BlockScope = BlockScope.WHOLE_APP,
+        scopedSurfacePresent: Boolean = true,
     ): GateDecision {
         if (!targetEnabled) return GateDecision.PASS
+
+        // A scoped target is a target only while its own surface is on screen. This is
+        // checked *before* the grant, not after, because the two answer different
+        // questions: a grant says "the user earned time in this app", and the scope says
+        // "this window is part of the app the user asked to gate at all". Winning a hand
+        // to watch Reels must not turn the Instagram feed into a gated surface, or the
+        // grant would unlock a screen the target was never about.
+        if (blockScope == BlockScope.SHORTS_ONLY && !scopedSurfacePresent) return GateDecision.PASS
 
         if (grant != null && AccessPolicy.isGrantActive(grant, nowMillis)) {
             return if (

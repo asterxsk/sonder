@@ -16,6 +16,15 @@ data class TargetEntity(
     val maxDebtMillis: Long? = null,
     val absenceRevokeMillis: Long? = null,
     val dailyCapMillis: Long? = null,
+    /**
+     * "WHOLE_APP" | "SHORTS_ONLY" — see [com.example.sonder.domain.BlockScope].
+     *
+     * Not nullable, and defaulted rather than absent, because there is no third state to
+     * express: a target either gates the whole app or only its short-form surface, and
+     * every row that predates this column meant the former. `MIGRATION_2_3` writes the same
+     * default, so the schema Room expects and the rows on disk agree.
+     */
+    val blockScope: String = "WHOLE_APP",
 )
 
 /** One active access grant per package; absolute epoch end time. */

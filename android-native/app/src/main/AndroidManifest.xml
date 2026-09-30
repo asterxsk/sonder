@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The gate's CLOSE control: sends Home, then asks the platform to drop the app's
+         background process. Install-time (normal) permission, so no prompt; the process
+         kill is best-effort only — see AppCloser. -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
     <!-- Launchable app enumeration for the Targets picker (API 30+ visibility). -->
     <queries>

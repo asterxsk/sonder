@@ -1,7 +1,12 @@
 package com.example.sonder.ui.gate
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
@@ -21,15 +27,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import com.example.sonder.domain.model.Card
 import com.example.sonder.domain.model.Rank
 import com.example.sonder.domain.model.Suit
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
+import com.example.sonder.theme.PixelMotion
 import com.example.sonder.theme.PixelPalette
+import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
@@ -46,6 +57,17 @@ import com.example.sonder.ui.kit.TimerTone
  *
  * Lockout mode shows the "WAIT IT OUT" panel with no table; gate mode shows the
  * blackjack table with HIT/STAND and the unlock action.
+ *
+ * CLOSE sits below whichever of the two is showing, rendered once here rather than inside
+ * each of them. It is the way *out* — the way in is a hand — and it is the only control this
+ * screen has that is always present, which is the point: §10 through §12 never specify one,
+ * and without it a blocked app is a wall the user has to know to press Back or Home to
+ * escape, which inside an app that intercepts Back is not an escape at all. It renders in
+ * every state, the 60-minute debt ceiling included: the way out is never something the user
+ * has to earn or outlast.
+ *
+ * A settled loss gets a second exit directly under its replay button (see BlackjackBlocker),
+ * for the reason in §10 — the exit has to be where the decision is, not below the fold.
  */
 @Composable
 fun GateContent(
@@ -58,6 +80,7 @@ fun GateContent(
     onStand: () -> Unit,
     onAccessGranted: () -> Unit,
     onPlayAgain: () -> Unit,
+    onClose: () -> Unit,
 ) {
     // A lockout is a countdown, so the panel needs a clock of its own: the blocker window
     // is composed once and the coordinator only re-decides when the deadline passes, so a
@@ -74,39 +97,69 @@ fun GateContent(
     }
     val lockoutRemainingMillis = (lockoutUntilMillis - nowMillis).coerceAtLeast(0L)
 
-    Column(
+    // Centred rather than top-anchored: the panel is a fixed stack, and against a tall
+    // screen a top-anchored one leaves the whole lower half of the blocker empty. The
+    // centring has to come from the box rather than from Column(verticalArrangement = ...):
+    // the column scrolls, and a scrolling column is measured against an unbounded height, so
+    // it has no spare space to distribute and the arrangement never applies.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PixelPalette.Bg)
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(PixelPalette.Bg),
+        contentAlignment = Alignment.Center,
     ) {
-        Spacer(Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // The panel is a fixed stack: the badge, two framed blocks, the controls and
+                // the timer all have their own heights, and on a short screen they overrun
+                // the bottom — which is where CLOSE lives. §19 forbids clipping an
+                // interactive control, so the column scrolls rather than letting the way out
+                // be the thing that is cut off.
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(12.dp))
 
-        // A wait can begin mid-session: the hand that takes the debt to its ceiling writes a
-        // lockout while the table is still open, so the panel follows the controller's state
-        // as well as the value the blocker was raised with. At the ceiling the player waits
-        // the debt out — waiting is what serves it — rather than being dealt another hand.
-        //
-        // A settled hand is the one exception: the result of the hand that reached the
-        // ceiling stays on screen until the player acknowledges it, since the wait panel
-        // offers no cards either way and losing the result would just be confusing.
-        val waiting = maxOf(lockoutRemainingMillis, state.debtLockRemainingMillis)
-        if (waiting > 0 && state.phase != TableState.Phase.RESOLVED) {
-            LockoutBlocker(label = label, remainingMillis = waiting)
-        } else {
-            BlackjackBlocker(
-                label = label,
-                state = state,
-                onDeal = onDeal,
-                onHit = onHit,
-                onStand = onStand,
-                onAccessGranted = onAccessGranted,
-                onPlayAgain = onPlayAgain,
+            // A wait can begin mid-session: the hand that takes the debt to its ceiling writes a
+            // lockout while the table is still open, so the panel follows the controller's state
+            // as well as the value the blocker was raised with. At the ceiling the player waits
+            // the debt out — waiting is what serves it — rather than being dealt another hand.
+            //
+            // A settled hand is the one exception: the result of the hand that reached the
+            // ceiling stays on screen until the player acknowledges it, since the wait panel
+            // offers no cards either way and losing the result would just be confusing.
+            val waiting = maxOf(lockoutRemainingMillis, state.debtLockRemainingMillis)
+            if (waiting > 0 && state.phase != TableState.Phase.RESOLVED) {
+                LockoutBlocker(label = label, remainingMillis = waiting)
+            } else {
+                BlackjackBlocker(
+                    label = label,
+                    state = state,
+                    onDeal = onDeal,
+                    onHit = onHit,
+                    onStand = onStand,
+                    onAccessGranted = onAccessGranted,
+                    onPlayAgain = onPlayAgain,
+                    onClose = onClose,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // The way out, in both states and below the state's own controls so it never competes
+            // with the way in. Secondary, not primary: a hand is what this screen is for, and
+            // closing is what it offers when the user would rather not play.
+            PixelButton(
+                text = "✕  CLOSE APP",
+                onClick = onClose,
+                style = PixelButtonStyle.SECONDARY,
+                modifier = Modifier.fillMaxWidth(),
             )
-        }
 
-        Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
 
@@ -160,6 +213,7 @@ private fun BlackjackBlocker(
     onStand: () -> Unit,
     onAccessGranted: () -> Unit,
     onPlayAgain: () -> Unit,
+    onClose: () -> Unit,
 ) {
     // §14 status badge row. The badge keys off whether access was actually granted, not
     // off "won with no debt": a win with a spent daily cap grants nothing, and "GRANTED"
@@ -213,11 +267,27 @@ private fun BlackjackBlocker(
                 Spacer(Modifier.size(8.dp))
                 state.dealerUp?.let { up ->
                     PlayingCard(up.cards.first(), faceDown = false)
-                    val full = state.dealerFull
-                    if (full != null) {
-                        full.cards.drop(1).forEach { PlayingCard(it, faceDown = false) }
-                    } else {
-                        PlayingCard(Rank.TWO, Suit.SPADES, faceDown = true) // card back
+
+                    // The hole card keeps its slot. Drawn face down while the hand is live,
+                    // then the *same* composable turns over when the dealer's hand arrives.
+                    // Composing the back and the revealed card at two different call sites
+                    // disposes one and builds the other, and the turn-over is never seen —
+                    // the reveal reads as a swap. One call site with a changing [faceDown]
+                    // is what makes it a flip.
+                    val hole = state.dealerFull?.cards?.getOrNull(1)
+                    PlayingCard(
+                        card = hole ?: Card(Rank.TWO, Suit.SPADES),
+                        faceDown = hole == null,
+                        dealDelayMillis = PixelMotion.DealStaggerMillis,
+                    )
+
+                    // The dealer's draw, dealt behind the turn-over.
+                    state.dealerFull?.cards?.drop(2)?.forEachIndexed { index, card ->
+                        PlayingCard(
+                            card,
+                            faceDown = false,
+                            dealDelayMillis = (index + 2) * PixelMotion.DealStaggerMillis,
+                        )
                     }
                 }
                 state.dealerFull?.let {
@@ -243,7 +313,21 @@ private fun BlackjackBlocker(
                     color = PixelPalette.Muted,
                 )
                 Spacer(Modifier.size(8.dp))
-                state.playerHand?.cards?.forEach { PlayingCard(it, faceDown = false) }
+                state.playerHand?.cards?.forEachIndexed { index, card ->
+                    // Deal order is dealer-first, so the opening pair lands two cards behind
+                    // the dealer's. A card drawn later is the only new card on the table and
+                    // has nothing to follow, so it lands at once — a HIT has to feel like a
+                    // HIT, not like a queue.
+                    PlayingCard(
+                        card,
+                        faceDown = false,
+                        dealDelayMillis = if (index < 2) {
+                            (index + 2) * PixelMotion.DealStaggerMillis
+                        } else {
+                            0L
+                        },
+                    )
+                }
                 state.playerHand?.let {
                     Spacer(Modifier.size(8.dp))
                     Text(
@@ -298,6 +382,23 @@ private fun BlackjackBlocker(
                 style = if (won) PixelButtonStyle.SUCCESS else PixelButtonStyle.PRIMARY,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // A lost hand has an exit, and it sits directly under the retry rather than at
+            // the bottom of the panel. Losing is the moment the debt just grew, and the
+            // only other way out was past the timer, below the fold on a short screen —
+            // so the cheapest-looking next move was always another hand. This is the same
+            // act as CLOSE APP and grants nothing: it stops the bleeding and takes the
+            // loss already on the books. A won hand has no debt to stop, so it gets no
+            // such offer — CONTINUE is already the way forward.
+            if (!won) {
+                Spacer(Modifier.height(PixelSpace.Snug))
+                PixelButton(
+                    text = "✕  STOP — TAKE THE LOSS",
+                    onClick = onClose,
+                    style = PixelButtonStyle.SECONDARY,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         else -> {
@@ -320,7 +421,7 @@ private fun BlackjackBlocker(
             tone = TimerTone.LOCKED,
         )
     }
-}
+    }
 
 @Composable
 private fun PixelDivider() {
@@ -339,14 +440,69 @@ internal fun formatRemaining(millis: Long): String {
 
 /** White/off-white card face per §9 (readability first), pixel-framed.
  *  Layout: suit (house) on top, rank on bottom — so two-digit ranks (10)
- *  have their own line and never clip out of the card frame. */
+ *  have their own line and never clip out of the card frame.
+ *
+ *  Two motions ride on the card, both stepped per §18:
+ *
+ *  - **Deal.** The card drops its own height and fades up over [PixelMotion.DealMillis]
+ *    when it first composes, [dealDelayMillis] late. The delay is how a hand arrives card
+ *    by card instead of as one block; the card's slot is reserved from the first frame, so
+ *    the row never reflows while a card is still on its way down.
+ *  - **Flip.** [faceDown] turning false turns the card over on `rotationY` through four
+ *    hard frames and swaps which face is drawn at the halfway point — a card caught
+ *    edge-on, not a crossfade. This is the dealer's reveal, and it is the only reason the
+ *    hole card is one call site rather than two.
+ *
+ *  The description follows [faceDown], which is the truth of the card even while it is
+ *  still mid-turn: TalkBack must never read a back that is on its way to being a face.
+ */
 @Composable
-fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
+fun PlayingCard(
+    card: Rank,
+    suit: Suit,
+    faceDown: Boolean,
+    /** Stagger before this card lands; 0 for a card dealt on its own. */
+    dealDelayMillis: Long = 0L,
+) {
     val suitColor =
         if (suit == Suit.HEARTS || suit == Suit.DIAMONDS) PixelPalette.Danger else PixelPalette.CardInk
+
+    // 0 = flat on the table, 1 = landed. Kept as an Animatable rather than a plain
+    // animateFloatAsState because the drop has to be held at 0 for the stagger — a
+    // state-driven float would jump straight to its target and land the card early.
+    val entry = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        if (dealDelayMillis > 0L) delay(dealDelayMillis)
+        entry.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = PixelMotion.DealMillis,
+                easing = PixelMotion.Stepped,
+            ),
+        )
+    }
+
+    val flip by animateFloatAsState(
+        targetValue = if (faceDown) 180f else 0f,
+        animationSpec = tween(
+            durationMillis = PixelMotion.FlipMillis,
+            easing = PixelMotion.Stepped,
+        ),
+        label = "playingCardFlip",
+    )
+
     Box(
         modifier = Modifier
             .size(width = 52.dp, height = 74.dp)
+            .offset(y = PixelSpace.Room * (1f - entry.value))
+            .alpha(entry.value)
+            .graphicsLayer {
+                rotationY = flip
+                // The default camera distance is 8dp from a card that is only 52dp wide,
+                // which is a lens pressed to the table: the flip distorts hard enough to
+                // read as a different card. Pushing it out keeps the turn flat and hard.
+                cameraDistance = 24f * density
+            }
             .padding(2.dp)
             .background(if (faceDown) PixelPalette.Primary else PixelPalette.CardFace)
             .border(2.dp, if (faceDown) PixelPalette.PrimaryDark else PixelPalette.CardInk)
@@ -358,7 +514,25 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (!faceDown) {
+        // Past the halfway point the box has turned its back to the viewer, so that is
+        // where the back face belongs — and it is drawn counter-rotated, or a card at
+        // 180° would show a mirrored motif and read as a printing error.
+        if (flip > 90f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { rotationY = 180f },
+                contentAlignment = Alignment.Center,
+            ) {
+                // Tiny Sonder motif on the back: crescent + S (§9: cat/crescent/S sprite).
+                Text(
+                    text = "☾S",
+                    style = PixelTypeScale.Badge,
+                    fontFamily = PixelFont,
+                    color = PixelPalette.Bg,
+                )
+            }
+        } else {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
@@ -379,22 +553,18 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
                     color = PixelPalette.CardInk,
                 )
             }
-        } else {
-            // Tiny Sonder motif on the back: crescent + S (§9: cat/crescent/S sprite).
-            Text(
-                text = "☾S",
-                style = PixelTypeScale.Badge,
-                fontFamily = PixelFont,
-                color = PixelPalette.Bg,
-            )
         }
     }
 }
 
 /** Overload for the domain Card type (avoids name collision). */
 @Composable
-fun PlayingCard(card: com.example.sonder.domain.model.Card, faceDown: Boolean) {
-    PlayingCard(card.rank, card.suit, faceDown)
+fun PlayingCard(
+    card: Card,
+    faceDown: Boolean,
+    dealDelayMillis: Long = 0L,
+) {
+    PlayingCard(card.rank, card.suit, faceDown, dealDelayMillis)
 }
 
 private fun suitGlyph(suit: Suit): String = when (suit) {

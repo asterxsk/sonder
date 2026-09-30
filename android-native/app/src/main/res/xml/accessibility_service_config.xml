@@ -1,8 +1,22 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?><!--
+   canRetrieveWindowContent is on, and it is the one thing in this app's permission surface
+   that needs justifying. It is what makes a view identifier readable
+   (AccessibilityNodeInfo.viewIdResourceName), and a view identifier is the only signal that
+   can tell Instagram's Reels surface from its feed: Reels and YouTube Shorts run inside the
+   app's own main activity, so the foreground package and the window class name are identical
+   to the feed's, and a scoped target would never fire without it.
+
+   What is read is a view id and nothing else — no text, no content descriptions, no images —
+   and only for a package the user has scoped, only as a yes/no against markers this app
+   supplies. canRetrieveWindowContent has no runtime counterpart, so this file is the only
+   place it can be set; the flags it needs are ALSO repeated in
+   SonderAccessibilityService.onServiceConnected, because assigning AccessibilityServiceInfo
+   there replaces the whole flag word rather than adding to it.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRetrieveInteractiveWindows"
-    android:canRetrieveWindowContent="false"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="50" />

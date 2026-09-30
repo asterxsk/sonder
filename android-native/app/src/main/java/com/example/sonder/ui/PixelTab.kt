@@ -25,10 +25,17 @@ import com.example.sonder.Targets
  * label zero height and the tab renders as "just a logo". §15's 38sp for `◎` was
  * measured for optical parity on its own and cannot fit above a label in this dock;
  * 26sp is the largest size the dock can hold, and it is what the other three use.
+ *
+ * TARGETS is `⌖` (U+2316, position indicator), not the `◎` §15 originally specified.
+ * `◎` renders a 30px ring at 26sp against `⌂`'s 43px, so Targets read as the shrunk tab,
+ * and no per-tab size can close that: §15's ceiling applies to all four, and the whole
+ * Geometric Shapes block is drawn small — `◉` and `◍`, the obvious alternatives, measure
+ * 31px at the same size. `⌖` is from the Miscellaneous Technical block beside `⌂` and its
+ * ink width matches Home's exactly; §15 records the measurements.
  */
 enum class PixelTab(val glyph: String, val label: String, val glyphSize: TextUnit) {
     HOME("⌂", "Home", 26.sp),
-    TARGETS("◎", "Targets", 26.sp),
+    TARGETS("⌖", "Targets", 26.sp),
     STATS("▥", "Stats", 26.sp),
     SETTINGS("⚙", "Settings", 26.sp);
 

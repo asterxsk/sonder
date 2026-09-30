@@ -27,6 +27,27 @@ object PixelMotion {
     /** 3–5 frames: the win sparkle, the one authored moment on the block screen. */
     const val WinMillis = 420
 
+    /**
+     * One card landing on the table: the table's deal-in, four stepped frames at
+     * [Steps]. The travel is the card's own 16dp drop, so the block reads as a card
+     * being put down rather than as one being switched on.
+     */
+    const val DealMillis = 200
+
+    /**
+     * Between two cards of the same deal — 90ms is five frames at 60fps, so the cards
+     * of a hand read as dealt in sequence and never as two arriving at once.
+     */
+    const val DealStaggerMillis = 90L
+
+    /**
+     * §18's card flip. The doc's "2 frames" is the pixel-art trope; at 60fps those two
+     * frames are 33ms, which is a card that has already turned over by the time the eye
+     * catches it. Four frames at [Steps] is the same hard-edged turn at a length that
+     * can actually be read as a turn.
+     */
+    const val FlipMillis = 240
+
     /** Frames every interpolation is quantised to. v3's ceiling is 4–5. */
     const val Steps = 4
 

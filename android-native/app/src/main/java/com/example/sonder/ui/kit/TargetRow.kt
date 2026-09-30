@@ -57,6 +57,12 @@ data class TargetRowPending(
  * [pending] is non-null only for the row whose action is counting down; that row swaps
  * both glyphs for one [PixelDelayedButton], so the wait is visible rather than a
  * control that appears to have done nothing.
+ *
+ * [scopeNote] is set only for a target that does not gate the whole app, and it is not
+ * decoration: without it "Instagram is limited" reads as the whole app being blocked, which
+ * is the opposite of what a Reels-only target does, and the user would have no way to tell
+ * the two apart from this list. Null means whole-app and draws nothing, which is the
+ * overwhelming majority of rows.
  */
 @Composable
 fun TargetRow(
@@ -71,6 +77,7 @@ fun TargetRow(
     pending: TargetRowPending? = null,
     iconGlyph: String = "▣",
     iconBitmap: Bitmap? = null,
+    scopeNote: String? = null,
 ) {
     // Wrap once per bitmap: re-wrapping on every recomposition would allocate a fresh
     // ImageBitmap for every visible row.
@@ -127,6 +134,13 @@ fun TargetRow(
                 style = MonoTypeScale.PackageId,
                 color = TextSoft,
             )
+            if (scopeNote != null) {
+                androidx.compose.material3.Text(
+                    text = scopeNote,
+                    style = MonoTypeScale.Metadata,
+                    color = PixelPalette.Primary,
+                )
+            }
         }
         if (pending != null) {
             PixelDelayedButton(

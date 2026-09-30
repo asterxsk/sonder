@@ -5,6 +5,7 @@ import android.util.Log
 import com.example.sonder.data.db.TargetDao
 import com.example.sonder.data.repo.InstalledApp
 import com.example.sonder.data.repo.InstalledAppsRepository
+import com.example.sonder.domain.BlockScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -22,6 +23,12 @@ data class TargetPickUi(
     val label: String,
     val enabled: Boolean,
     val icon: Bitmap? = null,
+    /**
+     * How much of this app a target for it would gate. Defaulted rather than required for
+     * the picker's rows, which describe a choice about to be made and have no stored scope
+     * to report — the default is also the scope every app has unless it is catalogued.
+     */
+    val blockScope: BlockScope = BlockScope.WHOLE_APP,
 )
 
 /**
@@ -55,12 +62,23 @@ class TargetsListSource(
                 failed -> TargetsListState.Failed
                 apps == null -> TargetsListState.Loading
                 else -> {
-                    // mergeTargetPicks owns label and enabled only; the icon is attached
-                    // here by package name, where apps are already distinct by package.
+                    // mergeTargetPicks owns label and enabled only; the icon and the stored
+                    // scope are attached here by package name, where apps are already
+                    // distinct by package. A package with no row reads as the default scope,
+                    // which is what an un-added app is.
                     val iconsByPackage = apps.associate { it.packageName to it.icon }
+                    val scopeByPackage = targets.associate {
+                        it.packageName to BlockScope.fromStored(it.blockScope)
+                    }
                     TargetsListState.Loaded(
                         mergeTargetPicks(apps, targets.associate { it.packageName to it.enabled })
-                            .map { pick -> pick.copy(icon = iconsByPackage[pick.packageName]) },
+                            .map { pick ->
+                                pick.copy(
+                                    icon = iconsByPackage[pick.packageName],
+                                    blockScope = scopeByPackage[pick.packageName]
+                                        ?: BlockScope.WHOLE_APP,
+                                )
+                            },
                     )
                 }
             }

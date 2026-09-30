@@ -147,12 +147,101 @@ class GateDeciderTest {
         )
     }
 
+    @Test
+    fun `a shorts-scoped target passes anywhere that is not the short-form surface`() {
+        // The whole point of the scope: the app is a target, but the feed is not a gate.
+        assertEquals(
+            GateDecision.PASS,
+            decide(
+                targetEnabled = true,
+                grant = null,
+                lockout = null,
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a shorts-scoped target gates on its short-form surface`() {
+        assertEquals(
+            GateDecision.GATE,
+            decide(
+                targetEnabled = true,
+                grant = null,
+                lockout = null,
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a scoped-surface pass outranks a live grant`() {
+        // Not the same thing as revoking: the grant is untouched and still runs out its
+        // clock. It simply has nothing to authorise on a screen this target does not gate,
+        // so a grant spent on the feed cannot be what lets Reels open later.
+        assertEquals(
+            GateDecision.PASS,
+            decide(
+                targetEnabled = true,
+                grant = grant(),
+                lockout = null,
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a scoped-surface pass outranks a lockout`() {
+        // The debt was earned in Reels and applies to Reels — the feed is not where the
+        // user pays it, and stranding the blocker over the feed would be the punishment
+        // landing on the wrong screen.
+        assertEquals(
+            GateDecision.PASS,
+            decide(
+                targetEnabled = true,
+                grant = null,
+                lockout = lockout(),
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a whole-app target ignores the surface probe`() {
+        // scopedSurfacePresent is meaningless for WHOLE_APP, and the default is what every
+        // caller without a probe gets: passing false there must not become a free pass.
+        assertEquals(
+            GateDecision.GATE,
+            decide(targetEnabled = true, grant = null, lockout = null, scopedSurfacePresent = false),
+        )
+    }
+
+    @Test
+    fun `a disabled shorts target still passes before the scope is consulted`() {
+        assertEquals(
+            GateDecision.PASS,
+            decide(
+                targetEnabled = false,
+                grant = null,
+                lockout = null,
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = true,
+            ),
+        )
+    }
+
     private fun decide(
         targetEnabled: Boolean,
         grant: GrantSnapshot?,
         lockout: LockoutSnapshot?,
         debtAtCap: Boolean = false,
         absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        blockScope: BlockScope = BlockScope.WHOLE_APP,
+        scopedSurfacePresent: Boolean = true,
     ): GateDecision = GateDecider.decide(
         targetEnabled = targetEnabled,
         grant = grant,
@@ -160,5 +249,7 @@ class GateDeciderTest {
         nowMillis = t0,
         debtAtCap = debtAtCap,
         absenceRevokeMillis = absenceRevokeMillis,
+        blockScope = blockScope,
+        scopedSurfacePresent = scopedSurfacePresent,
     )
 }

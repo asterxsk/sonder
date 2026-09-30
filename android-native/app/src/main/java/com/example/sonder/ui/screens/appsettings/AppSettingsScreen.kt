@@ -1,5 +1,6 @@
 package com.example.sonder.ui.screens.appsettings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,19 +15,27 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.sonder.domain.BlockScope
+import com.example.sonder.domain.ShortsCatalog
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
+import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
+import com.example.sonder.ui.kit.PixelConfirmDialog
 import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTabs
 import java.util.Locale
 
@@ -35,6 +44,12 @@ import java.util.Locale
  * of presets — over its inherited values, plus a read-only view of the daily cap in use.
  * The label and package id head the screen; BACK returns to the Targets list, and system
  * back is the same move via the nav host.
+ *
+ * Every control here edits a draft. Nothing reaches the app until SAVE, which is what makes
+ * "applied" something the screen can actually tell the user: the badge reads UNSAVED while
+ * there is a difference and SAVED once a write has landed. Leaving with a pending draft
+ * asks first, on both the button and system back — a save step that silently discards on
+ * exit would be worse than the live writes it replaced.
  */
 @Composable
 fun AppSettingsScreen(
@@ -48,6 +63,14 @@ fun AppSettingsScreen(
     val rules = ui.rules
     val overrides = ui.overrides
 
+    var confirmingExit by remember { mutableStateOf(false) }
+    val requestExit = {
+        if (ui.dirty) confirmingExit = true else onBack()
+    }
+    // System back has to reach the same question as the button, or the guard is a decoration.
+    // Disabled while the draft is clean, so back stays the plain navigation it has always been.
+    BackHandler(enabled = ui.dirty) { confirmingExit = true }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -58,16 +81,29 @@ fun AppSettingsScreen(
         PixelButton(
             text = "‹ TARGETS",
             style = PixelButtonStyle.SECONDARY,
-            onClick = onBack,
+            onClick = requestExit,
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
-        androidx.compose.material3.Text(
-            ui.label ?: packageName,
-            style = PixelTypeScale.ScreenTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Primary,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Text(
+                ui.label ?: packageName,
+                style = PixelTypeScale.ScreenTitle,
+                fontFamily = PixelFont,
+                color = PixelPalette.Primary,
+                modifier = Modifier.weight(1f),
+            )
+            when {
+                ui.dirty -> PixelStatusBadge(
+                    tone = BadgeTone.COOLDOWN,
+                    labelOverride = "UNSAVED",
+                )
+                ui.saved -> PixelStatusBadge(
+                    tone = BadgeTone.GRANTED,
+                    labelOverride = "SAVED",
+                )
+            }
+        }
         androidx.compose.material3.Text(
             packageName,
             style = MonoTypeScale.PackageId,
@@ -77,6 +113,16 @@ fun AppSettingsScreen(
 
         PixelPanel(modifier = Modifier.fillMaxWidth()) {
             Column {
+                // Shown only for an app with a known short-form surface. On any other app a
+                // REELS & SHORTS option could never fire, so offering it would be a setting
+                // that lies about what it does.
+                if (ShortsCatalog.isCatalogued(packageName)) {
+                    ScopeControl(
+                        current = ui.blockScope,
+                        onSelect = viewModel::setBlockScope,
+                    )
+                    Spacer(Modifier.height(PixelSpace.Base))
+                }
                 Knob(
                     title = "ACCESS PER WIN",
                     presets = WinGrantPresets,
@@ -121,10 +167,71 @@ fun AppSettingsScreen(
             }
         }
 
+        Spacer(Modifier.height(PixelSpace.Base))
+        // Disabled while there is nothing to write, so the button's own state says whether
+        // the screen holds unpublished edits — the badge says it in words, this says it in
+        // the one control the user would reach for.
+        PixelButton(
+            text = "SAVE",
+            style = PixelButtonStyle.PRIMARY,
+            enabled = ui.dirty,
+            onClick = viewModel::save,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Spacer(Modifier.height(PixelSpace.Section))
         TodayLine(ui)
         Spacer(Modifier.height(PixelSpace.Edge))
     }
+
+    if (confirmingExit) {
+        PixelConfirmDialog(
+            title = "Discard changes?",
+            body = "Your edits to this app's rule are not saved yet. Leaving now keeps the " +
+                "rule as it was.",
+            confirmText = "DISCARD",
+            onConfirm = {
+                confirmingExit = false
+                onBack()
+            },
+            onDismiss = { confirmingExit = false },
+        )
+    }
+}
+
+/**
+ * The scope control: what part of the app a target gates. Deliberately not a [Knob] — those
+ * select among durations over an inherited default, and this is a choice between two kinds
+ * of target with no default to fall back to. The description under it is the part that
+ * matters: "WHOLE APP" and "REELS & SHORTS" are not a severity dial, and the difference
+ * between blocking an app and blocking one screen inside it has to be legible before the
+ * user picks one.
+ */
+@Composable
+private fun ScopeControl(current: BlockScope, onSelect: (BlockScope) -> Unit) {
+    val options = listOf(BlockScope.WHOLE_APP, BlockScope.SHORTS_ONLY)
+    androidx.compose.material3.Text(
+        "WHAT IS BLOCKED",
+        style = PixelTypeScale.SectionTitle,
+        fontFamily = PixelFont,
+        color = PixelPalette.Text,
+    )
+    Spacer(Modifier.height(PixelSpace.Snug))
+    PixelTabs(
+        tabs = listOf("WHOLE APP", "REELS & SHORTS"),
+        selected = options.indexOf(current).coerceAtLeast(0),
+        onSelect = { index -> onSelect(options[index]) },
+    )
+    Spacer(Modifier.height(PixelSpace.Snug))
+    androidx.compose.material3.Text(
+        when (current) {
+            BlockScope.WHOLE_APP -> "The whole app is gated. Every screen needs a won hand."
+            BlockScope.SHORTS_ONLY ->
+                "Only Reels and Shorts are gated. The rest of the app stays open."
+        },
+        style = MonoTypeScale.Metadata,
+        color = TextSoft,
+    )
 }
 
 /**
@@ -142,6 +249,18 @@ private fun Knob(
     custom: Boolean,
     onSelect: (Long?) -> Unit,
 ) {
+    // A stored value that matches no preset lights no segment: indexOfFirst returns -1, and
+    // a row with nothing lit reads as broken rather than as custom. That case is reachable
+    // whenever the value in force is not one of the offered ones — an override written
+    // before the presets changed, or a debug build's shortened default.
+    //
+    // It used to get a lit segment of its own, appended to the row. Six segments do not fit
+    // the panel: the row is equal-weight, so adding one took each segment from 180px to
+    // 150px and the labels wrapped to two lines ("2:0 / 0", "DEFAU / LT"). The readout
+    // belongs in the status column instead, where it was already saying CUSTOM or DEFAULT
+    // and only had to be extended to say *what*.
+    val matched = presets.indexOfFirst { it.value == current }
+    val status = if (custom) "CUSTOM" else "DEFAULT"
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -154,30 +273,17 @@ private fun Knob(
             color = PixelPalette.Text,
         )
         androidx.compose.material3.Text(
-            if (custom) "CUSTOM" else "DEFAULT",
+            if (matched >= 0) status else "$status ${formatDuration(current ?: 0L)}",
             style = PixelTypeScale.Badge,
             fontFamily = PixelFont,
             color = if (custom) PixelPalette.Primary else PixelPalette.Muted,
         )
     }
     Spacer(Modifier.height(PixelSpace.Snug))
-    // A stored value that matches no preset used to select nothing: indexOfFirst returned
-    // -1, and a segmented row with no segment lit reads as broken rather than as custom.
-    // That case is reachable whenever the value in force is not one of the offered ones —
-    // an override written before the presets changed, or a debug build's shortened default.
-    // It gets its own lit segment, labelled with the truth: CUSTOM or DEFAULT.
-    val matched = presets.indexOfFirst { it.value == current }
-    val labels = if (matched >= 0) {
-        presets.map { it.label }
-    } else {
-        presets.map { it.label } + if (custom) "CUSTOM" else "DEFAULT"
-    }
     PixelTabs(
-        tabs = labels,
-        selected = if (matched >= 0) matched else presets.size,
-        // The extra segment is a readout, not a control: there is no preset value behind
-        // it to write, so selecting it changes nothing.
-        onSelect = { index -> if (index < presets.size) onSelect(presets[index].value) },
+        tabs = presets.map { it.label },
+        selected = matched,
+        onSelect = { index -> onSelect(presets[index].value) },
     )
 }
 
