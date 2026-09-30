@@ -20,7 +20,7 @@ class GateDeciderTest {
         lastSeen: Long = t0,
     ) = GrantSnapshot(pkg, endAt, lastSeen)
 
-    private fun lockout(until: Long = t0 + 30_000L) = LockoutSnapshot(pkg, until, 0L)
+    private fun lockout(until: Long = t0 + 30_000L) = LockoutSnapshot(pkg, until)
 
     @Test
     fun `non-target packages always pass`() {
@@ -130,16 +130,35 @@ class GateDeciderTest {
         )
     }
 
+    @Test
+    fun `the per-app absence window is the one the decision uses`() {
+        // Seen 30 seconds ago: outside a 10-second override, comfortably inside the 60-second
+        // default. The override is what the live gate has to honour — resolving it anywhere
+        // else meant a per-app setting changed one answer and not the one that blocks.
+        val seen = grant(lastSeen = t0 - 30_000L)
+
+        assertEquals(
+            GateDecision.REVOKE,
+            decide(targetEnabled = true, grant = seen, lockout = null, absenceRevokeMillis = 10_000L),
+        )
+        assertEquals(
+            GateDecision.GRANTED,
+            decide(targetEnabled = true, grant = seen, lockout = null, absenceRevokeMillis = 60_000L),
+        )
+    }
+
     private fun decide(
         targetEnabled: Boolean,
         grant: GrantSnapshot?,
         lockout: LockoutSnapshot?,
         debtAtCap: Boolean = false,
+        absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
     ): GateDecision = GateDecider.decide(
         targetEnabled = targetEnabled,
         grant = grant,
         lockout = lockout,
         nowMillis = t0,
         debtAtCap = debtAtCap,
+        absenceRevokeMillis = absenceRevokeMillis,
     )
 }

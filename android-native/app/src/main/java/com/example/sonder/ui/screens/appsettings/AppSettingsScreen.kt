@@ -161,10 +161,23 @@ private fun Knob(
         )
     }
     Spacer(Modifier.height(PixelSpace.Snug))
+    // A stored value that matches no preset used to select nothing: indexOfFirst returned
+    // -1, and a segmented row with no segment lit reads as broken rather than as custom.
+    // That case is reachable whenever the value in force is not one of the offered ones —
+    // an override written before the presets changed, or a debug build's shortened default.
+    // It gets its own lit segment, labelled with the truth: CUSTOM or DEFAULT.
+    val matched = presets.indexOfFirst { it.value == current }
+    val labels = if (matched >= 0) {
+        presets.map { it.label }
+    } else {
+        presets.map { it.label } + if (custom) "CUSTOM" else "DEFAULT"
+    }
     PixelTabs(
-        tabs = presets.map { it.label },
-        selected = presets.indexOfFirst { it.value == current },
-        onSelect = { index -> onSelect(presets[index].value) },
+        tabs = labels,
+        selected = if (matched >= 0) matched else presets.size,
+        // The extra segment is a readout, not a control: there is no preset value behind
+        // it to write, so selecting it changes nothing.
+        onSelect = { index -> if (index < presets.size) onSelect(presets[index].value) },
     )
 }
 

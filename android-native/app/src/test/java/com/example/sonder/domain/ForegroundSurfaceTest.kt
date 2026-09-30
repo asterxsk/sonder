@@ -12,8 +12,8 @@ class ForegroundSurfaceTest {
 
     private val own = "com.example.sonder"
 
-    private fun classify(pkg: String, className: String? = null) =
-        ForegroundSurface.classify(pkg, own, className)
+    private fun classify(pkg: String, className: String? = null, isTarget: Boolean = false) =
+        ForegroundSurface.classify(pkg, own, className, isTarget)
 
     @Test
     fun `the detox app is OWN when one of its Activities opens`() {
@@ -75,5 +75,26 @@ class ForegroundSurfaceTest {
     @Test
     fun `the quick search box is HOME not an app`() {
         assertEquals(HOME, classify("com.google.android.googlequicksearchbox"))
+    }
+
+    @Test
+    fun `an enabled target is never exempted by the launcher or keyboard hints`() {
+        // The hints are substring matches on package names, and a user can install an app
+        // called anything. Without the target check first, "com.example.launcher" or
+        // "com.example.keyboard" classified as HOME/TRANSIENT and was released without the
+        // gate ever being raised — a target that silently does not work.
+        assertEquals(APP, classify("com.example.launcher", isTarget = true))
+        assertEquals(APP, classify("com.example.keyboard", isTarget = true))
+        assertEquals(APP, classify("com.android.launcher3", isTarget = true))
+        assertEquals(APP, classify("com.android.inputmethod.latin", isTarget = true))
+        assertEquals(APP, classify("android", isTarget = true))
+    }
+
+    @Test
+    fun `the hints still apply to a package that is not a target`() {
+        // The exemption is for the target check alone; an ordinary app named like a
+        // launcher is still classified by the hints.
+        assertEquals(HOME, classify("com.example.launcher", isTarget = false))
+        assertEquals(TRANSIENT, classify("com.example.keyboard", isTarget = false))
     }
 }

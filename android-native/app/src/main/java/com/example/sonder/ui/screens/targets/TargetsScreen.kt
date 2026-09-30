@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -17,6 +18,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,18 +64,27 @@ fun TargetsScreen(
 ) {
     val view by viewModel.ui.collectAsStateWithLifecycle()
 
-    var pending by remember { mutableStateOf<PendingTargetAction?>(null) }
+    var pending by rememberSaveable(stateSaver = PendingTargetActionSaver) {
+        mutableStateOf<PendingTargetAction?>(null)
+    }
 
     /** The package whose removal wait was served and is now waiting on a second answer. */
-    var confirming by remember { mutableStateOf<String?>(null) }
+    var confirming by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Backgrounding cancels: a wait is only meant to survive while the user is looking
     // at the screen and can still tap the strip to back out. Nav3 dropping this entry
     // from composition handles "navigating away" instead, by cancelling the effect below.
+    //
+    // A configuration change is not backgrounding, though — ON_PAUSE fires for it too, and
+    // clearing here would wipe the very state rememberSaveable just restored, which is how
+    // rotating the device used to kill a running hold.
+    val activity = LocalActivity.current
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) pending = null
+            if (event == Lifecycle.Event.ON_PAUSE && activity?.isChangingConfigurations != true) {
+                pending = null
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -113,15 +125,27 @@ fun TargetsScreen(
 
     // A tap on a control starts its wait; a tap on the same control again — the glyph,
     // or the strip that replaced it — cancels. Any other request replaces the first.
-    val onRequest: (String, TargetActionKind) -> Unit = { packageName, kind ->
-        val current = pending
-        pending = if (
-            current != null && current.packageName == packageName && current.kind == kind
-        ) {
-            null
-        } else {
-            startPendingAction(packageName, kind)
+    // Remembered so the row callbacks below — and through them every row's own
+    // buttons — keep one identity across recompositions. Only a write to `pending`
+    // happens in here, and that state object outlives any recomposition, so a
+    // remembered instance can never act on a stale read.
+    val onRequest: (String, TargetActionKind) -> Unit = remember {
+        { packageName, kind ->
+            val current = pending
+            pending = if (
+                current != null && current.packageName == packageName && current.kind == kind
+            ) {
+                null
+            } else {
+                startPendingAction(packageName, kind)
+            }
         }
+    }
+    val onEdit: (String) -> Unit = remember(onRequest) {
+        { packageName -> onRequest(packageName, TargetActionKind.EDIT) }
+    }
+    val onRemove: (String) -> Unit = remember(onRequest) {
+        { packageName -> onRequest(packageName, TargetActionKind.REMOVE) }
     }
 
     // The list and the removal question occupy the same ground: the panel replaces the
@@ -178,8 +202,8 @@ fun TargetsScreen(
                             TargetRow(
                                 appName = pick.label,
                                 packageName = pick.packageName,
-                                onEdit = { onRequest(pick.packageName, TargetActionKind.EDIT) },
-                                onRemove = { onRequest(pick.packageName, TargetActionKind.REMOVE) },
+                                onEdit = onEdit,
+                                onRemove = onRemove,
                                 pending = pending
                                     ?.takeIf { it.packageName == pick.packageName }
                                     ?.let { rowPending(it, pick.label, onRequest) },
@@ -222,6 +246,27 @@ fun TargetsScreen(
         }
     }
 }
+
+/**
+ * The running hold, as three Bundle-able values. Saving the data class directly is not
+ * possible — a package name, an enum and a remaining-millis are not a Parcelable — and a
+ * hold that vanishes on rotation reads as the app forgetting a decision the user is
+ * partway through making. The remaining time is saved as-is rather than as a deadline, so
+ * a restore can only keep counting down, never jump.
+ */
+private val PendingTargetActionSaver: Saver<PendingTargetAction?, Any> = Saver(
+    save = { action ->
+        action?.let { listOf(it.packageName, it.kind.name, it.remainingMillis) }
+    },
+    restore = { saved ->
+        val parts = saved as List<*>
+        PendingTargetAction(
+            packageName = parts[0] as String,
+            kind = TargetActionKind.valueOf(parts[1] as String),
+            remainingMillis = parts[2] as Long,
+        )
+    },
+)
 
 /**
  * The row's view of a running countdown, kept here rather than in the kit so the row

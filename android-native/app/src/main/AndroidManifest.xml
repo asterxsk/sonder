@@ -9,8 +9,6 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <!-- Launchable app enumeration for the Targets picker (API 30+ visibility). -->
     <queries>
@@ -23,6 +21,8 @@
     <application
         android:name=".SonderApp"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -65,12 +65,14 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Re-sweep expired grants/lockouts after reboot. -->
+        <!-- Re-sweep expired grants/lockouts after a reboot, and re-arm the expiry alarms
+             that a reboot or an app update takes away with it. -->
         <receiver
             android:name=".platform.scheduling.BootReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

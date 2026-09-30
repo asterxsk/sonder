@@ -48,7 +48,7 @@ class HomeViewModel @Inject constructor(
                 targets = targets,
                 grants = grants.map { GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis) },
                 lockouts = lockouts.map {
-                    LockoutSnapshot(it.packageName, it.untilMillis, 0L, it.reason)
+                    LockoutSnapshot(it.packageName, it.untilMillis, it.reason)
                 },
                 nowMillis = nowMillis,
             )

@@ -89,12 +89,19 @@ object AccessPolicy {
     /** Lockout end when the user walks away carrying debt. */
     fun lockoutUntil(debtMillis: Long, nowMillis: Long): Long = nowMillis + debtMillis
 
-    /** True if a fresh window event shows the user returned after too long an absence. */
+    /**
+     * True if a fresh window event shows the user returned after too long an absence.
+     *
+     * Takes the window rather than the whole [AccessRules]: every caller has already
+     * resolved which rules apply, and a defaulting `AccessRules()` parameter is how the live
+     * gate ended up enforcing the global 60 seconds while the purge path enforced the app's
+     * own override.
+     */
     fun shouldRevokeForAbsence(
         grant: GrantSnapshot,
         nowMillis: Long,
-        rules: AccessRules = AccessRules(),
-    ): Boolean = nowMillis - grant.lastSeenMillis > rules.absenceRevokeMillis
+        absenceRevokeMillis: Long = ABSENCE_REVOKE_MILLIS,
+    ): Boolean = nowMillis - grant.lastSeenMillis > absenceRevokeMillis
 
     /** Epoch millis of the next local midnight after [nowMillis]. */
     fun nextLocalMidnight(nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long =
@@ -109,9 +116,16 @@ object AccessPolicy {
     /** True if a grant is still valid at [nowMillis]. */
     fun isGrantActive(grant: GrantSnapshot, nowMillis: Long): Boolean = grant.endAtMillis > nowMillis
 
-    /** True if the user may open the blackjack table for the target right now. */
-    fun canPlay(lockout: LockoutSnapshot?, nowMillis: Long): Boolean =
-        lockout == null || lockout.untilMillis <= nowMillis
+    /**
+     * True if the user may open the blackjack table for the target right now.
+     *
+     * [debtAtCap] closes the table without a lockout row in the way, exactly as
+     * [GateDecider] does: at the ceiling the wait is what serves the debt, so offering a
+     * hand there would be an unbounded session. Leaving it out made this answer "yes" for a
+     * package the gate was simultaneously refusing.
+     */
+    fun canPlay(lockout: LockoutSnapshot?, nowMillis: Long, debtAtCap: Boolean = false): Boolean =
+        !debtAtCap && (lockout == null || lockout.untilMillis <= nowMillis)
 
     /**
      * True once debt has reached the ceiling the app allows.
@@ -126,17 +140,26 @@ object AccessPolicy {
     fun isDebtAtCap(debtMillis: Long, maxDebtMillis: Long = MAX_DEBT_MILLIS): Boolean =
         debtMillis >= maxDebtMillis
 
-    /** Overall enforcement state for a target at a moment in time. */
+    /**
+     * Overall enforcement state for a target at a moment in time.
+     *
+     * [debtAtCap] reports the one lockout that does not need a lockout row: at the ceiling
+     * the debt itself is the wait. Without it a package whose lockout row had already been
+     * swept read IDLE here while [GateDecider] was locking it — the UI and the blocker
+     * telling the user two different things about the same app.
+     */
     fun stateFor(
         packageName: String,
         enabled: Boolean,
         grant: GrantSnapshot?,
         lockout: LockoutSnapshot?,
         nowMillis: Long,
+        debtAtCap: Boolean = false,
     ): EnforcementState = when {
         !enabled -> EnforcementState.DISABLED
         grant != null && isGrantActive(grant, nowMillis) -> EnforcementState.GRANTED
         lockout != null && lockout.untilMillis > nowMillis -> EnforcementState.LOCKED
+        debtAtCap -> EnforcementState.LOCKED
         else -> EnforcementState.IDLE
     }
 }

@@ -13,7 +13,10 @@ import androidx.room.RoomDatabase
         DailyUsageEntity::class,
     ],
     version = 2,
-    exportSchema = false,
+    // The schema is exported so the hand-written MIGRATION_1_2 has a checked reference:
+    // without it, a column added to the DDL but not to the migration compiles, passes every
+    // test, and only fails on a device upgrading from v1.
+    exportSchema = true,
 )
 abstract class SonderDatabase : RoomDatabase() {
     abstract fun targetDao(): TargetDao

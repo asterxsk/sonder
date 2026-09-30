@@ -1,7 +1,5 @@
 package com.example.sonder.ui.gate
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,11 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.example.sonder.domain.model.HandOutcome
+import kotlinx.coroutines.delay
 import com.example.sonder.domain.model.Rank
 import com.example.sonder.domain.model.Suit
 import com.example.sonder.theme.MonoTypeScale
@@ -47,13 +51,29 @@ import com.example.sonder.ui.kit.TimerTone
 fun GateContent(
     label: String,
     state: TableState,
-    lockoutRemainingMillis: Long,
+    /** Epoch millis this lockout ends at, or 0 when the blocker is showing the table. */
+    lockoutUntilMillis: Long,
     onDeal: () -> Unit,
     onHit: () -> Unit,
     onStand: () -> Unit,
     onAccessGranted: () -> Unit,
     onPlayAgain: () -> Unit,
 ) {
+    // A lockout is a countdown, so the panel needs a clock of its own: the blocker window
+    // is composed once and the coordinator only re-decides when the deadline passes, so a
+    // remaining-time value captured at compose time would sit frozen for the whole wait —
+    // the panel said "TIME LEFT ON THIS LOCKOUT" and then never moved.
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(lockoutUntilMillis) {
+        if (lockoutUntilMillis <= 0L) return@LaunchedEffect
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            if (lockoutUntilMillis <= nowMillis) break
+            delay(1_000)
+        }
+    }
+    val lockoutRemainingMillis = (lockoutUntilMillis - nowMillis).coerceAtLeast(0L)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -141,9 +161,11 @@ private fun BlackjackBlocker(
     onAccessGranted: () -> Unit,
     onPlayAgain: () -> Unit,
 ) {
-    // §14 status badge row
+    // §14 status badge row. The badge keys off whether access was actually granted, not
+    // off "won with no debt": a win with a spent daily cap grants nothing, and "GRANTED"
+    // over a gate the coordinator is about to raise again is a lie.
     when {
-        state.showResult && state.lastOutcome == HandOutcome.WIN ->
+        state.showResult && state.lastHandGranted ->
             PixelStatusBadge(BadgeTone.GRANTED)
         state.debtMinutes > 0 ->
             PixelStatusBadge(BadgeTone.COOLDOWN, labelOverride = "DEBT ${state.debtMinutes} MIN")
@@ -267,7 +289,9 @@ private fun BlackjackBlocker(
         }
 
         TableState.Phase.RESOLVED -> {
-            val won = state.lastOutcome == HandOutcome.WIN && state.debtMinutes == 0L
+            // Same test as the badge, and for the same reason: only a hand that actually
+            // granted access may offer CONTINUE, or the user is sent back to a blocked app.
+            val won = state.lastHandGranted
             PixelButton(
                 text = if (won) "CONTINUE →" else "PLAY AGAIN",
                 onClick = { if (won) onAccessGranted() else onPlayAgain() },
@@ -318,11 +342,6 @@ internal fun formatRemaining(millis: Long): String {
  *  have their own line and never clip out of the card frame. */
 @Composable
 fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
-    val rotation by animateFloatAsState(
-        targetValue = if (faceDown) 0f else 1f,
-        animationSpec = snap(), // discrete flip, no spring
-        label = "cardFlip",
-    )
     val suitColor =
         if (suit == Suit.HEARTS || suit == Suit.DIAMONDS) PixelPalette.Danger else PixelPalette.CardInk
     Box(
@@ -330,7 +349,13 @@ fun PlayingCard(card: Rank, suit: Suit, faceDown: Boolean) {
             .size(width = 52.dp, height = 74.dp)
             .padding(2.dp)
             .background(if (faceDown) PixelPalette.Primary else PixelPalette.CardFace)
-            .border(2.dp, if (faceDown) PixelPalette.PrimaryDark else PixelPalette.CardInk),
+            .border(2.dp, if (faceDown) PixelPalette.PrimaryDark else PixelPalette.CardInk)
+            // Without this, TalkBack reads a face-down card as the placeholder it is drawn
+            // with — literally "two of spades" — rather than as the card back it depicts.
+            .semantics {
+                contentDescription =
+                    if (faceDown) "Face-down card" else "${card.display} of ${suitName(suit)}"
+            },
         contentAlignment = Alignment.Center,
     ) {
         if (!faceDown) {
@@ -377,4 +402,12 @@ private fun suitGlyph(suit: Suit): String = when (suit) {
     Suit.HEARTS -> "♥"
     Suit.DIAMONDS -> "♦"
     Suit.CLUBS -> "♣"
+}
+
+/** Spoken form of a suit, for screen readers. */
+private fun suitName(suit: Suit): String = when (suit) {
+    Suit.SPADES -> "spades"
+    Suit.HEARTS -> "hearts"
+    Suit.DIAMONDS -> "diamonds"
+    Suit.CLUBS -> "clubs"
 }

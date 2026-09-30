@@ -32,8 +32,9 @@ class StatsViewModel @Inject constructor(
     val state: StateFlow<StatsUiState> =
         combine(
             handDao.observeRecent(50),
-            handDao.observeWinCount(),
-            handDao.observeLossCount(),
-        ) { hands, wins, losses -> StatsUiState(wins, losses, hands, loaded = true) }
+            // Both counts from one scan; two COUNT flows over the same table meant two
+            // passes and two emissions for every hand played.
+            handDao.observeTally(),
+        ) { hands, tally -> StatsUiState(tally.wins, tally.losses, hands, loaded = true) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsUiState())
 }

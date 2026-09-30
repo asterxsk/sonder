@@ -1,5 +1,6 @@
 package com.example.sonder.ui.screens.onboarding
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -71,8 +72,16 @@ fun OnboardingScreen(
 
     // The wizard hands off to Settings and comes back on its own; if it leaves the
     // screen for good, stop watching so a completed grant cannot resurrect it later.
+    //
+    // A configuration change is not leaving: this screen is disposed and rebuilt, and
+    // cancelling here killed the watcher that is supposed to raise the app again when
+    // the user returns from Settings — they would come back to a wizard that never
+    // noticed the grant. The handoff outlives the composition on purpose.
+    val activity = LocalActivity.current
     DisposableEffect(Unit) {
-        onDispose { PermissionHandoff.cancel() }
+        onDispose {
+            if (activity?.isChangingConfigurations != true) PermissionHandoff.cancel()
+        }
     }
 
     val allGranted = missing.isEmpty()

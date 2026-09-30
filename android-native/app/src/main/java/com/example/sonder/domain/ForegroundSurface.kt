@@ -78,17 +78,26 @@ enum class ForegroundSurface {
          *   Needed to tell our own *activities* (the detox app itself, which must
          *   release the blocker) from our own *overlay window* (the blocker, whose
          *   window-state event must never dismiss itself).
+         * @param isTarget whether the user has this package selected as an enabled target.
+         *   Answered by the caller because it is not a property of the name, and it is
+         *   what keeps the hint lists below from being a way *out* of the gate: the HOME
+         *   and IME hints are substring matches over package names the user can install,
+         *   so a target called `com.example.keyboard` or `org.launcher.pro` — or an OEM
+         *   launcher someone deliberately gated — would otherwise be exempt from
+         *   enforcement for good. A gate the user asked for outranks a heuristic.
          */
         fun classify(
             pkg: String,
             ownPackage: String,
             className: String? = null,
+            isTarget: Boolean = false,
         ): ForegroundSurface = when {
             // Our own package: only our Activities count as "the detox app opened".
             // Our overlay window reports a non-app class name, so its own event
             // falls through to TRANSIENT and never tears the blocker down.
             pkg == ownPackage && className != null && className.startsWith(ownPackage) -> OWN
             pkg == ownPackage -> TRANSIENT
+            isTarget -> APP
             pkg in TRANSIENT_PACKAGES || isIme(pkg) -> TRANSIENT
             pkg in HOME_PACKAGES || HOME_HINTS.any { pkg.contains(it, ignoreCase = true) } -> HOME
             else -> APP

@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
+   Data-extraction rules for API 31 and above (android:dataExtractionRules).
    See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+
+   Same reasoning as backup_rules.xml, for both transports: cloud backup and device-to-device
+   transfer. Grants, debt and lockouts are absolute-epoch timers rather than settings, so a
+   copy that lands on another device at another time either hands out free access or hands
+   out a lockout nobody earned.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="datastore/" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="datastore/" />
     </device-transfer>
-    -->
 </data-extraction-rules>

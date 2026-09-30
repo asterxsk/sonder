@@ -25,6 +25,11 @@ data class GrantEntity(
     val endAtMillis: Long,
     /** Last time the accessibility service saw this package in the foreground. */
     val lastSeenMillis: Long,
+    /**
+     * Unused. Nothing writes it — a revoked grant is deleted, so there is no row left to
+     * carry a reason. Left in the schema rather than dropped, because removing a column
+     * needs a table rebuild migration and it buys nothing.
+     */
     val revokedReason: String? = null,
 )
 

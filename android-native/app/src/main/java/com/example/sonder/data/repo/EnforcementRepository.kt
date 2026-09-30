@@ -10,8 +10,10 @@ import com.example.sonder.data.db.HandDao
 import com.example.sonder.data.db.HandEntity
 import com.example.sonder.data.db.LockoutDao
 import com.example.sonder.data.db.LockoutEntity
+import com.example.sonder.data.db.SonderDatabase
 import com.example.sonder.data.db.TargetDao
 import com.example.sonder.data.db.TargetEntity
+import androidx.room.withTransaction
 import com.example.sonder.di.ApplicationScope
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.AccessRules
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.onEach
  */
 @Singleton
 class EnforcementRepository @Inject constructor(
+    private val database: SonderDatabase,
     private val targetDao: TargetDao,
     private val grantDao: GrantDao,
     private val debtDao: DebtDao,
@@ -55,23 +58,55 @@ class EnforcementRepository @Inject constructor(
     private val _grants = MutableStateFlow<Map<String, GrantEntity>>(emptyMap())
     private val _lockouts = MutableStateFlow<Map<String, LockoutEntity>>(emptyMap())
     private val _debts = MutableStateFlow<Map<String, DebtEntity>>(emptyMap())
-    private var cacheStarted = false
+
+    /**
+     * One bit per cache table, set when that table's flow first answers. Every table has to
+     * be in before a decision may be made on the cache: an empty targets map says "not a
+     * target" and an empty grants map says "no grant", and either answer taken too early is
+     * wrong in the direction that lets an app through.
+     *
+     * Read from the accessibility dispatcher and written from the flows' own coroutines, so
+     * it is atomic rather than a plain Boolean.
+     */
+    private val loadedTables = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    private var started = false
+
+    /** True once all four cache tables have answered Room at least once. */
+    fun isCacheReady(): Boolean = loadedTables.get() == ALL_TABLES_LOADED
+
+    private fun markLoaded(table: Int) {
+        loadedTables.updateAndGet { it or (1 shl table) }
+    }
 
     /** Rebuild the cache from Room flows; idempotent, cheap after the first call. */
     fun start() {
-        if (cacheStarted) return
-        cacheStarted = true
+        if (started) return
+        started = true
         targetDao.observeAll()
-            .onEach { rows -> _targets.value = rows.associateBy { it.packageName } }
+            .onEach { rows ->
+                _targets.value = rows.associateBy { it.packageName }
+                markLoaded(TABLE_TARGETS)
+            }
             .launchIn(externalScope)
         grantDao.observeAll()
-            .onEach { rows -> _grants.value = rows.associateBy { it.packageName } }
+            .onEach { rows ->
+                _grants.value = rows.associateBy { it.packageName }
+                markLoaded(TABLE_GRANTS)
+            }
             .launchIn(externalScope)
         lockoutDao.observeAll()
-            .onEach { rows -> _lockouts.value = rows.associateBy { it.packageName } }
+            .onEach { rows ->
+                _lockouts.value = rows.associateBy { it.packageName }
+                markLoaded(TABLE_LOCKOUTS)
+            }
             .launchIn(externalScope)
         debtDao.observeAll()
-            .onEach { rows -> _debts.value = rows.associateBy { it.packageName } }
+            .onEach { rows ->
+                _debts.value = rows.associateBy { it.packageName }
+                markLoaded(TABLE_DEBTS)
+            }
             .launchIn(externalScope)
     }
 
@@ -88,9 +123,24 @@ class EnforcementRepository @Inject constructor(
      * The debt ceiling in force for the package: its override, else the global default.
      * Read from the warm cache rather than [rulesFor], because the gate decision runs on
      * the foreground hot path and must not wait on Room.
+     *
+     * Clamped here as well as on the way in: a row written before the clamp existed (or by a
+     * future caller that bypasses [updateOverrides]) would otherwise make `isDebtAtCap` true
+     * for every value and lock the app out permanently.
      */
     fun cachedMaxDebt(pkg: String): Long =
-        _targets.value[pkg]?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS
+        (_targets.value[pkg]?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS)
+            .coerceAtLeast(MIN_MAX_DEBT_MILLIS)
+
+    /**
+     * The absence window in force for the package: its override, else the build default.
+     *
+     * Cached rather than resolved through [rulesFor] for the same reason as [cachedMaxDebt]:
+     * the live decision path may not wait on Room.
+     */
+    fun cachedAbsenceRevoke(pkg: String): Long =
+        (_targets.value[pkg]?.absenceRevokeMillis ?: RuleDefaults.ABSENCE_REVOKE_MILLIS)
+            .coerceAtLeast(MIN_ABSENCE_REVOKE_MILLIS)
 
     /**
      * The raw per-app overrides as stored: a null field inherits the AccessPolicy default.
@@ -151,13 +201,24 @@ class EnforcementRepository @Inject constructor(
                 createdAtMillis = System.currentTimeMillis(),
             ),
         )
+        // Every override is clamped on the way in. A stored value the policy cannot work
+        // with is not a preference, it is a state with no way out — see AccessRules.clamped.
+        // A null field stays null: null means "inherit", and clamping it to a number would
+        // silently turn every untouched knob into a chosen one.
+        val clamped = AccessRules(
+            winGrantMillis = overrides.winGrantMillis ?: RuleDefaults.WIN_GRANT_MILLIS,
+            lossDebtMillis = overrides.lossDebtMillis ?: AccessPolicy.LOSS_DEBT_MILLIS,
+            maxDebtMillis = overrides.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS,
+            absenceRevokeMillis = overrides.absenceRevokeMillis ?: RuleDefaults.ABSENCE_REVOKE_MILLIS,
+            dailyCapMillis = overrides.dailyCapMillis,
+        ).clamped()
         targetDao.setOverrides(
             pkg = packageName,
-            winGrant = overrides.winGrantMillis,
-            lossDebt = overrides.lossDebtMillis,
-            maxDebt = overrides.maxDebtMillis,
-            absenceRevoke = overrides.absenceRevokeMillis,
-            dailyCap = overrides.dailyCapMillis,
+            winGrant = overrides.winGrantMillis?.let { clamped.winGrantMillis },
+            lossDebt = overrides.lossDebtMillis?.let { clamped.lossDebtMillis },
+            maxDebt = overrides.maxDebtMillis?.let { clamped.maxDebtMillis },
+            absenceRevoke = overrides.absenceRevokeMillis?.let { clamped.absenceRevokeMillis },
+            dailyCap = overrides.dailyCapMillis?.let { clamped.dailyCapMillis },
         )
     }
 
@@ -198,14 +259,24 @@ class EnforcementRepository @Inject constructor(
             targetDao.observeAll(),
             grantDao.observeAll(),
             lockoutDao.observeAll(),
-        ) { targets, grants, lockouts ->
-            val enabled = targets.find { it.packageName == packageName }?.enabled ?: false
+            debtDao.observeAll(),
+        ) { targets, grants, lockouts, debts ->
+            val target = targets.find { it.packageName == packageName }
+            val maxDebt = (target?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS)
+                .coerceAtLeast(MIN_MAX_DEBT_MILLIS)
             AccessPolicy.stateFor(
                 packageName = packageName,
-                enabled = enabled,
+                enabled = target?.enabled ?: false,
                 grant = grants.find { it.packageName == packageName }?.toSnapshot(),
                 lockout = lockouts.find { it.packageName == packageName }?.toSnapshot(),
                 nowMillis = System.currentTimeMillis(),
+                // Debt at the ceiling is a lockout with no row behind it, so the state has
+                // to be told about the debt too or it reports IDLE for an app the gate is
+                // refusing to open.
+                debtAtCap = AccessPolicy.isDebtAtCap(
+                    debtMillis = debts.find { it.packageName == packageName }?.debtMillis ?: 0L,
+                    maxDebtMillis = maxDebt,
+                ),
             )
         }
 
@@ -231,14 +302,18 @@ class EnforcementRepository @Inject constructor(
     suspend fun serveDebtIfLockoutElapsed(
         packageName: String,
         nowMillis: Long = System.currentTimeMillis(),
-    ): Boolean {
-        val lockout = lockoutDao.get(packageName) ?: return false
+    ): Boolean = database.withTransaction {
+        val lockout = lockoutDao.get(packageName) ?: return@withTransaction false
         // A row written before reasons existed can only ever have been a debt lockout.
-        if ((lockout.reason ?: LOCKOUT_REASON_DEBT) != LOCKOUT_REASON_DEBT) return false
-        if (lockout.untilMillis > nowMillis) return false
+        if ((lockout.reason ?: LOCKOUT_REASON_DEBT) != LOCKOUT_REASON_DEBT) {
+            return@withTransaction false
+        }
+        if (lockout.untilMillis > nowMillis) return@withTransaction false
+        // Both rows or neither: a debt left behind without its lockout is the state the
+        // class doc calls unserved, and at the ceiling that is an app with no way back.
         lockoutDao.clear(packageName)
         debtDao.clear(packageName)
-        return true
+        true
     }
 
     /** Is this package an enabled target? */
@@ -278,24 +353,43 @@ class EnforcementRepository @Inject constructor(
     }
 
     /** Can the user open the table right now (not locked out)? */
-    suspend fun canPlay(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean =
-        AccessPolicy.canPlay(lockoutDao.get(packageName)?.toSnapshot(), nowMillis)
+    suspend fun canPlay(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val target = targetDao.get(packageName)
+        val maxDebt = (target?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS)
+            .coerceAtLeast(MIN_MAX_DEBT_MILLIS)
+        return AccessPolicy.canPlay(
+            lockout = lockoutDao.get(packageName)?.toSnapshot(),
+            nowMillis = nowMillis,
+            debtAtCap = AccessPolicy.isDebtAtCap(currentDebt(packageName), maxDebt),
+        )
+    }
 
     /**
      * Record a finished blackjack hand and apply the policy result.
      * Returns the granted-until millis when access was granted (null otherwise).
+     *
+     * One transaction: the debt row, the history row, the grant, the day's tally and the
+     * lockout are one state, and a process death between any two of them leaves a shape
+     * nothing describes — a grant with no tally against the cap, or a debt with no lockout
+     * to serve it.
      */
     suspend fun onHandResult(
         packageName: String,
         outcome: HandOutcome,
         nowMillis: Long = System.currentTimeMillis(),
-    ): Long? {
+    ): Long? = database.withTransaction {
         val debtBefore = currentDebt(packageName)
         val rules = rulesFor(packageName)
         val grantedToday = dailyGrantedMillis(packageName, nowMillis)
         val result = AccessPolicy.onHandResult(outcome, debtBefore, nowMillis, rules, grantedToday)
 
-        debtDao.upsert(DebtEntity(packageName, result.debtMillis))
+        if (result.debtMillis > 0L) {
+            debtDao.upsert(DebtEntity(packageName, result.debtMillis))
+        } else {
+            // Debt paid off: the row goes with it rather than standing as a zero nobody
+            // reads but every observer still emits.
+            debtDao.clear(packageName)
+        }
         handDao.insert(
             HandEntity(
                 packageName = packageName,
@@ -304,6 +398,7 @@ class EnforcementRepository @Inject constructor(
                 playedAtMillis = nowMillis,
             ),
         )
+        handDao.trimTo(HAND_HISTORY_LIMIT)
 
         if (result.grantedUntil != null) {
             // Fresh access: clear any stale lockout, write the grant, record the day's usage.
@@ -320,13 +415,28 @@ class EnforcementRepository @Inject constructor(
             // Walking away after a loss means serving the full remaining debt.
             val lockoutUntil = AccessPolicy.lockoutUntil(result.debtMillis, nowMillis)
             lockoutDao.upsert(LockoutEntity(packageName, lockoutUntil, reason = LOCKOUT_REASON_DEBT))
+        } else if (outcome == HandOutcome.WIN && result.debtMillis > 0L) {
+            // Paying debt down with a win shortens the wait, because the lockout *is* the
+            // debt written as time to serve. Without this the older, larger deadline stood:
+            // the debt fell to 10 minutes and the app still waited out the 20 it was locked
+            // for when the debt was 20, and the reduction the player earned was invisible.
+            val lockout = lockoutDao.get(packageName)
+            if (lockout != null && (lockout.reason ?: LOCKOUT_REASON_DEBT) == LOCKOUT_REASON_DEBT) {
+                lockoutDao.upsert(
+                    LockoutEntity(
+                        packageName = packageName,
+                        untilMillis = nowMillis + result.debtMillis,
+                        reason = LOCKOUT_REASON_DEBT,
+                    ),
+                )
+            }
         }
 
         if (result.capLockoutUntil != null) {
             // The day's allowance is spent: locked until the next local midnight.
             lockoutDao.upsert(LockoutEntity(packageName, result.capLockoutUntil, reason = LOCKOUT_REASON_DAILY_CAP))
         }
-        return result.grantedUntil
+        result.grantedUntil
     }
 
     /** The accessibility service reports the user is looking at the package right now. */
@@ -334,44 +444,62 @@ class EnforcementRepository @Inject constructor(
         grantDao.touchLastSeen(packageName, nowMillis)
     }
 
-    /**
-     * Evaluate absence-based revocation for an active grant. Called on every
-     * foreground window event for a granted package.
-     */
-    suspend fun evaluateAbsence(packageName: String, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        val grant = grantDao.get(packageName) ?: return false
-        val snapshot = grant.toSnapshot()
-        if (!AccessPolicy.isGrantActive(snapshot, nowMillis)) {
-            grantDao.delete(packageName)
-            return false
-        }
-        if (AccessPolicy.shouldRevokeForAbsence(snapshot, nowMillis, rulesFor(packageName))) {
-            grantDao.delete(packageName)
-            return true
-        }
-        return false
-    }
-
-    /** Revoke a grant immediately (e.g. user action or expiry sweep). */
-    suspend fun revokeGrant(packageName: String, reason: String) {
+    /** Revoke a grant immediately (e.g. user action or an absence). */
+    suspend fun revokeGrant(packageName: String) {
         grantDao.delete(packageName)
     }
 
-    /** Housekeeping: purge expired grants/lockouts (called on boot and periodically). */
-    suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis()) {
-        // Read the served debts before their lockout rows are deleted, or a reboot would
-        // leave every one of them behind as a debt nothing can clear.
-        lockoutDao.expired(nowMillis, LOCKOUT_REASON_DEBT).forEach { debtDao.clear(it.packageName) }
-        grantDao.purgeExpired(nowMillis)
-        lockoutDao.purgeExpired(nowMillis)
+    /**
+     * Revoke the grant for [packageName] only if it is still the one an expiry alarm was
+     * set for, and report whether anything was revoked.
+     *
+     * Alarms do not survive a reboot and are re-armed from the grants that are live at the
+     * time, so an alarm can outlive the grant it belongs to. Cutting whatever grant happens
+     * to be stored when a stale alarm fires would end a session the player legitimately
+     * earned; the alarm is a nudge, not an authority. [endAtMillis] of 0 means the alarm
+     * carried no end time, and is treated as authoritative — that is what an alarm posted
+     * by an older build looks like.
+     */
+    suspend fun revokeGrantIfExpiredAt(packageName: String, endAtMillis: Long): Boolean {
+        val grant = grantDao.get(packageName) ?: return false
+        if (endAtMillis > 0L && grant.endAtMillis > endAtMillis) return false
+        grantDao.delete(packageName)
+        return true
     }
 
-    /** Add [grantedMillis] to the package's tally for the local day containing [nowMillis]. */
+    /** Grants still running, as package to end-millis, for re-arming expiry alarms. */
+    suspend fun liveGrants(nowMillis: Long = System.currentTimeMillis()): List<Pair<String, Long>> =
+        grantDao.liveGrants(nowMillis).map { it.packageName to it.endAtMillis }
+
+    /**
+     * Housekeeping: purge expired grants/lockouts (called on boot and after an alarm).
+     *
+     * One transaction, because the intermediate states are real: a process death between
+     * clearing a served debt and purging its lockout is harmless, but one between purging
+     * the lockout and clearing the debt strands a debt with no timer to serve it.
+     */
+    suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis()) {
+        database.withTransaction {
+            // Read the served debts before their lockout rows are deleted, or a reboot would
+            // leave every one of them behind as a debt nothing can clear.
+            lockoutDao.expired(nowMillis, LOCKOUT_REASON_DEBT).forEach { debtDao.clear(it.packageName) }
+            grantDao.purgeExpired(nowMillis)
+            lockoutDao.purgeExpired(nowMillis)
+        }
+    }
+
+    /**
+     * Add [grantedMillis] to the package's tally for the local day containing [nowMillis].
+     *
+     * Atomic by construction: an UPDATE that adds in place, falling back to starting the day
+     * when no row of today's exists. Reading the stored tally and writing the sum back — what
+     * this used to do — loses one of two grants that overlap, and the daily cap then under-
+     * counts by a whole win.
+     */
     private suspend fun recordGrantedUsage(packageName: String, nowMillis: Long, grantedMillis: Long) {
         val today = epochDay(nowMillis)
-        val existing = dailyUsageDao.get(packageName)
-        val priorMillis = if (existing != null && existing.epochDay == today) existing.grantedMillis else 0L
-        dailyUsageDao.upsert(DailyUsageEntity(packageName, today, priorMillis + grantedMillis))
+        val updated = dailyUsageDao.addToDay(packageName, today, grantedMillis)
+        if (updated == 0) dailyUsageDao.startDay(packageName, today, grantedMillis)
     }
 
     private fun TargetEntity?.toOverrides(): TargetOverrides = TargetOverrides(
@@ -382,19 +510,28 @@ class EnforcementRepository @Inject constructor(
         dailyCapMillis = this?.dailyCapMillis,
     )
 
+    /**
+     * The rules in force for a target: its overrides, else the build's defaults, then
+     * clamped.
+     *
+     * Clamped on the way *out* as well as on the way in ([updateOverrides]), so a row
+     * written before the clamp existed — or by any future caller that bypasses the
+     * screen — cannot reach the policy with a value it has no state for.
+     */
     private fun TargetEntity?.toRules(): AccessRules = AccessRules(
-        winGrantMillis = this?.winGrantMillis ?: AccessPolicy.WIN_GRANT_MILLIS,
+        winGrantMillis = this?.winGrantMillis ?: RuleDefaults.WIN_GRANT_MILLIS,
         lossDebtMillis = this?.lossDebtMillis ?: AccessPolicy.LOSS_DEBT_MILLIS,
         maxDebtMillis = this?.maxDebtMillis ?: AccessPolicy.MAX_DEBT_MILLIS,
-        absenceRevokeMillis = this?.absenceRevokeMillis ?: AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        absenceRevokeMillis = this?.absenceRevokeMillis ?: RuleDefaults.ABSENCE_REVOKE_MILLIS,
         dailyCapMillis = this?.dailyCapMillis,
-    )
+    ).clamped()
 
     private fun epochDay(nowMillis: Long): Long =
         Instant.ofEpochMilli(nowMillis).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()
 
     private fun GrantEntity.toSnapshot() = GrantSnapshot(packageName, endAtMillis, lastSeenMillis)
-    private fun LockoutEntity.toSnapshot() = LockoutSnapshot(packageName, untilMillis, debtMillis = 0L)
+
+    private fun LockoutEntity.toSnapshot() = LockoutSnapshot(packageName, untilMillis, reason)
 
     companion object {
         /** LockoutEntity.reason written when the user is serving accumulated debt. */
@@ -402,5 +539,30 @@ class EnforcementRepository @Inject constructor(
 
         /** LockoutEntity.reason written when the daily cap is spent. */
         const val LOCKOUT_REASON_DAILY_CAP = "DAILY_CAP"
+
+        /**
+         * Smallest debt ceiling worth having. A row storing less than this makes
+         * [AccessPolicy.isDebtAtCap] true the moment any debt exists, which locks the app
+         * out and closes the table with no hand able to open it again.
+         */
+        const val MIN_MAX_DEBT_MILLIS = 10_000L
+
+        /** Smallest absence window worth having; a floor under a corrupt or hand-edited row. */
+        const val MIN_ABSENCE_REVOKE_MILLIS = 10_000L
+
+        /**
+         * How many hands the history keeps. The Stats screen pages at 50 and the tally is
+         * two sums, so anything past this is storage and scan cost nobody reads.
+         */
+        const val HAND_HISTORY_LIMIT = 500
+
+        // One bit per cache table, so "every table has answered" is a single comparison
+        // rather than four flags that could be read half-updated.
+        private const val TABLE_TARGETS = 0
+        private const val TABLE_GRANTS = 1
+        private const val TABLE_LOCKOUTS = 2
+        private const val TABLE_DEBTS = 3
+
+        internal const val ALL_TABLES_LOADED = (1 shl 4) - 1
     }
 }

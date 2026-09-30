@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
+   Full-backup rules for API 30 and below (android:fullBackupContent).
    See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+
+   The enforcement database is deliberately not backed up. It is not a record of what the
+   user configured so much as the state of a running timer: grants, debt, lockouts and the
+   day's tally, all keyed on absolute epoch millis. Restored onto a different device at a
+   different moment, a grant lets an app be used without a hand ever being played, and a
+   lockout can arrive with a deadline that no longer means anything. SQLite backup works at
+   file granularity, so the targets list travels with them — the price of not restoring a
+   lockout onto a device that never earned it.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="database" path="." />
+    <!-- The onboarding flag is device state too: a restored copy skips setup on a device
+         that has never granted the accessibility permission. -->
+    <exclude domain="file" path="datastore/" />
 </full-backup-content>

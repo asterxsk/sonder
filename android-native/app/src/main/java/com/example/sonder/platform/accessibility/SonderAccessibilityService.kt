@@ -71,9 +71,12 @@ class SonderAccessibilityService : AccessibilityService() {
         // which must release the blocker) from our own overlay window (the
         // blocker itself, whose event must never dismiss it).
         val className = event.className?.toString()
+        // The service reports what it saw; the coordinator classifies it. One input the
+        // classification needs — whether this package is an enabled target — lives on the
+        // enforcement cache, and it is what stops the launcher/IME hints from exempting a
+        // target the user chose to gate.
         coordinator.onForeground(
             pkg = pkg,
-            surface = ForegroundSurface.classify(pkg, packageName, className),
             className = className,
             // Carried along so a release can be checked against the window that reported
             // it: see ForegroundWindows.

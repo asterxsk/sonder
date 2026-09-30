@@ -36,6 +36,13 @@ android {
         targetSdk = 36
         versionCode = releaseVersionCode?.toIntOrNull() ?: 1
         versionName = releaseVersionName ?: "1.0"
+        // Enforcement timers, in the build rather than only in the debug variant: the
+        // release values have to exist for the code that reads them to compile, and the
+        // debug block below shortens them so rules can be checked on-device in seconds.
+        // RuleDefaults takes the min against the policy constant, so a shortened value
+        // here can only ever make a timer stricter, never longer.
+        buildConfigField("long", "ACCESS_WINDOW_MILLIS", "300000L")
+        buildConfigField("long", "ABSENCE_REVOKE_MILLIS", "60000L")
     }
 
     signingConfigs {
@@ -69,9 +76,10 @@ android {
             }
         }
         debug {
-            // Debug builds shorten timers so enforcement rules can be verified on-device in seconds.
-            buildConfigField("long", "ABSENCE_REVOKE_MILLIS", "20000L")
+            // Debug builds shorten timers so enforcement rules can be verified on-device
+            // in seconds: a 60-second access window and a 20-second absence window.
             buildConfigField("long", "ACCESS_WINDOW_MILLIS", "60000L")
+            buildConfigField("long", "ABSENCE_REVOKE_MILLIS", "20000L")
         }
     }
     compileOptions {
@@ -94,6 +102,13 @@ android {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// Room's exported schemas (SonderDatabase has exportSchema = true). Committed, so a
+// migration is checked against the shape it claims to produce rather than against
+// whatever the entities happen to say today.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

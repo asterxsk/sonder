@@ -16,6 +16,7 @@ import com.example.sonder.domain.model.LockoutSnapshot
 import com.example.sonder.platform.accessibility.ForegroundWindows
 import com.example.sonder.platform.foreground.ForegroundResolver
 import com.example.sonder.platform.overlay.GateOverlayHost
+import com.example.sonder.platform.scheduling.GrantExpiryScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -62,6 +63,7 @@ class EnforcementCoordinator @Inject constructor(
     private val repository: EnforcementRepository,
     private val overlayHost: GateOverlayHost,
     private val foregroundResolver: ForegroundResolver,
+    private val expiryScheduler: GrantExpiryScheduler,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
     private val ownPackage: String = context.packageName
@@ -72,15 +74,41 @@ class EnforcementCoordinator @Inject constructor(
     /** The periodic foreground re-check; alive for as long as the service is. */
     private var watchJob: Job? = null
 
-    /** Window-list evidence, supplied by the service while it is connected. */
-    private var foregroundWindows: ForegroundWindows? = null
+    /**
+     * Window-list evidence, supplied by the service while it is connected.
+     *
+     * The four fields below are written from the accessibility-service main thread
+     * ([onServiceConnected], [onScreenOff], [onServiceStopped]) and read and written from
+     * the re-check's single-threaded dispatcher, with no lock between them. Volatile rather
+     * than a holder object because each is read on its own and the pair is only ever used
+     * to make one decision; confining them to the dispatcher would instead put a queue hop
+     * on the service's own callback path, which is the path that has to be fast.
+     */
+    @Volatile private var foregroundWindows: ForegroundWindows? = null
 
     /** Package the last re-check pass decided for, and what it decided. */
-    private var watchedPackage: String? = null
-    private var watchedDecision: GateDecision? = null
+    @Volatile private var watchedPackage: String? = null
+    @Volatile private var watchedDecision: GateDecision? = null
 
     /** Consecutive re-check passes that resolved away from every app. */
-    private var awayPasses = 0
+    @Volatile private var awayPasses = 0
+
+    /**
+     * Bumped whenever the watch starts or stops. A pass already in flight — parked in a
+     * suspend lookup — re-reads it before acting and abandons, so a blocker can never be
+     * raised after screen-off or after the service was unbound. `stopWatching` cancelling
+     * the job only interrupts the loop at its next suspension point, and the pass that was
+     * mid-flight is exactly the one that would raise the blocker over the keyguard.
+     */
+    @Volatile private var generation = 0
+
+    /** Last foreground lookup, so both callers in one pass share a single usage-stats query. */
+    private var probeAtMillis = 0L
+    private var probePackage: String? = null
+
+    /** Package and time of the last last-seen write, so the hot path does not write per event. */
+    private var lastSeenPackage: String? = null
+    private var lastSeenAtMillis = 0L
 
     /**
      * Start re-checking the real foreground for as long as the service is up.
@@ -105,11 +133,13 @@ class EnforcementCoordinator @Inject constructor(
 
     private fun startWatching() {
         if (watchJob?.isActive == true) return
+        generation++
+        val mine = generation
         watchJob = scope.launch {
             while (isActive) {
                 delay(WATCH_INTERVAL_MILLIS)
                 try {
-                    reconcile()
+                    reconcile(mine)
                 } catch (stopped: CancellationException) {
                     throw stopped
                 } catch (failure: Throwable) {
@@ -122,17 +152,22 @@ class EnforcementCoordinator @Inject constructor(
     }
 
     private fun stopWatching() {
+        generation++
         watchJob?.cancel()
         watchJob = null
     }
+
+    /** Whether the pass that is running still belongs to the live watch. */
+    private fun isCurrent(mine: Int): Boolean = mine == generation
 
     /**
      * One re-check pass: resolve the app that is really in the foreground and act on
      * what [ForegroundWatch] makes of it. Serialized with the event path, so a pass
      * never races a decision that an event is making at the same moment.
      */
-    private suspend fun reconcile() {
-        val observed = foregroundResolver.currentForegroundPackage() ?: return
+    private suspend fun reconcile(mine: Int) {
+        val now = System.currentTimeMillis()
+        val observed = foregroundPackage(now) ?: return
 
         // Our own package can only be resolved here through one of our Activities — the
         // overlay window is not an activity, so it leaves no resume behind. The class
@@ -141,7 +176,11 @@ class EnforcementCoordinator @Inject constructor(
         val surface = if (observed == ownPackage) {
             ForegroundSurface.OWN
         } else {
-            ForegroundSurface.classify(observed, ownPackage)
+            ForegroundSurface.classify(
+                pkg = observed,
+                ownPackage = ownPackage,
+                isTarget = repository.enabledTarget(observed) != null,
+            )
         }
 
         val step = ForegroundWatch.actionFor(
@@ -152,25 +191,62 @@ class EnforcementCoordinator @Inject constructor(
         awayPasses = step.awayPasses
 
         when (step.action) {
-            ForegroundWatch.Action.IGNORE -> Unit
+            // A granted app the user is sitting inside emits no further window events, so
+            // nothing else refreshes the last-seen stamp. Without this the stamp ages past
+            // the absence window while the user never left, and the next event revokes a
+            // grant for an absence that did not happen. The re-check is the only thing
+            // that can see they are still there.
+            ForegroundWatch.Action.IGNORE ->
+                if (surface == ForegroundSurface.APP && watchedDecision == GateDecision.GRANTED) {
+                    touchLastSeen(observed, now)
+                }
 
             ForegroundWatch.Action.RELEASE ->
                 overlayHost.dismiss(reason = "foreground watch: $observed")
 
             ForegroundWatch.Action.DECIDE ->
-                if (screenIsInUse()) {
+                if (screenIsInUse() && isCurrent(mine)) {
                     val decision = evaluate(pkg = observed, surface = surface, className = null)
                     watchedPackage = observed
                     watchedDecision = decision
                     blockState(decision, observed, "re-check")
                 } else {
-                    // Resolved but not in front of the user: the last resumed activity is
-                    // whatever is under the lock screen. Held state is dropped rather than
-                    // kept, so the pass that follows the unlock decides from scratch.
+                    // Resolved but not in front of the user, or no longer the live watch:
+                    // the last resumed activity is whatever is under the lock screen. Held
+                    // state is dropped rather than kept, so the pass that follows the
+                    // unlock — or the restart — decides from scratch.
                     watchedPackage = null
                     watchedDecision = null
                 }
         }
+    }
+
+    /**
+     * The foreground package, memoized briefly.
+     *
+     * A pass and the release probe that follows it inside the same pass would otherwise
+     * each run their own `queryEvents` over a 60-second window — two binder calls per
+     * 500 ms of service lifetime. One query answers both, because nothing can reach the
+     * foreground and leave again inside the memo window.
+     */
+    private suspend fun foregroundPackage(nowMillis: Long): String? {
+        if (probeAtMillis != 0L && nowMillis - probeAtMillis < FOREGROUND_MEMO_MILLIS) {
+            return probePackage
+        }
+        val resolved = foregroundResolver.currentForegroundPackage(nowMillis)
+        probeAtMillis = nowMillis
+        probePackage = resolved
+        return resolved
+    }
+
+    /** Refresh the last-seen stamp at most once per [LAST_SEEN_MIN_INTERVAL_MILLIS]. */
+    private suspend fun touchLastSeen(pkg: String, nowMillis: Long) {
+        if (pkg == lastSeenPackage && nowMillis - lastSeenAtMillis < LAST_SEEN_MIN_INTERVAL_MILLIS) {
+            return
+        }
+        lastSeenPackage = pkg
+        lastSeenAtMillis = nowMillis
+        repository.recordLastSeen(pkg, nowMillis)
     }
 
     /**
@@ -184,9 +260,19 @@ class EnforcementCoordinator @Inject constructor(
      * evidence is how a blocked app ends up usable again after a Recents round trip.
      */
     private suspend fun releaseIsTrailing(eventPkg: String, windowId: Int): Boolean {
-        val windowBehind = foregroundWindows?.isBehindAnotherWindow(windowId) == true
+        // The window list is the cheap evidence and it is decisive when it answers, so the
+        // usage-stats lookup is skipped in that case: it is a binder query that needs a
+        // permission, and it has nothing left to add to a window that is already known to
+        // be covered. It stays as the second opinion for a device whose window list is not
+        // readable, or where no window has focus at all.
+        if (foregroundWindows?.isBehindAnotherWindow(windowId) == true) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "FOREGROUND_TRAILING(eventPkg=$eventPkg windowId=$windowId windowBehind=true)")
+            }
+            return true
+        }
 
-        val foreground = foregroundResolver.currentForegroundPackage()
+        val foreground = foregroundPackage(System.currentTimeMillis())
         val probeTrailing = foreground != null && ForegroundWatch.isTrailingRelease(
             eventPkg = eventPkg,
             foreground = foreground,
@@ -198,10 +284,10 @@ class EnforcementCoordinator @Inject constructor(
             Log.d(
                 TAG,
                 "FOREGROUND_TRAILING(eventPkg=$eventPkg windowId=$windowId " +
-                    "windowBehind=$windowBehind probe=$foreground refused=${windowBehind || probeTrailing})",
+                    "windowBehind=false probe=$foreground refused=$probeTrailing)",
             )
         }
-        return windowBehind || probeTrailing
+        return probeTrailing
     }
 
     /** One line per applied state, so a logcat trace shows which event won a transition. */
@@ -244,22 +330,41 @@ class EnforcementCoordinator @Inject constructor(
         GateDecision.GRANTED ->
             repository.cachedGrant(pkg)?.endAtMillis?.let { it > System.currentTimeMillis() } == true
 
-        GateDecision.GATE, GateDecision.REVOKE, GateDecision.LOCKOUT ->
+        GateDecision.GATE, GateDecision.REVOKE ->
             overlayHost.shownForPackage == pkg
+
+        // A lockout is settled only while its deadline is still ahead. Past it the wait has
+        // been served and the pass has to decide again, or the panel sits over the app
+        // against a timer that has already run out and never hands it back.
+        GateDecision.LOCKOUT ->
+            overlayHost.shownForPackage == pkg && lockoutIsRunning(pkg)
 
         null -> false
     }
 
+    /** Whether a live lockout row still has time on it. */
+    private fun lockoutIsRunning(pkg: String): Boolean =
+        repository.cachedLockout(pkg)?.untilMillis?.let { it > System.currentTimeMillis() } == true
+
     fun onForeground(
         pkg: String,
-        surface: ForegroundSurface,
         className: String? = null,
         windowId: Int = 0,
     ) {
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "FOREGROUND_CHANGED(pkg=$pkg surface=$surface class=$className window=$windowId)")
+            Log.d(TAG, "FOREGROUND_CHANGED(pkg=$pkg class=$className window=$windowId)")
         }
         scope.launch {
+            // Classified here rather than in the service. Whether the package is an enabled
+            // target is an input to the classification — it is what stops the launcher and
+            // IME hints from exempting a target the user chose to gate — and that answer
+            // lives on the enforcement cache.
+            val surface = ForegroundSurface.classify(
+                pkg = pkg,
+                ownPackage = ownPackage,
+                className = className,
+                isTarget = repository.enabledTarget(pkg) != null,
+            )
             when (surface) {
                 // Our own overlay window reports our package with a non-app class
                 // name; ignoring it is what stops the blocker from dismissing itself.
@@ -297,7 +402,7 @@ class EnforcementCoordinator @Inject constructor(
 
         // Housekeeping: purge an expired grant row so enforcement resumes.
         repository.cachedGrant(pkg)?.takeIf { it.endAtMillis <= now }?.let {
-            repository.revokeGrant(pkg, reason = "expired")
+            repository.revokeGrant(pkg)
         }
         // A debt lockout that has run out has been served, so the debt goes with it —
         // otherwise the app keeps gating against a timer that is already over. The caches
@@ -320,38 +425,58 @@ class EnforcementCoordinator @Inject constructor(
                 null
             } else {
                 repository.cachedLockout(pkg)?.let {
-                    LockoutSnapshot(it.packageName, it.untilMillis, 0L)
+                    LockoutSnapshot(it.packageName, it.untilMillis, it.reason)
                 }
             },
             nowMillis = now,
             debtAtCap = debtAtCap,
+            // The target's own absence window rather than the global default: the two
+            // paths used to disagree, so a per-app override changed what the repository's
+            // own check said and nothing about what the live gate did.
+            absenceRevokeMillis = repository.cachedAbsenceRevoke(pkg),
         )
 
         val label = target?.label?.takeIf { it.isNotBlank() }
             ?: pkg.substringAfterLast('.').uppercase()
 
         when (decision) {
-            GateDecision.PASS -> overlayHost.dismiss(reason = "not a target: $pkg")
+            GateDecision.PASS ->
+                // A cache that has not answered yet says "no grants, no targets" about
+                // every package, and releasing on that answer is how a blocked app gets
+                // through in the first moments after the service starts. Raising is the
+                // safe direction and is never gated this way.
+                if (repository.isCacheReady()) {
+                    overlayHost.dismiss(reason = "not a target: $pkg")
+                } else if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "cache still warming; holding the blocker rather than releasing $pkg")
+                }
 
             GateDecision.GRANTED -> {
-                repository.recordLastSeen(pkg, now)
+                touchLastSeen(pkg, now)
                 overlayHost.dismiss(reason = "granted: $pkg")
             }
 
             GateDecision.REVOKE -> {
-                repository.revokeGrant(pkg, reason = "absence")
+                repository.revokeGrant(pkg)
+                // The alarm outlives the grant otherwise, and fires later to announce an
+                // expiry that has already happened.
+                expiryScheduler.cancelExpiry(pkg)
                 overlayHost.showGate(pkg, label)
             }
 
             GateDecision.LOCKOUT -> overlayHost.showLockout(
                 pkg = pkg,
                 label = label,
+                // The deadline, not the time left: the panel counts down against a clock,
+                // and the coordinator can be called again a moment later with a slightly
+                // different remainder, which would move the deadline on every event.
+                //
                 // A debt at the ceiling waits out its lockout; if that row is somehow
                 // already gone, the debt itself is the time still owed.
-                remainingMillis = maxOf(
-                    repository.lockoutRemainingMillis(pkg, now),
-                    if (debtAtCap) debtMillis else 0L,
-                ),
+                untilMillis = repository.cachedLockout(pkg)
+                    ?.takeIf { it.untilMillis > now }
+                    ?.untilMillis
+                    ?: (now + debtMillis),
             )
 
             GateDecision.GATE -> overlayHost.showGate(pkg, label)
@@ -400,5 +525,18 @@ class EnforcementCoordinator @Inject constructor(
          * negligible cost while the service is idle.
          */
         const val WATCH_INTERVAL_MILLIS = 500L
+
+        /**
+         * How long one foreground lookup answers for. Longer than the interval between two
+         * callers inside a single pass, far shorter than any real app switch.
+         */
+        const val FOREGROUND_MEMO_MILLIS = 400L
+
+        /**
+         * How often a last-seen stamp is written for the app on screen. The stamp only has
+         * to stay inside the absence window — 20 seconds in debug, 60 in release — so a
+         * write per window event is pure cost on the serialized decision dispatcher.
+         */
+        const val LAST_SEEN_MIN_INTERVAL_MILLIS = 5_000L
     }
 }

@@ -46,4 +46,13 @@ object NavPolicy {
      */
     fun back(backStack: List<NavKey>): List<NavKey> =
         if (backStack.size > 1) backStack.dropLast(1) else backStack
+
+    /**
+     * Back as the host has to apply it: null means "nowhere left to go — leave the app".
+     * [back] cannot express that, because at the root it returns the stack unchanged, and a
+     * caller that applies an unchanged stack has swallowed the press: Back on Home did
+     * nothing at all. The decision lives here rather than in the caller so it is testable.
+     */
+    fun backOrLeave(backStack: List<NavKey>): List<NavKey>? =
+        if (backStack.size > 1) backStack.dropLast(1) else null
 }

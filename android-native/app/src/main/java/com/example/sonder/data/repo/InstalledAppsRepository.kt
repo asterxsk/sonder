@@ -3,8 +3,10 @@ package com.example.sonder.data.repo
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.os.Build
+import android.util.LruCache
 import androidx.core.graphics.drawable.toBitmap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -24,19 +26,34 @@ data class InstalledApp(
  */
 private const val IconEdgePx = 96
 
+/** How much icon art to keep resident: about a hundred apps at the edge above. */
+private const val ICON_CACHE_BYTES = 4 * 1024 * 1024
+
 /**
  * Lists launchable user apps for the Targets picker.
  * Works with the manifest <queries> MAIN/LAUNCHER declaration (API 30+ visibility),
  * no QUERY_ALL_PACKAGES needed.
  *
- * PackageManager is binder traffic, so the query always runs on [Dispatchers.IO].
- * Nothing is cached, here or process-wide: a fresh call sees apps installed or
- * removed since the last one.
+ * PackageManager is binder traffic, so the query always runs on [Dispatchers.IO]. The
+ * *list* is never cached — a fresh call sees apps installed or removed since the last one —
+ * but the icons are: rasterizing ~150 launcher drawables costs real time and ~300 KB each
+ * at the source size, and the picker is reopened often. Icons change only on an app update,
+ * which is rare enough that showing the previous one until the process restarts is a better
+ * trade than re-rasterizing the set on every open.
  */
 @Singleton
 class InstalledAppsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    /**
+     * Bounded by bytes rather than by entry count: launcher art is not all one size, and a
+     * count-based bound on 150 apps either wastes memory or evicts constantly.
+     * `LruCache` is not thread-safe, so every access is synchronized.
+     */
+    private val iconCache = object : LruCache<String, Bitmap>(ICON_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
     /**
      * The launcher label for a single package, or null when it is not installed or not
      * visible to us. Reads the label straight off the application info and touches no
@@ -64,15 +81,28 @@ class InstalledAppsRepository @Inject constructor(
                 InstalledApp(
                     packageName = ri.activityInfo.packageName,
                     label = ri.loadLabel(pm).toString(),
-                    // One package's art must not fail the whole enumeration, so the
-                    // load is contained; a missing icon just leaves the row's glyph.
-                    icon = runCatching {
-                        ri.loadIcon(pm)?.toBitmap(IconEdgePx, IconEdgePx)
-                    }.getOrNull(),
+                    icon = iconFor(pm, ri),
                 )
             }
             .filter { it.packageName != context.packageName } // never gate Sonder itself
             .sortedBy { it.label.lowercase() }
             .distinctBy { it.packageName }
+    }
+
+    /**
+     * The rasterized icon for one entry, from the cache when it is there.
+     *
+     * One package's art must not fail the whole enumeration, so the load is contained; a
+     * missing icon just leaves the row's glyph, and a failed load is not cached, so the
+     * next open tries again.
+     */
+    private fun iconFor(pm: PackageManager, ri: ResolveInfo): Bitmap? {
+        val pkg = ri.activityInfo.packageName
+        synchronized(iconCache) { iconCache.get(pkg) }?.let { return it }
+        val loaded = runCatching {
+            ri.loadIcon(pm)?.toBitmap(IconEdgePx, IconEdgePx)
+        }.getOrNull() ?: return null
+        synchronized(iconCache) { iconCache.put(pkg, loaded) }
+        return loaded
     }
 }

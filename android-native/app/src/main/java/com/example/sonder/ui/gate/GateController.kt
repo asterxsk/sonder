@@ -165,19 +165,25 @@ class GateController @Inject constructor(
                 phase = TableState.Phase.RESOLVED,
                 message = "BUST — HOUSE TAKES IT",
             )
-            settle(HandOutcome.LOSE)
+            settle(current.targetPackage, HandOutcome.LOSE)
         } else if (newHand.total == 21) {
             _state.value = current.copy(playerHand = newHand, phase = TableState.Phase.DEALER_TURN)
-            standInternal()
+            standInternal(current.targetPackage, dealt ?: return)
         } else {
             _state.value = current.copy(playerHand = newHand, message = "HIT OR STAND?")
         }
     }
 
     fun stand() {
-        if (_state.value.phase != TableState.Phase.PLAYER_TURN) return
-        _state.value = _state.value.copy(phase = TableState.Phase.DEALER_TURN)
-        standInternal()
+        val current = _state.value
+        if (current.phase != TableState.Phase.PLAYER_TURN) return
+        // The hand and its deck are captured here rather than read back after the dealer
+        // beat. The table can be retargeted inside those 600 ms — Home, then a second
+        // blocked app — and the live fields would by then belong to the new app's hand,
+        // so the old hand's outcome would land on a package the player never played.
+        val dealtHand = dealt ?: return
+        _state.value = current.copy(phase = TableState.Phase.DEALER_TURN)
+        standInternal(current.targetPackage, dealtHand)
     }
 
     fun playAgain() {
@@ -204,13 +210,21 @@ class GateController @Inject constructor(
         _unlocked.tryEmit(pkg)
     }
 
-    private fun standInternal() {
-        val d = dealt ?: return
+    private fun standInternal(pkg: String, dealtHand: DealtHand) {
         scope.launch {
             delay(600) // 2-frame dealer reveal beat
+            // A retarget inside the beat means this hand is no longer the table's. The
+            // dealer would otherwise be dealt from the new app's deck and the outcome
+            // recorded against it.
+            if (_state.value.targetPackage != pkg) return@launch
+
             val playerHand = _state.value.playerHand ?: return@launch
 
-            val dealerResult = BlackjackRules.dealerPlay(d.dealerUp, d.dealerHole, deck)
+            val dealerResult = BlackjackRules.dealerPlay(
+                dealtHand.dealerUp,
+                dealtHand.dealerHole,
+                dealtHand.remainingDeck,
+            )
             val playerNatural = playerHand.isNatural
             val dealerNatural = dealerResult.dealer.isNatural && playerHand.cards.size == 2
 
@@ -230,18 +244,26 @@ class GateController @Inject constructor(
                     HandOutcome.PUSH -> "PUSH — FREE REPLAY"
                 },
             )
-            settle(outcome)
+            settle(pkg, outcome)
         }
     }
 
-    private fun settle(outcome: HandOutcome) {
-        val pkg = _state.value.targetPackage
+    /**
+     * Persist a finished hand against the package it was played on, then show its result.
+     *
+     * The hand is recorded whatever the table is doing by now, because it was played; only
+     * the panel is conditional. A table that has moved on — retargeted to another app, or
+     * reset by PLAY AGAIN while the result was still being written — must not have a result
+     * written onto it, which is how an IDLE table once grew a result row for a hand the
+     * player had already dismissed.
+     */
+    private fun settle(pkg: String, outcome: HandOutcome) {
         scope.launch {
             val grantedUntil = repository.onHandResult(pkg, outcome)
             if (grantedUntil != null) {
                 expiryScheduler.scheduleExpiry(pkg, grantedUntil)
             }
-            if (_state.value.targetPackage == pkg) {
+            if (_state.value.targetPackage == pkg && _state.value.phase == TableState.Phase.RESOLVED) {
                 // Mark the resolved state first so refreshPolicy's copy keeps it. The
                 // grant result is recorded here because a WIN can still grant nothing
                 // (spent cap), and the gate's success branch must not fire without a

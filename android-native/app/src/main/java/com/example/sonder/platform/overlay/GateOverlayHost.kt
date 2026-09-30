@@ -83,7 +83,8 @@ class GateOverlayHost @Inject constructor(
     private data class ShowRequest(
         val pkg: String,
         val label: String,
-        val lockoutRemainingMillis: Long,
+        /** Epoch millis the lockout ends at, or 0 when there is no lockout. */
+        val lockoutUntilMillis: Long,
     )
 
     /**
@@ -117,19 +118,24 @@ class GateOverlayHost @Inject constructor(
     var shownForPackage: String? = null
         private set
 
-    fun showGate(pkg: String, label: String) = show(pkg, label, lockoutRemainingMillis = 0L)
+    fun showGate(pkg: String, label: String) = show(pkg, label, lockoutUntilMillis = 0L)
 
-    fun showLockout(pkg: String, label: String, remainingMillis: Long) =
-        show(pkg, label, remainingMillis)
+    /** @param untilMillis epoch millis the lockout ends at, or 0 when there is no lockout. */
+    fun showLockout(pkg: String, label: String, untilMillis: Long) =
+        show(pkg, label, untilMillis)
 
-    private fun show(pkg: String, label: String, lockoutRemainingMillis: Long) {
+    private fun show(pkg: String, label: String, lockoutUntilMillis: Long) {
         mainHandler.post {
-            val request = ShowRequest(pkg, label, lockoutRemainingMillis)
+            val request = ShowRequest(pkg, label, lockoutUntilMillis)
 
-            // ensureOverlay, not showOverlay: the app is already covered, so this changes
-            // nothing. A burst of foreground events can neither stack blockers nor reset a
-            // hand in progress, and the window has to still be attached for that to hold.
-            if (shownForPackage == pkg && root?.isAttachedToWindow == true) {
+            // ensureOverlay, not showOverlay: the app is already covered by this exact
+            // panel, so this changes nothing. A burst of foreground events can neither
+            // stack blockers nor reset a hand in progress, and the window has to still be
+            // attached for that to hold.
+            if (shownForPackage == pkg &&
+                root?.isAttachedToWindow == true &&
+                composedFor == request
+            ) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "OVERLAY_ENSURE(pkg=$pkg already covering)")
                 return@post
             }
@@ -146,9 +152,12 @@ class GateOverlayHost @Inject constructor(
                 Log.d(TAG, "BLACKJACK_STATE_RESTORED(pkg=$pkg phase=${controller.state.value.phase})")
             }
 
-            // A live window composed for an earlier request is repointed in place rather
-            // than replaced, so switching between two blocked apps never uncovers either.
-            if (root != null && composedFor == request && repoint(pkg, request)) return@post
+            // A live window is repointed in place rather than replaced. The panel changes
+            // as the enforcement state moves on — a debt reaching its ceiling, a lockout
+            // that has run out and handed the app back, a switch between two blocked apps
+            // — and tearing the window down for each of those would blink the blocked app
+            // back into view. Replacing is the fallback for a view that cannot be reused.
+            if (root != null && repoint(pkg, request)) return@post
 
             create(pkg, request)
         }
@@ -172,7 +181,7 @@ class GateOverlayHost @Inject constructor(
             shownForPackage = pkg
             watchUnlock(pkg)
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg lockoutMs=${request.lockoutRemainingMillis})")
+                Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg lockoutUntil=${request.lockoutUntilMillis})")
             }
             true
         } catch (t: Throwable) {
@@ -207,7 +216,7 @@ class GateOverlayHost @Inject constructor(
             composedFor = request
             shownForPackage = pkg
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "OVERLAY_CREATED(pkg=$pkg lockoutMs=${request.lockoutRemainingMillis})")
+                Log.d(TAG, "OVERLAY_CREATED(pkg=$pkg lockoutUntil=${request.lockoutUntilMillis})")
             }
         } catch (t: Throwable) {
             Log.e(TAG, "blocker add failed for $pkg", t)
@@ -231,7 +240,7 @@ class GateOverlayHost @Inject constructor(
             GateContent(
                 label = request.label,
                 state = state,
-                lockoutRemainingMillis = request.lockoutRemainingMillis,
+                lockoutUntilMillis = request.lockoutUntilMillis,
                 onDeal = controller::deal,
                 onHit = controller::hit,
                 onStand = controller::stand,

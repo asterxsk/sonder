@@ -36,7 +36,10 @@ fun PixelPanel(
             .pixelShadow(offset = shadowOffset, color = shadowColor)
             .border(borderWidth, borderColor)
             // Nicks overpaint the border corners, so corners read as steps, not holes.
-            .pixelSteppedCorners()
+            // Opting out has to drop the nicks as well as the inset: leaving them in place
+            // while removing the padding the panel reserved for them is what cut the
+            // corners off a panel whose caller had asked for square ones.
+            .then(if (steppedCorners) Modifier.pixelSteppedCorners() else Modifier)
             .padding(PixelSpace.Base + (if (steppedCorners) SteppedCornerInset else 0.dp)),
         content = content,
     )

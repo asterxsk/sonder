@@ -75,6 +75,10 @@ interface GrantDao {
 
     @Query("DELETE FROM grants WHERE endAtMillis <= :nowMillis")
     suspend fun purgeExpired(nowMillis: Long)
+
+    /** Grants still running, for whoever has to re-arm their expiry alarms after a reboot. */
+    @Query("SELECT * FROM grants WHERE endAtMillis > :nowMillis")
+    suspend fun liveGrants(nowMillis: Long): List<GrantEntity>
 }
 
 @Dao
@@ -122,6 +126,9 @@ interface LockoutDao {
     suspend fun expired(nowMillis: Long, reason: String): List<LockoutEntity>
 }
 
+/** Win/loss tally for the Stats screen, from one scan rather than two. */
+data class HandTally(val wins: Int, val losses: Int)
+
 @Dao
 interface HandDao {
     @Insert
@@ -130,11 +137,26 @@ interface HandDao {
     @Query("SELECT * FROM hands ORDER BY playedAtMillis DESC LIMIT :limit")
     fun observeRecent(limit: Int = 50): Flow<List<HandEntity>>
 
-    @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'WIN'")
-    fun observeWinCount(): Flow<Int>
+    /**
+     * Both counts in one pass. Two separate `COUNT(*)` flows over the same table meant two
+     * scans and two emissions for every hand played.
+     */
+    @Query(
+        "SELECT COALESCE(SUM(outcome = 'WIN'), 0) AS wins, " +
+            "COALESCE(SUM(outcome = 'LOSE'), 0) AS losses FROM hands",
+    )
+    fun observeTally(): Flow<HandTally>
 
-    @Query("SELECT COUNT(*) FROM hands WHERE outcome = 'LOSE'")
-    fun observeLossCount(): Flow<Int>
+    /**
+     * Drop everything but the newest [keep] hands. The history only ever powers a 50-row
+     * page and two counters, so it is a bounded log, not an archive: without this the table
+     * and every scan over it grow for the life of the install.
+     */
+    @Query(
+        "DELETE FROM hands WHERE id NOT IN " +
+            "(SELECT id FROM hands ORDER BY playedAtMillis DESC LIMIT :keep)",
+    )
+    suspend fun trimTo(keep: Int)
 }
 
 @Dao
@@ -147,4 +169,23 @@ interface DailyUsageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(usage: DailyUsageEntity)
+
+    /**
+     * Add [delta] to a row that is already the [epochDay]'s tally. Returns the number of
+     * rows changed: 0 means the row is missing or belongs to an earlier day, and the caller
+     * must start the day instead. This is the atomic half of the day's tally — a read of the
+     * stored value followed by a REPLACE loses one of two concurrent grants.
+     */
+    @Query(
+        "UPDATE daily_usage SET grantedMillis = grantedMillis + :delta " +
+            "WHERE packageName = :pkg AND epochDay = :epochDay",
+    )
+    suspend fun addToDay(pkg: String, epochDay: Long, delta: Long): Int
+
+    /** Start (or restart) the day's tally at [delta], replacing any earlier day's row. */
+    @Query(
+        "INSERT OR REPLACE INTO daily_usage (packageName, epochDay, grantedMillis) " +
+            "VALUES (:pkg, :epochDay, :delta)",
+    )
+    suspend fun startDay(pkg: String, epochDay: Long, delta: Long)
 }

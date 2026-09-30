@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.sonder.theme.MonoTypeScale
@@ -40,6 +41,11 @@ fun PixelSearchField(
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
 
+    // The filter is applied as the user types, so the IME's Search key has no work left
+    // to do but dismiss the keyboard. Leaving it on KeyboardActions.Default made it do
+    // nothing at all, which reads as a dead key on a field that advertises one.
+    val keyboard = LocalSoftwareKeyboardController.current
+
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -47,7 +53,7 @@ fun PixelSearchField(
         textStyle = MonoTypeScale.Body.copy(color = PixelPalette.Text),
         cursorBrush = SolidColor(PixelPalette.Primary),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions.Default,
+        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
         interactionSource = interaction,
         modifier = modifier
             .fillMaxWidth()

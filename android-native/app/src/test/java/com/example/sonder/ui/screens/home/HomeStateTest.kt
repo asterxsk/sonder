@@ -33,7 +33,6 @@ class HomeStateTest {
         LockoutSnapshot(
             packageName = packageName,
             untilMillis = untilMillis,
-            debtMillis = 0L,
             reason = reason,
         )
 

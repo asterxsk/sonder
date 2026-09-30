@@ -62,8 +62,11 @@ data class TargetRowPending(
 fun TargetRow(
     appName: String,
     packageName: String,
-    onEdit: () -> Unit,
-    onRemove: () -> Unit,
+    // The callbacks take the package rather than closing over it, so the list can hand
+    // one pair of stable lambdas to every row instead of allocating two per row per
+    // recomposition — an allocation a LazyColumn can never hoist for itself.
+    onEdit: (String) -> Unit,
+    onRemove: (String) -> Unit,
     modifier: Modifier = Modifier,
     pending: TargetRowPending? = null,
     iconGlyph: String = "▣",
@@ -72,6 +75,11 @@ fun TargetRow(
     // Wrap once per bitmap: re-wrapping on every recomposition would allocate a fresh
     // ImageBitmap for every visible row.
     val iconImage = remember(iconBitmap) { iconBitmap?.asImageBitmap() }
+
+    // Bound once per package, so the row's own buttons hold stable references even though
+    // the callbacks above are shared by every row.
+    val edit = remember(packageName, onEdit) { { onEdit(packageName) } }
+    val remove = remember(packageName, onRemove) { { onRemove(packageName) } }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -133,13 +141,13 @@ fun TargetRow(
                 glyph = "✎",
                 description = "Edit $appName settings",
                 tone = PixelPalette.Primary,
-                onClick = onEdit,
+                onClick = edit,
             )
             RowGlyphButton(
                 glyph = "✕",
                 description = "Remove $appName",
                 tone = PixelPalette.Danger,
-                onClick = onRemove,
+                onClick = remove,
                 modifier = Modifier.padding(start = PixelSpace.Snug),
             )
         }

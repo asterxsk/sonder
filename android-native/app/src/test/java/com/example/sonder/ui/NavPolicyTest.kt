@@ -7,6 +7,7 @@ import com.example.sonder.Stats
 import com.example.sonder.TargetPicker
 import com.example.sonder.Targets
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
@@ -55,6 +56,16 @@ class NavPolicyTest {
         val stack: List<NavKey> = listOf(Main)
 
         assertSame(stack, NavPolicy.back(stack))
+    }
+
+    @Test
+    fun `back at the root reports that the app should be left`() {
+        assertNull(NavPolicy.backOrLeave(listOf(Main)))
+    }
+
+    @Test
+    fun `back above the root drops the top destination`() {
+        assertEquals(listOf<NavKey>(Main), NavPolicy.backOrLeave(listOf(Main, Stats)))
     }
 
     @Test

@@ -36,6 +36,11 @@ object GateDecider {
      * @param debtAtCap     debt has reached the ceiling the app allows, so the app is in
      *   the wait-it-out state regardless of what the lockout row says — see
      *   [AccessPolicy.isDebtAtCap].
+     * @param absenceRevokeMillis the target's effective absence window. The caller resolves
+     *   it (the per-app override, else the build default) because this core is pure: passing
+     *   nothing here silently applied the 60-second global default to every app, so a per-app
+     *   override changed what `EnforcementRepository.evaluateAbsence` said and nothing about
+     *   what the live gate did.
      */
     fun decide(
         targetEnabled: Boolean,
@@ -43,11 +48,18 @@ object GateDecider {
         lockout: LockoutSnapshot?,
         nowMillis: Long,
         debtAtCap: Boolean = false,
+        absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
     ): GateDecision {
         if (!targetEnabled) return GateDecision.PASS
 
         if (grant != null && AccessPolicy.isGrantActive(grant, nowMillis)) {
-            return if (AccessPolicy.shouldRevokeForAbsence(grant, nowMillis)) {
+            return if (
+                AccessPolicy.shouldRevokeForAbsence(
+                    grant = grant,
+                    nowMillis = nowMillis,
+                    absenceRevokeMillis = absenceRevokeMillis,
+                )
+            ) {
                 GateDecision.REVOKE
             } else {
                 GateDecision.GRANTED

@@ -13,7 +13,6 @@ data class GrantSnapshot(
 data class LockoutSnapshot(
     val packageName: String,
     val untilMillis: Long,
-    val debtMillis: Long,
     /**
      * Mirror of `LockoutEntity.reason` as a plain string so the domain stays free of
      * persistence types: "DEBT" | "DAILY_CAP", with null (rows written before reasons

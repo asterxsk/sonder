@@ -76,7 +76,12 @@ fun PixelButton(
     val pressed by interaction.collectIsPressedAsState()
     val focused by interaction.collectIsFocusedAsState()
 
-    val (fill, border, textColor, shadow) = colors(style, enabled)
+    // Memoized: the four colours are picked from a fixed palette by (style, enabled), so
+    // rebuilding the Tetrad on every recomposition allocated a data class for nothing.
+    val tetrad = remember(style, enabled) { colors(style, enabled) }
+    val fill = tetrad.fill
+    val border = tetrad.border
+    val textColor = tetrad.text
 
     // §18: the press is 2–4 discrete frames — not an instant jump, and not a smooth
     // slide. Stepped easing quantises the 90ms travel to four frames so the button

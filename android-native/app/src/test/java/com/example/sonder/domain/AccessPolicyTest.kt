@@ -101,7 +101,7 @@ class AccessPolicyTest {
 
     @Test
     fun `canPlay false while lockout active`() {
-        val lockout = com.example.sonder.domain.model.LockoutSnapshot("com.test", t0 + 30_000L, 0)
+        val lockout = com.example.sonder.domain.model.LockoutSnapshot("com.test", t0 + 30_000L)
         assertFalse(AccessPolicy.canPlay(lockout, t0))
         assertTrue(AccessPolicy.canPlay(lockout, t0 + 30_000L))
         assertTrue(AccessPolicy.canPlay(null, t0))
@@ -110,7 +110,7 @@ class AccessPolicyTest {
     @Test
     fun `stateFor maps to canonical states`() {
         val grant = GrantSnapshot("p", t0 + win5, t0)
-        val lockout = com.example.sonder.domain.model.LockoutSnapshot("p", t0 + 10_000L, 0)
+        val lockout = com.example.sonder.domain.model.LockoutSnapshot("p", t0 + 10_000L)
 
         assertEquals(
             EnforcementState.DISABLED,
@@ -235,5 +235,66 @@ class AccessPolicyTest {
     fun `the ceiling follows a per-app override`() {
         assertTrue(AccessPolicy.isDebtAtCap(30 * 60_000L, maxDebtMillis = 30 * 60_000L))
         assertFalse(AccessPolicy.isDebtAtCap(30 * 60_000L, maxDebtMillis = 45 * 60_000L))
+    }
+
+    @Test
+    fun `paying debt down shortens the lockout deadline`() {
+        // The lockout row is a deadline written when the debt was larger. A win that pays
+        // debt down has to rewrite it, or the wait outlives the debt it was serving.
+        val before = AccessPolicy.lockoutUntil(20 * 60_000L, t0)
+        val paid = AccessPolicy.onHandResult(HandOutcome.WIN, 20 * 60_000L, t0, AccessRules()).debtMillis
+        val after = AccessPolicy.lockoutUntil(paid, t0)
+
+        assertEquals(10 * 60_000L, paid)
+        assertEquals(t0 + 10 * 60_000L, after)
+        assertTrue(after < before)
+    }
+
+    // --- an override is user input, and the clamp is what makes it safe ---
+
+    @Test
+    fun `a zero debt ceiling is pulled up to the shortest usable span`() {
+        // At 0, isDebtAtCap is true at all times: the target locks out for good and the
+        // table never opens again, so the clamp is the difference between a bad setting and
+        // a bricked app.
+        val rules = AccessRules(maxDebtMillis = 0L).clamped()
+
+        assertEquals(10_000L, rules.maxDebtMillis)
+        assertFalse(AccessPolicy.isDebtAtCap(9_000L, rules.maxDebtMillis))
+    }
+
+    @Test
+    fun `a negative loss cannot refund debt`() {
+        val rules = AccessRules(lossDebtMillis = -60_000L).clamped()
+
+        assertEquals(10_000L, rules.lossDebtMillis)
+        assertEquals(10_000L, AccessPolicy.onHandResult(HandOutcome.LOSE, 0L, t0, rules).debtMillis)
+    }
+
+    @Test
+    fun `a zero daily cap becomes the shortest real cap rather than a spent one`() {
+        // A stored 0 spends the whole allowance before the first hand, so no win could ever
+        // grant access again.
+        assertEquals(10_000L, AccessRules(dailyCapMillis = 0L).clamped().dailyCapMillis)
+    }
+
+    @Test
+    fun `no cap stays no cap`() {
+        assertNull(AccessRules(dailyCapMillis = null).clamped().dailyCapMillis)
+    }
+
+    @Test
+    fun `an absurd override is pulled down to a day`() {
+        val rules = AccessRules(
+            winGrantMillis = Long.MAX_VALUE,
+            lossDebtMillis = 10 * 86_400_000L,
+            maxDebtMillis = Long.MAX_VALUE,
+            absenceRevokeMillis = Long.MAX_VALUE,
+        ).clamped()
+
+        assertEquals(86_400_000L, rules.winGrantMillis)
+        assertEquals(86_400_000L, rules.lossDebtMillis)
+        assertEquals(86_400_000L, rules.maxDebtMillis)
+        assertEquals(86_400_000L, rules.absenceRevokeMillis)
     }
 }

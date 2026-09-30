@@ -44,13 +44,20 @@ fun PixelTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // One source per segment, held for the whole row and keyed only by how many segments
+    // there are. Calling `remember` inside the loop below left each source keyed on nothing
+    // but its position in a loop that re-runs — the row can gain a segment (a value that
+    // matches no preset gets its own CUSTOM tab), and a source held by the wrong index
+    // would move a focus ring or a press onto the wrong segment.
+    val interactions = remember(tabs.size) { List(tabs.size) { MutableInteractionSource() } }
+
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(PixelSpace.Stroke),
     ) {
         tabs.forEachIndexed { index, label ->
             val active = index == selected
-            val interaction = remember { MutableInteractionSource() }
+            val interaction = interactions[index]
             val pressed by interaction.collectIsPressedAsState()
             val focused by interaction.collectIsFocusedAsState()
             // §18 "instant pixel-menu selection": the tab translate is the same 2-frame

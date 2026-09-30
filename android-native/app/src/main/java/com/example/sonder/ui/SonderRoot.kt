@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.navigation3.runtime.NavKey
@@ -67,14 +70,20 @@ fun SonderRoot(onboardingComplete: Boolean?) {
         else -> {
             val backStack = rememberNavBackStack(Main)
 
+            // Only needed so Back at the root can leave the app; Nav3 does not own the
+            // Activity's finish.
+            val activity = LocalActivity.current
+
             // NavPolicy decides the stack shape; this only applies the result. It can
             // never empty the stack — an empty back stack renders nothing and looks
             // like a freeze. System back, the dock, and Home's LIMIT APPS action all
             // funnel through here.
-            val applyBackStack: (List<NavKey>) -> Unit = { next ->
-                if (next != backStack.toList()) {
-                    backStack.clear()
-                    backStack.addAll(next)
+            val applyBackStack: (List<NavKey>) -> Unit = remember(backStack) {
+                { next: List<NavKey> ->
+                    if (next != backStack.toList()) {
+                        backStack.clear()
+                        backStack.addAll(next)
+                    }
                 }
             }
 
@@ -90,10 +99,23 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                 selectedTab = NavPolicy.tabOf(backStack),
                 onSelectTab = { tab -> applyBackStack(NavPolicy.select(backStack, tab)) },
             ) { contentPadding ->
+                // The insets arrive as a fresh PaddingValues on every pass of this lambda,
+                // so keying anything on them would rebuild it every time. A state instead
+                // lets the entry graph below be built once and still see the current
+                // padding: reading `padding.value` inside a composable is a snapshot read,
+                // so the screens recompose when the insets actually move.
+                val padding = rememberUpdatedState(contentPadding)
+
                 NavDisplay(
                     backStack = backStack,
                     modifier = Modifier.fillMaxSize(),
-                    onBack = { applyBackStack(NavPolicy.back(backStack)) },
+                    onBack = {
+                        // null is the policy's way of saying there is nowhere left to go.
+                        // Applying an unchanged stack instead swallowed the press, and Back
+                        // did nothing at all on Home.
+                        val next = NavPolicy.backOrLeave(backStack)
+                        if (next != null) applyBackStack(next) else activity?.finish()
+                    },
                     // Screens slide, they do not dissolve. A crossfade reads as a screen
                     // that has replaced another with no relationship to it; a slide says
                     // which way the user is going and which way Back comes home.
@@ -112,46 +134,52 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                         slideInHorizontally(tween(PixelMotion.StateMillis)) { -it } togetherWith
                             slideOutHorizontally(tween(PixelMotion.StateMillis)) { it }
                     },
-                    entryProvider = entryProvider {
-                        entry<Main> {
-                            HomeScreen(
-                                contentPadding = contentPadding,
-                                onSelectTab = { tab ->
-                                    applyBackStack(NavPolicy.select(backStack, tab))
-                                },
-                            )
-                        }
-                        entry<Targets> {
-                            TargetsScreen(
-                                contentPadding = contentPadding,
-                                // The detail rides on top of Targets, so Back and the dock
-                                // both land on the list rather than dropping to Home.
-                                onOpenAppSettings = { packageName ->
-                                    applyBackStack(backStack.toList() + AppSettings(packageName))
-                                },
-                                onAddApps = {
-                                    applyBackStack(backStack.toList() + TargetPicker)
-                                },
-                            )
-                        }
-                        entry<Stats> { StatsScreen(contentPadding = contentPadding) }
-                        entry<Settings> { SettingsScreen(contentPadding = contentPadding) }
-                        entry<AppSettings> { key ->
-                            AppSettingsScreen(
-                                packageName = key.packageName,
-                                contentPadding = contentPadding,
-                                onBack = { applyBackStack(NavPolicy.back(backStack)) },
-                            )
-                        }
-                        entry<TargetPicker> {
-                            // DONE commits in the screen before popping; CANCEL and system
-                            // Back commit nothing. All three just drop this entry, revealing
-                            // the Targets list underneath.
-                            TargetPickerScreen(
-                                contentPadding = contentPadding,
-                                onDone = leavePicker,
-                                onCancel = leavePicker,
-                            )
+                    // Built once per back-stack identity rather than on every
+                    // recomposition: the destinations are the same five every time, and
+                    // rebuilding the provider allocated a fresh set of entry lambdas —
+                    // each with its own captured padding — on every pass.
+                    entryProvider = remember(applyBackStack) {
+                        entryProvider {
+                            entry<Main> {
+                                HomeScreen(
+                                    contentPadding = padding.value,
+                                    onSelectTab = { tab ->
+                                        applyBackStack(NavPolicy.select(backStack, tab))
+                                    },
+                                )
+                            }
+                            entry<Targets> {
+                                TargetsScreen(
+                                    contentPadding = padding.value,
+                                    // The detail rides on top of Targets, so Back and the dock
+                                    // both land on the list rather than dropping to Home.
+                                    onOpenAppSettings = { packageName ->
+                                        applyBackStack(backStack.toList() + AppSettings(packageName))
+                                    },
+                                    onAddApps = {
+                                        applyBackStack(backStack.toList() + TargetPicker)
+                                    },
+                                )
+                            }
+                            entry<Stats> { StatsScreen(contentPadding = padding.value) }
+                            entry<Settings> { SettingsScreen(contentPadding = padding.value) }
+                            entry<AppSettings> { key ->
+                                AppSettingsScreen(
+                                    packageName = key.packageName,
+                                    contentPadding = padding.value,
+                                    onBack = { applyBackStack(NavPolicy.back(backStack)) },
+                                )
+                            }
+                            entry<TargetPicker> {
+                                // DONE commits in the screen before popping; CANCEL and system
+                                // Back commit nothing. All three just drop this entry, revealing
+                                // the Targets list underneath.
+                                TargetPickerScreen(
+                                    contentPadding = padding.value,
+                                    onDone = leavePicker,
+                                    onCancel = leavePicker,
+                                )
+                            }
                         }
                     },
                 )
