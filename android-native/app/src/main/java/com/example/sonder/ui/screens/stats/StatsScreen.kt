@@ -206,7 +206,9 @@ private fun HandRow(hand: HandEntity, timeFmt: SimpleDateFormat) {
                         },
                     )
                     androidx.compose.material3.Text(
-                        "debt ${hand.debtAfterMillis / 60_000}m",
+                        // What the hand was played for and what it left behind: the two
+                        // numbers that explain a ledger whose rows are all the same shape.
+                        "bet ${hand.stakeMillis / 60_000}m · bank ${hand.bankAfterMillis / 60_000}m",
                         style = MonoTypeScale.PackageId,
                         color = TextSoft,
                     )

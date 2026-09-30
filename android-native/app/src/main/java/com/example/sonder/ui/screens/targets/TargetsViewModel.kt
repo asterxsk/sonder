@@ -14,12 +14,12 @@ import kotlinx.coroutines.launch
 
 /**
  * The added targets. This screen no longer owns a tab or a search field — it shows the
- * enabled set only — so the ViewModel keeps the enumeration, the retry, and the removal.
- * The picker that owns the search has its own.
+ * enabled set only — so the ViewModel keeps the enumeration and the retry. Removal moved
+ * to the per-app settings screen, which is the only place a rule can now be changed.
  */
 @HiltViewModel
 class TargetsViewModel @Inject constructor(
-    private val targetDao: TargetDao,
+    targetDao: TargetDao,
     appsRepository: InstalledAppsRepository,
 ) : ViewModel() {
 
@@ -36,15 +36,5 @@ class TargetsViewModel @Inject constructor(
     /** Explicit recovery from [TargetsViewState.LoadFailed]; re-enters Loading first. */
     fun retry() {
         source.retry()
-    }
-
-    /**
-     * Soft-remove a target: clear the enabled flag and nothing else. The row is left in
-     * place because the per-app overrides are columns on it, so deleting would destroy
-     * the settings the user requires a later ADD to restore. The 30 s wait in the
-     * screen gates this call; the ViewModel trusts the caller.
-     */
-    fun remove(packageName: String) {
-        viewModelScope.launch { targetDao.setEnabled(packageName, enabled = false) }
     }
 }

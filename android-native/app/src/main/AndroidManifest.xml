@@ -69,8 +69,8 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Re-sweep expired grants/lockouts after a reboot, and re-arm the expiry alarms
-             that a reboot or an app update takes away with it. -->
+        <!-- Warm the bank cache after a reboot, so the first gate does not wait on Room.
+             There is nothing to re-arm: a bank is only spent while its app is in front. -->
         <receiver
             android:name=".platform.scheduling.BootReceiver"
             android:exported="false">
@@ -79,11 +79,6 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
-
-        <!-- Grant expiry alarms. -->
-        <receiver
-            android:name=".platform.scheduling.ExpiryReceiver"
-            android:exported="false" />
     </application>
 
 </manifest>

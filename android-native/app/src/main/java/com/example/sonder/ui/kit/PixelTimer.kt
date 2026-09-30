@@ -16,7 +16,7 @@ import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
 
-/** Timer accent color: amber warning, green granted, red lockout (design_v3 §13). */
+/** Timer accent color: amber warning, green granted, red for an empty bank (design_v3 §13). */
 enum class TimerTone { WARNING, GRANTED, LOCKED }
 
 /**

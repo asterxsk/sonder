@@ -12,7 +12,7 @@ import kotlin.random.Random
  * - single 52-card deck reshuffled each hand
  * - dealer stands on all 17s (including soft 17)
  * - natural blackjack is an instant win
- * - push is a free replay (no debt change)
+ * - push is a free replay (the bank is untouched)
  * Player actions are HIT and STAND only (no splits/doubles in v1 scope).
  */
 object BlackjackRules {

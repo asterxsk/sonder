@@ -23,7 +23,7 @@ object PixelPalette {
     val Muted = Color(0xFF8A8168)       // supporting text
     val Success = Color(0xFF22C55E)     // access granted
     val SuccessDark = Color(0xFF147D3C)
-    val Danger = Color(0xFFEF4444)      // lockout
+    val Danger = Color(0xFFEF4444)      // out of time
     val DangerDark = Color(0xFF9C2828)
     val Info = Color(0xFF5A9AC8)        // informational
     val Purple = Color(0xFF8B5CF6)      // special state only

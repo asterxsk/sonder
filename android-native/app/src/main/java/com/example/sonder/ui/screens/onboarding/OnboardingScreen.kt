@@ -316,7 +316,7 @@ private fun CompletionCard(onBegin: () -> Unit) {
         )
         Spacer(Modifier.height(PixelSpace.Snug))
         androidx.compose.material3.Text(
-            "Pick the apps worth the gamble.\nEvery open costs a hand.",
+            "Pick the apps worth the gamble.\nTime you win is yours to spend.",
             style = MonoTypeScale.Body,
             color = PixelPalette.Muted,
         )
@@ -335,8 +335,8 @@ private data class StepCopy(val title: String, val body: String, val reassure: S
 private fun copyFor(p: SonderPermission): StepCopy = when (p) {
     SonderPermission.ACCESSIBILITY -> StepCopy(
         title = "ACCESSIBILITY",
-        body = "Sonder needs to know which app you just opened — that's the whole trigger. It watches window changes only.",
-        reassure = "No screen content is ever read. No keystrokes. Ever.",
+        body = "Sonder needs to know which app you just opened — that's the whole trigger. It watches window changes, and reads view names to tell Reels, Shorts and Stories from the rest of an app.",
+        reassure = "View names are developer labels, not what's on screen. No screen content, no keystrokes. Ever.",
     )
     SonderPermission.OVERLAY -> StepCopy(
         title = "DISPLAY OVER OTHER APPS",
@@ -345,12 +345,12 @@ private fun copyFor(p: SonderPermission): StepCopy = when (p) {
     )
     SonderPermission.USAGE_ACCESS -> StepCopy(
         title = "USAGE ACCESS",
-        body = "Powers the app picker and your usage stats, and acts as a fallback detector.",
+        body = "A second way to see which app is in front, for when accessibility is slow to wake up. The gate leans on it as a fallback.",
         reassure = "Data stays on this device. Nothing is uploaded.",
     )
     SonderPermission.NOTIFICATIONS -> StepCopy(
         title = "NOTIFICATIONS — OPTIONAL",
-        body = "Sonder tells you when access expires or a lockout ends — otherwise you'd never know why an app is blocked.",
+        body = "Tells you when an app's bank runs dry — otherwise you'd only find out at the next gate.",
         reassure = "Only enforcement alerts. No marketing, ever. Skip it and blocking still works.",
     )
 }

@@ -10,12 +10,14 @@ data class TargetEntity(
     val label: String,
     val enabled: Boolean = true,
     val createdAtMillis: Long,
-    /** Per-app overrides; null inherits the AccessPolicy default (dailyCapMillis null = unlimited). */
-    val winGrantMillis: Long? = null,
-    val lossDebtMillis: Long? = null,
-    val maxDebtMillis: Long? = null,
-    val absenceRevokeMillis: Long? = null,
-    val dailyCapMillis: Long? = null,
+    /**
+     * Most unspent access the app's bank may hold at once. NOT NULL and defaulted rather
+     * than nullable, because there is no "inherit" left to express: with the debt model gone
+     * this is the only per-app rule there is, and one hour is the default the user was
+     * promised. `MIGRATION_4_5` writes the same default, so the schema Room expects and the
+     * rows on disk agree.
+     */
+    val maxMillis: Long = DEFAULT_MAX_MILLIS,
     /**
      * "WHOLE_APP" | "SHORTS_ONLY" — see [com.example.sonder.domain.BlockScope].
      *
@@ -25,46 +27,44 @@ data class TargetEntity(
      * default, so the schema Room expects and the rows on disk agree.
      */
     val blockScope: String = "WHOLE_APP",
-)
+) {
+    companion object {
+        /** One hour, matching `AccessPolicy.DEFAULT_MAX_MILLIS`. */
+        const val DEFAULT_MAX_MILLIS = 60 * 60_000L
+    }
+}
 
-/** One active access grant per package; absolute epoch end time. */
-@Entity(tableName = "grants")
-data class GrantEntity(
+/**
+ * One target's access bank: the whole of what used to be four tables.
+ *
+ * This replaces grants, debt, lockouts and the daily tally, because they were four
+ * descriptions of one thing — how much time the user has in this app. A row here is created
+ * by the first hand played and lives on across days; `epochDay` is what makes it a *daily*
+ * allowance without a second table, since a bank from an earlier day reads as empty.
+ */
+@Entity(tableName = "time_bank")
+data class TimeBankEntity(
     @PrimaryKey val packageName: String,
-    val endAtMillis: Long,
-    /** Last time the accessibility service saw this package in the foreground. */
+    /** Unspent access. Zero means out of time, which is what the gate is. */
+    val remainingMillis: Long,
+    /** Local day this bank belongs to (`LocalDate.toEpochDay()`); a later day reads as 0. */
+    val epochDay: Long,
+    /**
+     * Last moment this app was billed in the foreground.
+     *
+     * Elapsed is `now - lastSeen`, so this is both the drain's clock and the answer to "was
+     * the user actually here" — a stamp the coordinator refreshes at most every few seconds
+     * while the app is on screen, and never while it is not.
+     */
     val lastSeenMillis: Long,
     /**
-     * Unused. Nothing writes it — a revoked grant is deleted, so there is no row left to
-     * carry a reason. Left in the schema rather than dropped, because removing a column
-     * needs a table rebuild migration and it buys nothing.
+     * When the bank last reached zero, or 0 when it has not since it was last refilled.
+     *
+     * Removal of the target is refused for
+     * [com.example.sonder.domain.AccessPolicy.REMOVAL_LOCK_MILLIS] after this, so a bad
+     * afternoon cannot be undone by deleting the app from the list a minute later.
      */
-    val revokedReason: String? = null,
-)
-
-/** Accumulated lockout debt per package (capped at 60 min by the policy). */
-@Entity(tableName = "debt")
-data class DebtEntity(
-    @PrimaryKey val packageName: String,
-    val debtMillis: Long,
-)
-
-/** Active lockout window per package (serving debt or a spent daily cap). */
-@Entity(tableName = "lockouts")
-data class LockoutEntity(
-    @PrimaryKey val packageName: String,
-    val untilMillis: Long,
-    /** "DEBT" | "DAILY_CAP"; null on rows written before reasons existed. */
-    val reason: String? = null,
-)
-
-/** Access granted per package per local day, so a daily cap can be enforced. */
-@Entity(tableName = "daily_usage")
-data class DailyUsageEntity(
-    @PrimaryKey val packageName: String,
-    /** java.time.LocalDate.toEpochDay() for the day the time was granted. */
-    val epochDay: Long,
-    val grantedMillis: Long,
+    val emptySinceMillis: Long = 0L,
 )
 
 /**
@@ -83,7 +83,10 @@ data class HandEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val packageName: String,
     val outcome: String, // WIN, LOSE, PUSH
-    val debtAfterMillis: Long,
+    /** What the stake was, so the row can say what the hand was worth. */
+    val stakeMillis: Long,
+    /** The bank the hand left behind; 0 for every hand played under the debt model. */
+    val bankAfterMillis: Long,
     val playedAtMillis: Long,
     val label: String = "",
     val playerCards: String = "",

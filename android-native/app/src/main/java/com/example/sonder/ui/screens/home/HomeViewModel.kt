@@ -2,11 +2,9 @@ package com.example.sonder.ui.screens.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.sonder.data.db.GrantDao
-import com.example.sonder.data.db.LockoutDao
 import com.example.sonder.data.db.TargetDao
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
+import com.example.sonder.data.db.TimeBankDao
+import com.example.sonder.domain.model.TimeBankSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -20,8 +18,7 @@ import kotlinx.coroutines.flow.stateIn
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     targetDao: TargetDao,
-    grantDao: GrantDao,
-    lockoutDao: LockoutDao,
+    timeBankDao: TimeBankDao,
 ) : ViewModel() {
 
     /** One tick per second. Cold, so it only runs while [state] has a subscriber. */
@@ -34,21 +31,28 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Home's panel and rows. `null` is the Loading presentation: Room has not emitted
-     * yet, so there is nothing truthful to draw. The clock joins the combine so an
-     * active countdown keeps ticking instead of freezing until the next Room emission.
+     * yet, so there is nothing truthful to draw. The clock joins the combine so a countdown
+     * keeps ticking instead of freezing until the next Room emission.
+     *
+     * The clock is also the only thing that can notice a day rolling over: a bank belongs to
+     * the day it was earned on, and the mapper reads a stale one as nothing.
      */
     val state: StateFlow<HomeState?> =
         combine(
             targetDao.observeAll(),
-            grantDao.observeAll(),
-            lockoutDao.observeAll(),
+            timeBankDao.observeAll(),
             clock,
-        ) { targets, grants, lockouts, nowMillis ->
+        ) { targets, banks, nowMillis ->
             mapHomeState(
                 targets = targets,
-                grants = grants.map { GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis) },
-                lockouts = lockouts.map {
-                    LockoutSnapshot(it.packageName, it.untilMillis, it.reason)
+                banks = banks.map {
+                    TimeBankSnapshot(
+                        packageName = it.packageName,
+                        remainingMillis = it.remainingMillis,
+                        epochDay = it.epochDay,
+                        lastSeenMillis = it.lastSeenMillis,
+                        emptySinceMillis = it.emptySinceMillis,
+                    )
                 },
                 nowMillis = nowMillis,
             )

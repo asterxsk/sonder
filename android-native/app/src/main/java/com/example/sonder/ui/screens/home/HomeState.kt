@@ -1,22 +1,11 @@
 package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
-import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.model.EnforcementState
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
-import java.time.Instant
+import com.example.sonder.domain.model.TimeBankSnapshot
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
-
-/**
- * Which lockout a row is serving. A debt lockout is short and ticks down; a daily-cap
- * lockout runs to the next local midnight, so Home presents them differently. Null
- * `LockoutSnapshot.reason` (pre-reason rows) can only ever have been debt.
- */
-enum class HomeLockout { DEBT, DAILY_CAP }
 
 /**
  * Home's badge vocabulary. PLAYING is deliberately absent: while a gated app is open the
@@ -25,45 +14,34 @@ enum class HomeLockout { DEBT, DAILY_CAP }
  */
 enum class HomeBadge { GRANTED, LOCKED }
 
-/** One enabled target as Home renders it: canonical state plus live remaining text. */
+/** One enabled target as Home renders it: canonical state plus the bank behind it. */
 data class HomeRow(
     val packageName: String,
     val label: String,
     val state: EnforcementState,
-    /** `MM:SS` while a grant or a debt lockout is running; empty when nothing counts down. */
+    /** Time this app has banked right now, after the day check; 0 when it has none. */
+    val bankMillis: Long,
+    /** `MM:SS` while there is time in the bank; empty when there is none to count. */
     val remainingText: String,
-    /** The lockout kind when [state] is LOCKED; null otherwise. */
-    val lockout: HomeLockout? = null,
-    /** Local wall-clock `HH:mm` a DAILY_CAP row resets at; empty for every other row. */
-    val resetText: String = "",
 )
 
 /**
- * GRANTED only for a live grant. IDLE is LOCKED because the app is gated and untouched:
- * no clock is running behind it, and no Home state could honestly read as "playing".
+ * GRANTED only while there is time in the bank. IDLE is the gated, untouched app — which is
+ * what an empty bank is — and no Home state could honestly read as anything else.
  */
 internal fun HomeRow.badge(): HomeBadge =
     if (state == EnforcementState.GRANTED) HomeBadge.GRANTED else HomeBadge.LOCKED
 
-/**
- * The badge's own word when null, so an idle row reads a clean `LOCKED` rather than one
- * with a trailing space where a countdown would be. A cap lockout names the wall clock it
- * resets against instead of a countdown that would run four digits long.
- */
-internal fun HomeRow.badgeText(): String? = when {
-    lockout == HomeLockout.DAILY_CAP -> "CAPPED"
-    else -> remainingText.ifEmpty { null }
-}
+/** The badge's own word when null, so an idle row reads a clean `LOCKED` with no countdown. */
+internal fun HomeRow.badgeText(): String? = remainingText.ifEmpty { null }
 
 /**
  * Readable state word for the row's accessibility description. Idle reads LOCKED so the
  * spoken state matches the visible badge.
  */
-internal fun HomeRow.stateWord(): String = when {
-    lockout == HomeLockout.DAILY_CAP -> "DAILY CAP REACHED"
-    state == EnforcementState.LOCKED -> "LOCKED"
-    state == EnforcementState.GRANTED -> "ACCESS GRANTED"
-    state == EnforcementState.IDLE -> "LOCKED"
+internal fun HomeRow.stateWord(): String = when (state) {
+    EnforcementState.GRANTED -> "ACCESS GRANTED"
+    EnforcementState.IDLE -> "LOCKED"
     else -> "OFF"
 }
 
@@ -72,10 +50,10 @@ sealed interface HomeSummary {
     /** Nothing is limited: the LIMIT APPS prompt. */
     data object NoTargets : HomeSummary
 
-    /** Apps are limited but none is active; [enabledCount] is how many are limited. */
+    /** Apps are limited but none has time banked; [enabledCount] is how many are limited. */
     data class Idle(val enabledCount: Int) : HomeSummary
 
-    /** The highest-urgency granted-or-locked row. */
+    /** The row with the least time left, which is the one about to matter. */
     data class Active(val row: HomeRow) : HomeSummary
 }
 
@@ -89,67 +67,49 @@ data class HomeState(
 )
 
 /**
- * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here —
- * so countdown text is deterministic in tests. Grants and lockouts are indexed with
- * `associateBy` before the target walk, so one refresh costs
- * `O(targets + grants + lockouts)` instead of scanning both lists per target.
+ * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here — so
+ * countdown text is deterministic in tests.
+ *
+ * A bank from an earlier day reads as nothing, which is what makes the allowance daily
+ * without a table of its own: yesterday's leftovers are not today's access, so every app
+ * starts the day gated.
  */
 internal fun mapHomeState(
     targets: List<TargetEntity>,
-    grants: List<GrantSnapshot>,
-    lockouts: List<LockoutSnapshot>,
+    banks: List<TimeBankSnapshot>,
     nowMillis: Long,
     zoneId: ZoneId = ZoneId.systemDefault(),
 ): HomeState {
-    val grantByPackage = grants.associateBy { it.packageName }
-    val lockoutByPackage = lockouts.associateBy { it.packageName }
+    val bankByPackage = banks.associateBy { it.packageName }
 
     val rows = targets
         .filter { it.enabled } // disabled records stay in Room and appear only on Targets
         .map { target ->
-            val grant = grantByPackage[target.packageName]
-            val lockout = lockoutByPackage[target.packageName]
-            val state = AccessPolicy.stateFor(
-                packageName = target.packageName,
-                enabled = true,
-                grant = grant,
-                lockout = lockout,
-                nowMillis = nowMillis,
-            )
-            val kind = if (state == EnforcementState.LOCKED) {
-                lockout?.let { lockoutKind(it.reason) }
-            } else {
-                null
-            }
-            // A cap lockout runs to the next local midnight: it has a reset wall clock,
-            // not an interval, so it must never turn into a ticking MM:SS countdown.
-            val endsAtMillis = when {
-                state == EnforcementState.GRANTED -> grant?.endAtMillis
-                kind == HomeLockout.DEBT -> lockout?.untilMillis
-                else -> null
-            }
+            val bank = bankByPackage[target.packageName]
+            val remaining = bank?.let {
+                AccessPolicy.bankAt(
+                    remainingMillis = it.remainingMillis,
+                    epochDay = it.epochDay,
+                    nowMillis = nowMillis,
+                    zoneId = zoneId,
+                )
+            } ?: 0L
+            val state = AccessPolicy.stateFor(enabled = true, bankMillis = remaining)
             HomeRow(
                 packageName = target.packageName,
                 label = target.label,
                 state = state,
-                remainingText = endsAtMillis
-                    ?.minus(nowMillis)
-                    ?.takeIf { it > 0L }
-                    ?.let(::formatRemaining)
-                    ?: "",
-                lockout = kind,
-                resetText = if (kind == HomeLockout.DAILY_CAP) {
-                    lockout?.untilMillis?.let { formatResetClock(it, zoneId) } ?: ""
-                } else {
-                    ""
-                },
+                bankMillis = remaining,
+                remainingText = if (remaining > 0L) formatRemaining(remaining) else "",
             )
         }
-        .sortedWith(compareBy<HomeRow>({ urgency(it) }, { it.label }))
+        .sortedWith(compareBy<HomeRow>({ urgency(it) }, { it.bankMillis }, { it.label }, { it.packageName }))
 
-    val active = rows.firstOrNull {
-        it.state == EnforcementState.LOCKED || it.state == EnforcementState.GRANTED
-    }
+    // The panel names the bank that is about to run out rather than the first row in the
+    // list, because that is the one the user can still do something about.
+    val active = rows
+        .filter { it.state == EnforcementState.GRANTED }
+        .minByOrNull { it.bankMillis }
     val summary = when {
         rows.isEmpty() -> HomeSummary.NoTargets
         active != null -> HomeSummary.Active(active)
@@ -159,31 +119,16 @@ internal fun mapHomeState(
 }
 
 /**
- * Panel and list urgency. A debt lockout is short and actionable, so it outranks a
- * live grant. A cap lockout lasts the rest of the day and is not actionable, so it
- * ranks below a grant that may expire in minutes. Idle comes last.
+ * List order. An app with time banked is what the screen is about, and the smaller the
+ * bank the sooner it matters; the rest are all equally idle and fall back to name order.
+ * The package name is the last tiebreak because two apps can share a label — the sort is
+ * total, so the list never reshuffles when Room returns the same rows in another order.
  */
-private fun urgency(row: HomeRow): Int = when {
-    row.lockout == HomeLockout.DEBT -> 0
-    row.state == EnforcementState.GRANTED -> 1
-    row.lockout == HomeLockout.DAILY_CAP -> 2
-    row.state == EnforcementState.IDLE -> 3
-    else -> 4 // DISABLED never reaches here (filtered above); keep the mapping total
-}
-
-/** A null reason (a pre-reason row) can only ever have been debt. */
-private fun lockoutKind(reason: String?): HomeLockout =
-    if (reason == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP) HomeLockout.DAILY_CAP
-    else HomeLockout.DEBT
+private fun urgency(row: HomeRow): Int =
+    if (row.state == EnforcementState.GRANTED) 0 else 1
 
 /** Absolute epoch millis to the `MM:SS` the pixel timer shows. */
 internal fun formatRemaining(millis: Long): String {
     val totalSeconds = millis / 1000
     return String.format(Locale.ROOT, "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
 }
-
-/** Absolute epoch millis to the local wall-clock `HH:mm` a cap lockout resets at. */
-internal fun formatResetClock(millis: Long, zoneId: ZoneId): String =
-    ResetClock.format(Instant.ofEpochMilli(millis).atZone(zoneId))
-
-private val ResetClock: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)

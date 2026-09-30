@@ -18,7 +18,7 @@ object Notifications {
                 "Enforcement",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Access windows and lockouts"
+                description = "Tells you when an app's time bank runs out"
             },
         )
     }

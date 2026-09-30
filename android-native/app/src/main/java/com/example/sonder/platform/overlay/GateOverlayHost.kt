@@ -76,15 +76,13 @@ class GateOverlayHost @Inject constructor(
     private var unlockWatcher: Job? = null
 
     /**
-     * What a window was composed for. A gate whose package or lockout differs has to be
+     * What a window was composed for. A gate whose package or label differs has to be
      * composed again; one that matches is re-attached as it stands, which is what keeps
      * a hand in progress exactly where the user left it.
      */
     private data class ShowRequest(
         val pkg: String,
         val label: String,
-        /** Epoch millis the lockout ends at, or 0 when there is no lockout. */
-        val lockoutUntilMillis: Long,
     )
 
     /**
@@ -118,15 +116,9 @@ class GateOverlayHost @Inject constructor(
     var shownForPackage: String? = null
         private set
 
-    fun showGate(pkg: String, label: String) = show(pkg, label, lockoutUntilMillis = 0L)
-
-    /** @param untilMillis epoch millis the lockout ends at, or 0 when there is no lockout. */
-    fun showLockout(pkg: String, label: String, untilMillis: Long) =
-        show(pkg, label, untilMillis)
-
-    private fun show(pkg: String, label: String, lockoutUntilMillis: Long) {
+    fun showGate(pkg: String, label: String) {
         mainHandler.post {
-            val request = ShowRequest(pkg, label, lockoutUntilMillis)
+            val request = ShowRequest(pkg, label)
 
             // ensureOverlay, not showOverlay: the app is already covered by this exact
             // panel, so this changes nothing. A burst of foreground events can neither
@@ -153,10 +145,10 @@ class GateOverlayHost @Inject constructor(
             }
 
             // A live window is repointed in place rather than replaced. The panel changes
-            // as the enforcement state moves on — a debt reaching its ceiling, a lockout
-            // that has run out and handed the app back, a switch between two blocked apps
-            // — and tearing the window down for each of those would blink the blocked app
-            // back into view. Replacing is the fallback for a view that cannot be reused.
+            // as the enforcement state moves on — a hand resolving, the chart flipping to
+            // OUT OF TIME as a bank empties, a switch between two blocked apps — and
+            // tearing the window down for each of those would blink the blocked app back
+            // into view. Replacing is the fallback for a view that cannot be reused.
             if (root != null && repoint(pkg, request)) return@post
 
             create(pkg, request)
@@ -181,7 +173,7 @@ class GateOverlayHost @Inject constructor(
             shownForPackage = pkg
             watchUnlock(pkg)
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg lockoutUntil=${request.lockoutUntilMillis})")
+                Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg)")
             }
             true
         } catch (t: Throwable) {
@@ -216,7 +208,7 @@ class GateOverlayHost @Inject constructor(
             composedFor = request
             shownForPackage = pkg
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "OVERLAY_CREATED(pkg=$pkg lockoutUntil=${request.lockoutUntilMillis})")
+                Log.d(TAG, "OVERLAY_CREATED(pkg=$pkg)")
             }
         } catch (t: Throwable) {
             Log.e(TAG, "blocker add failed for $pkg", t)
@@ -240,8 +232,9 @@ class GateOverlayHost @Inject constructor(
             GateContent(
                 label = request.label,
                 state = state,
-                lockoutUntilMillis = request.lockoutUntilMillis,
                 onDeal = controller::deal,
+                onStake = controller::stake,
+                onAllIn = controller::allIn,
                 onHit = controller::hit,
                 onStand = controller::stand,
                 onAccessGranted = controller::releaseAccess,

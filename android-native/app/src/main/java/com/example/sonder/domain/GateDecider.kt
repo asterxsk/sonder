@@ -1,23 +1,14 @@
 package com.example.sonder.domain
 
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
-
 /** What the coordinator must do for one foreground window event. */
 enum class GateDecision {
     /** The package is not an enabled target — release any blocker. */
     PASS,
 
-    /** Active grant and no absence violation — let the app run, touch last-seen. */
+    /** The bank holds time — let the app run, and bill the foreground time against it. */
     GRANTED,
 
-    /** The grant is stale (user was away too long) — revoke and gate. */
-    REVOKE,
-
-    /** Enabled target currently serving a lockout — lockout blocker, no table. */
-    LOCKOUT,
-
-    /** Enabled target, no grant, not locked out — raise the blocker (blackjack table). */
+    /** Enabled target, empty bank — raise the blocker (blackjack table). */
     GATE,
 }
 
@@ -31,16 +22,7 @@ object GateDecider {
 
     /**
      * @param targetEnabled package is an enabled target
-     * @param grant         current grant row, or null
-     * @param lockout       current lockout row, or null
-     * @param debtAtCap     debt has reached the ceiling the app allows, so the app is in
-     *   the wait-it-out state regardless of what the lockout row says — see
-     *   [AccessPolicy.isDebtAtCap].
-     * @param absenceRevokeMillis the target's effective absence window. The caller resolves
-     *   it (the per-app override, else the build default) because this core is pure: passing
-     *   nothing here silently applied the 60-second global default to every app, so a per-app
-     *   override changed what `EnforcementRepository.evaluateAbsence` said and nothing about
-     *   what the live gate did.
+     * @param bankMillis    unspent access in the package's bank, already read for today
      * @param blockScope how much of the target is gated — the whole app, or only its
      *   short-form video surface.
      * @param scopedSurfacePresent whether that surface is the one on screen. Answered by the
@@ -49,44 +31,20 @@ object GateDecider {
      */
     fun decide(
         targetEnabled: Boolean,
-        grant: GrantSnapshot?,
-        lockout: LockoutSnapshot?,
-        nowMillis: Long,
-        debtAtCap: Boolean = false,
-        absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        bankMillis: Long,
         blockScope: BlockScope = BlockScope.WHOLE_APP,
         scopedSurfacePresent: Boolean = true,
     ): GateDecision {
         if (!targetEnabled) return GateDecision.PASS
 
         // A scoped target is a target only while its own surface is on screen. This is
-        // checked *before* the grant, not after, because the two answer different
-        // questions: a grant says "the user earned time in this app", and the scope says
-        // "this window is part of the app the user asked to gate at all". Winning a hand
-        // to watch Reels must not turn the Instagram feed into a gated surface, or the
-        // grant would unlock a screen the target was never about.
+        // checked *before* the bank, not after, because the two answer different questions:
+        // the bank says "the user earned time in this app", and the scope says "this window
+        // is part of the app the user asked to gate at all". Winning a hand to watch Reels
+        // must not turn the Instagram feed into a gated surface, or the bank would unlock a
+        // screen the target was never about.
         if (blockScope == BlockScope.SHORTS_ONLY && !scopedSurfacePresent) return GateDecision.PASS
 
-        if (grant != null && AccessPolicy.isGrantActive(grant, nowMillis)) {
-            return if (
-                AccessPolicy.shouldRevokeForAbsence(
-                    grant = grant,
-                    nowMillis = nowMillis,
-                    absenceRevokeMillis = absenceRevokeMillis,
-                )
-            ) {
-                GateDecision.REVOKE
-            } else {
-                GateDecision.GRANTED
-            }
-        }
-
-        // No active grant here — either none at all or an expired row (the caller
-        // purges expired rows so enforcement resumes). A live lockout wins, and a debt
-        // at the ceiling locks the app the same way even if its lockout row is gone.
-        if (debtAtCap) return GateDecision.LOCKOUT
-        if (lockout != null && lockout.untilMillis > nowMillis) return GateDecision.LOCKOUT
-
-        return GateDecision.GATE
+        return if (bankMillis > 0L) GateDecision.GRANTED else GateDecision.GATE
     }
 }

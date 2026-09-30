@@ -21,9 +21,10 @@ package com.example.sonder.domain
  *  - a marker that over-matches would gate a normal screen in an app the user asked to
  *    keep usable, which is the failure that gets the app uninstalled.
  *
- * The marker lists are therefore kept to names that say *shorts* or *reels* and nothing
- * generic. `reel_recycler` is in; a bare `recycler` or `feed` would be out, however
- * tempting, because those names appear on the screens the user wants left alone.
+ * The marker lists are therefore kept to names that say *shorts*, *reels* or *story* and
+ * nothing generic. `reel_recycler` is in; a bare `recycler`, `feed` or `stories_tray`
+ * would be out, however tempting, because those names appear on the screens the user
+ * wants left alone.
  *
  * Pure and unit-tested so the service and the coordinator stay thin.
  */
@@ -34,6 +35,9 @@ object ShortsCatalog {
 
     /** YouTube. Shorts is likewise reached from within the main activity. */
     private const val YOUTUBE = "com.google.android.youtube"
+
+    /** Facebook. Reels and Stories are both fragments of the main tab activity. */
+    private const val FACEBOOK = "com.facebook.katana"
 
     /**
      * package → the identifier fragments that mean "the short-form surface is on screen".
@@ -60,19 +64,33 @@ object ShortsCatalog {
             "shorts_container",
             "shorts_player",
         ),
+        FACEBOOK to listOf(
+            // The Reels viewer and its own pager, in the spellings the shipping app uses.
+            "reels_viewer",
+            "reel_viewer",
+            // Stories, which is the other half of Facebook's short-form surface. Kept to
+            // names that say "story": a bare `stories_tray` is deliberately out, because the
+            // tray sits on the top of the news feed and matching it would gate the feed.
+            "story_viewer",
+            "stories_viewer",
+        ),
     )
 
     /**
      * package → what its short-form surface is *called*, in the pixel UI's uppercase.
      *
-     * Kept beside [MARKERS] so an entry and its label are written together: the two apps do
-     * not share a name for the surface. Instagram's is Reels and YouTube's is Shorts, and a
+     * Kept beside [MARKERS] so an entry and its label are written together: the apps do
+     * not share a name for the surface. Instagram's is Reels, YouTube's is Shorts, and a
      * single "REELS & SHORTS" label told every user of either app that they were gating a
      * screen one of the two does not have.
      */
     private val SURFACE_LABELS: Map<String, String> = mapOf(
         INSTAGRAM to "REELS",
         YOUTUBE to "SHORTS",
+        // The one app whose short-form surface is genuinely two things. Naming only one of
+        // them would leave the scope control promising to gate Stories while the tab beside
+        // it said Reels.
+        FACEBOOK to "REELS & STORIES",
     )
 
     /** True when [packageName] is one this catalogue knows how to recognise. */

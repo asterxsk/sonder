@@ -7,45 +7,33 @@ import android.util.Log
 import com.example.sonder.data.repo.EnforcementRepository
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /**
- * After a reboot — or an update, which replaces the app without cancelling its alarms —
- * purge anything that expired while the device was off and re-arm the expiry alarms that
- * are still due.
+ * After a reboot — or an update — warm the enforcement cache.
  *
- * Timers themselves stay correct across a reboot, because they are absolute epoch millis;
- * what does not survive is the *alarm*, and without re-arming it a grant still running
- * would never announce its own expiry, nor be swept when it lapses.
+ * This used to purge expired grants and re-arm their expiry alarms, because a grant was an
+ * absolute wall-clock deadline that nobody would otherwise sweep. There are no alarms left:
+ * a bank only moves while the app it belongs to is in front, and the drain that moves it is
+ * driven by the accessibility service's own heartbeat. All that survives a reboot is the
+ * cache, which starts cold and has to answer before the first foreground event is decided.
  */
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
 
     @Inject lateinit var repository: EnforcementRepository
-    @Inject lateinit var expiryScheduler: GrantExpiryScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> Unit
             else -> return
         }
-        val result = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                repository.purgeExpired()
-                repository.liveGrants().forEach { (pkg, endAtMillis) ->
-                    expiryScheduler.scheduleExpiry(pkg, endAtMillis)
-                }
-            } catch (failure: Throwable) {
-                // A receiver has no caller to throw to: an escaping exception here takes the
-                // process down on every boot.
-                Log.w(TAG, "post-boot sweep failed", failure)
-            } finally {
-                result.finish()
-            }
+        try {
+            repository.start()
+        } catch (failure: Throwable) {
+            // A receiver has no caller to throw to: an escaping exception here takes the
+            // process down on every boot. A cold cache is survivable — the next foreground
+            // event warms it — so the failure is logged and dropped.
+            Log.w(TAG, "cache warm after boot failed", failure)
         }
     }
 

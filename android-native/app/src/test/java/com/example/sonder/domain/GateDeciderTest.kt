@@ -1,151 +1,53 @@
 package com.example.sonder.domain
 
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The gate decision table — what the blocker must do per foreground event.
- * Mirrors the flow in docs/android-native-v2.md §3.
+ * The per-event decision core. Three inputs, three answers: not a target passes, a target with
+ * time in its bank runs, a target with nothing gets the table. The scope cases are the ones
+ * with the subtlety in them — a scoped target is only a target while its own surface is up.
  */
 class GateDeciderTest {
 
-    private val t0 = 1_000_000L
-    private val pkg = "com.test.app"
-    private val win5 = AccessPolicy.WIN_GRANT_MILLIS
-
-    private fun grant(
-        endAt: Long = t0 + win5,
-        lastSeen: Long = t0,
-    ) = GrantSnapshot(pkg, endAt, lastSeen)
-
-    private fun lockout(until: Long = t0 + 30_000L) = LockoutSnapshot(pkg, until)
-
     @Test
-    fun `non-target packages always pass`() {
-        assertEquals(GateDecision.PASS, decide(targetEnabled = false, grant = grant(), lockout = null))
-        assertEquals(GateDecision.PASS, decide(targetEnabled = false, grant = null, lockout = lockout()))
-        assertEquals(GateDecision.PASS, decide(targetEnabled = false, grant = null, lockout = null))
+    fun `a package that is not a target passes`() {
+        assertEquals(GateDecision.PASS, decide(targetEnabled = false, bankMillis = 0L))
     }
 
     @Test
-    fun `active grant lets the app run`() {
+    fun `a package that is not a target passes even with time in its bank`() {
+        assertEquals(GateDecision.PASS, decide(targetEnabled = false, bankMillis = 30 * 60_000L))
+    }
+
+    @Test
+    fun `a target with an empty bank is gated`() {
+        assertEquals(GateDecision.GATE, decide(targetEnabled = true, bankMillis = 0L))
+    }
+
+    @Test
+    fun `a target with any time at all is granted`() {
+        assertEquals(GateDecision.GRANTED, decide(targetEnabled = true, bankMillis = 1L))
+    }
+
+    @Test
+    fun `a target with a full bank is granted`() {
         assertEquals(
             GateDecision.GRANTED,
-            decide(targetEnabled = true, grant = grant(lastSeen = t0 - 5_000L), lockout = null),
+            decide(targetEnabled = true, bankMillis = AccessPolicy.DEFAULT_MAX_MILLIS),
         )
     }
 
+    /**
+     * The bank is read before the decision, so a stale negative — a debt row from a build that
+     * had one, a bank written before a clamp existed — must still gate rather than pass.
+     */
     @Test
-    fun `expired grant passes through to gating`() {
-        // End time passed while the user was elsewhere: no revoke, but the app is gated again.
-        assertEquals(
-            GateDecision.GATE,
-            decide(targetEnabled = true, grant = grant(endAt = t0 - 1), lockout = null),
-        )
+    fun `a negative bank is gated`() {
+        assertEquals(GateDecision.GATE, decide(targetEnabled = true, bankMillis = -1L))
     }
 
-    @Test
-    fun `absence beyond the window revokes the grant`() {
-        val stale = grant(lastSeen = t0 - AccessPolicy.ABSENCE_REVOKE_MILLIS - 1)
-        assertEquals(GateDecision.REVOKE, decide(targetEnabled = true, grant = stale, lockout = null))
-    }
-
-    @Test
-    fun `absence within the window keeps the grant`() {
-        val fresh = grant(lastSeen = t0 - AccessPolicy.ABSENCE_REVOKE_MILLIS + 1_000L)
-        assertEquals(GateDecision.GRANTED, decide(targetEnabled = true, grant = fresh, lockout = null))
-    }
-
-    @Test
-    fun `absence boundary is exclusive at exactly sixty seconds`() {
-        val exact = grant(lastSeen = t0 - AccessPolicy.ABSENCE_REVOKE_MILLIS)
-        assertEquals(GateDecision.GRANTED, decide(targetEnabled = true, grant = exact, lockout = null))
-    }
-
-    @Test
-    fun `active lockout shows the lockout blocker instead of the table`() {
-        assertEquals(
-            GateDecision.LOCKOUT,
-            decide(targetEnabled = true, grant = null, lockout = lockout(until = t0 + 1)),
-        )
-    }
-
-    @Test
-    fun `expired lockout gates again`() {
-        assertEquals(
-            GateDecision.GATE,
-            decide(targetEnabled = true, grant = null, lockout = lockout(until = t0)),
-        )
-    }
-
-    @Test
-    fun `lockout wins over a stale grant row`() {
-        assertEquals(
-            GateDecision.LOCKOUT,
-            decide(targetEnabled = true, grant = grant(endAt = t0 - 1), lockout = lockout()),
-        )
-    }
-
-    @Test
-    fun `enabled target without grant or lockout gates`() {
-        assertEquals(GateDecision.GATE, decide(targetEnabled = true, grant = null, lockout = null))
-    }
-
-    @Test
-    fun `active grant beats an active lockout row`() {
-        // Both rows present (stale DB rows) — an active grant should win.
-        assertEquals(
-            GateDecision.GRANTED,
-            decide(targetEnabled = true, grant = grant(), lockout = lockout()),
-        )
-    }
-
-    @Test
-    fun `debt at its ceiling locks the app with no lockout row at all`() {
-        // The ceiling is its own lock: the hand that reached it wrote a lockout, but the
-        // wait must hold even if that row is gone, or the table reopens against a debt
-        // that can no longer be paid down.
-        assertEquals(
-            GateDecision.LOCKOUT,
-            decide(targetEnabled = true, grant = null, lockout = null, debtAtCap = true),
-        )
-    }
-
-    @Test
-    fun `debt below its ceiling still opens the table`() {
-        assertEquals(
-            GateDecision.GATE,
-            decide(targetEnabled = true, grant = null, lockout = null, debtAtCap = false),
-        )
-    }
-
-    @Test
-    fun `a live grant still wins over a debt at the ceiling`() {
-        // Precedence is unchanged: granted access is granted access.
-        assertEquals(
-            GateDecision.GRANTED,
-            decide(targetEnabled = true, grant = grant(), lockout = null, debtAtCap = true),
-        )
-    }
-
-    @Test
-    fun `the per-app absence window is the one the decision uses`() {
-        // Seen 30 seconds ago: outside a 10-second override, comfortably inside the 60-second
-        // default. The override is what the live gate has to honour — resolving it anywhere
-        // else meant a per-app setting changed one answer and not the one that blocks.
-        val seen = grant(lastSeen = t0 - 30_000L)
-
-        assertEquals(
-            GateDecision.REVOKE,
-            decide(targetEnabled = true, grant = seen, lockout = null, absenceRevokeMillis = 10_000L),
-        )
-        assertEquals(
-            GateDecision.GRANTED,
-            decide(targetEnabled = true, grant = seen, lockout = null, absenceRevokeMillis = 60_000L),
-        )
-    }
+    // --- scope -----------------------------------------------------------------
 
     @Test
     fun `a shorts-scoped target passes anywhere that is not the short-form surface`() {
@@ -154,8 +56,7 @@ class GateDeciderTest {
             GateDecision.PASS,
             decide(
                 targetEnabled = true,
-                grant = null,
-                lockout = null,
+                bankMillis = 0L,
                 blockScope = BlockScope.SHORTS_ONLY,
                 scopedSurfacePresent = false,
             ),
@@ -168,8 +69,7 @@ class GateDeciderTest {
             GateDecision.GATE,
             decide(
                 targetEnabled = true,
-                grant = null,
-                lockout = null,
+                bankMillis = 0L,
                 blockScope = BlockScope.SHORTS_ONLY,
                 scopedSurfacePresent = true,
             ),
@@ -177,16 +77,15 @@ class GateDeciderTest {
     }
 
     @Test
-    fun `a scoped-surface pass outranks a live grant`() {
-        // Not the same thing as revoking: the grant is untouched and still runs out its
-        // clock. It simply has nothing to authorise on a screen this target does not gate,
-        // so a grant spent on the feed cannot be what lets Reels open later.
+    fun `a scoped-surface pass outranks a banked balance`() {
+        // Not the same as spending it: the bank is untouched and still there for the surface
+        // this target does gate. It simply has nothing to authorise on a screen the target was
+        // never about, so winning a hand to watch Reels cannot open the feed.
         assertEquals(
             GateDecision.PASS,
             decide(
                 targetEnabled = true,
-                grant = grant(),
-                lockout = null,
+                bankMillis = 30 * 60_000L,
                 blockScope = BlockScope.SHORTS_ONLY,
                 scopedSurfacePresent = false,
             ),
@@ -194,18 +93,14 @@ class GateDeciderTest {
     }
 
     @Test
-    fun `a scoped-surface pass outranks a lockout`() {
-        // The debt was earned in Reels and applies to Reels — the feed is not where the
-        // user pays it, and stranding the blocker over the feed would be the punishment
-        // landing on the wrong screen.
+    fun `a shorts-scoped target with time still runs on its surface`() {
         assertEquals(
-            GateDecision.PASS,
+            GateDecision.GRANTED,
             decide(
                 targetEnabled = true,
-                grant = null,
-                lockout = lockout(),
+                bankMillis = 30 * 60_000L,
                 blockScope = BlockScope.SHORTS_ONLY,
-                scopedSurfacePresent = false,
+                scopedSurfacePresent = true,
             ),
         )
     }
@@ -216,7 +111,7 @@ class GateDeciderTest {
         // caller without a probe gets: passing false there must not become a free pass.
         assertEquals(
             GateDecision.GATE,
-            decide(targetEnabled = true, grant = null, lockout = null, scopedSurfacePresent = false),
+            decide(targetEnabled = true, bankMillis = 0L, scopedSurfacePresent = false),
         )
     }
 
@@ -226,8 +121,7 @@ class GateDeciderTest {
             GateDecision.PASS,
             decide(
                 targetEnabled = false,
-                grant = null,
-                lockout = null,
+                bankMillis = 0L,
                 blockScope = BlockScope.SHORTS_ONLY,
                 scopedSurfacePresent = true,
             ),
@@ -236,19 +130,12 @@ class GateDeciderTest {
 
     private fun decide(
         targetEnabled: Boolean,
-        grant: GrantSnapshot?,
-        lockout: LockoutSnapshot?,
-        debtAtCap: Boolean = false,
-        absenceRevokeMillis: Long = AccessPolicy.ABSENCE_REVOKE_MILLIS,
+        bankMillis: Long,
         blockScope: BlockScope = BlockScope.WHOLE_APP,
         scopedSurfacePresent: Boolean = true,
     ): GateDecision = GateDecider.decide(
         targetEnabled = targetEnabled,
-        grant = grant,
-        lockout = lockout,
-        nowMillis = t0,
-        debtAtCap = debtAtCap,
-        absenceRevokeMillis = absenceRevokeMillis,
+        bankMillis = bankMillis,
         blockScope = blockScope,
         scopedSurfacePresent = scopedSurfacePresent,
     )

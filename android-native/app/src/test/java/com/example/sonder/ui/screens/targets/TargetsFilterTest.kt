@@ -114,24 +114,21 @@ class TargetsFilterTest {
     }
 
     @Test
-    fun `add only ever materialises a row, so it cannot overwrite stored overrides`() {
-        // The user's named invariant: X only clears enabled, and ADD restores the app with
-        // the settings it had. It holds structurally — ADD inserts only where there is no
-        // row, and its other write names only `enabled` and `label` — so what the pure
-        // layer has to guarantee is that the row it hands to the insert path carries
-        // nothing but a fresh enabled target. A null here is the assertion: there is no
-        // stored override for it to carry, and none for it to write back over a newer one.
+    fun `add only ever materialises a row, so it cannot overwrite a stored rule`() {
+        // X only clears enabled, and ADD restores the app with the settings it had. That
+        // holds structurally — ADD inserts only where there is no row, and its other write
+        // names only `enabled` and `label` — so what the pure layer has to guarantee is that
+        // the row it hands to the insert path carries nothing but a fresh enabled target.
+        // With the per-app rule collapsed to the ceiling, that is one field: the row must
+        // carry the default rather than anything the user chose elsewhere.
         val added = newTarget("com.example.beta", "Beta", nowMillis = 99L)
 
         assertEquals("com.example.beta", added.packageName)
         assertEquals("Beta", added.label)
         assertTrue(added.enabled)
         assertEquals(99L, added.createdAtMillis)
-        assertNull(added.winGrantMillis)
-        assertNull(added.lossDebtMillis)
-        assertNull(added.maxDebtMillis)
-        assertNull(added.absenceRevokeMillis)
-        assertNull(added.dailyCapMillis)
+        assertEquals(TargetEntity.DEFAULT_MAX_MILLIS, added.maxMillis)
+        assertEquals("WHOLE_APP", added.blockScope)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

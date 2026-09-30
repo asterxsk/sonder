@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -33,30 +32,12 @@ import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
 
 /**
- * One row action counting down, already resolved into what the row draws. The row is
- * told what to show, not which delayed action it belongs to — the hold lengths and the
- * countdown itself are the Targets screen's business, and the kit stays below it.
- * [onClick] is the cancel: the strip is the control that started the wait, so tapping
- * it again is how the user backs out.
- */
-data class TargetRowPending(
-    val label: String,
-    val description: String,
-    val tone: Color,
-    val onClick: () -> Unit,
-)
-
-/**
  * design_v3.md §8: target rows are inventory-like objects — pixel border, framed icon
- * box, name + package metadata. The row is no longer a single switch: a target is
- * added and removed deliberately, not toggled in place, so the whole row is inert and
- * its only controls are the two framed glyphs that start the delayed edit and remove.
- * The framed box holds the real launcher bitmap when one resolved; [iconGlyph] is the
- * fallback for a null icon, so a row never draws an empty frame.
- *
- * [pending] is non-null only for the row whose action is counting down; that row swaps
- * both glyphs for one [PixelDelayedButton], so the wait is visible rather than a
- * control that appears to have done nothing.
+ * box, name + package metadata. The row is not a switch: a target is added and removed
+ * deliberately, not toggled in place, so the row is inert and its one control is the arrow
+ * that opens the app's own settings screen, where both the rule and the removal live. The
+ * framed box holds the real launcher bitmap when one resolved; [iconGlyph] is the fallback
+ * for a null icon, so a row never draws an empty frame.
  *
  * [scopeNote] is set only for a target that does not gate the whole app, and it is not
  * decoration: without it "Instagram is limited" reads as the whole app being blocked, which
@@ -68,13 +49,11 @@ data class TargetRowPending(
 fun TargetRow(
     appName: String,
     packageName: String,
-    // The callbacks take the package rather than closing over it, so the list can hand
-    // one pair of stable lambdas to every row instead of allocating two per row per
+    // The callback takes the package rather than closing over it, so the list can hand
+    // one stable lambda to every row instead of allocating one per row per
     // recomposition — an allocation a LazyColumn can never hoist for itself.
-    onEdit: (String) -> Unit,
-    onRemove: (String) -> Unit,
+    onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
-    pending: TargetRowPending? = null,
     iconGlyph: String = "▣",
     iconBitmap: Bitmap? = null,
     scopeNote: String? = null,
@@ -83,10 +62,9 @@ fun TargetRow(
     // ImageBitmap for every visible row.
     val iconImage = remember(iconBitmap) { iconBitmap?.asImageBitmap() }
 
-    // Bound once per package, so the row's own buttons hold stable references even though
-    // the callbacks above are shared by every row.
-    val edit = remember(packageName, onEdit) { { onEdit(packageName) } }
-    val remove = remember(packageName, onRemove) { { onRemove(packageName) } }
+    // Bound once per package, so the row's own button holds a stable reference even though
+    // the callback above is shared by every row.
+    val open = remember(packageName, onOpen) { { onOpen(packageName) } }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -142,29 +120,14 @@ fun TargetRow(
                 )
             }
         }
-        if (pending != null) {
-            PixelDelayedButton(
-                text = pending.label,
-                contentDescription = pending.description,
-                onClick = pending.onClick,
-                tone = pending.tone,
-                modifier = Modifier.widthIn(min = DelayedStripMinWidth),
-            )
-        } else {
-            RowGlyphButton(
-                glyph = "✎",
-                description = "Edit $appName settings",
-                tone = PixelPalette.Primary,
-                onClick = edit,
-            )
-            RowGlyphButton(
-                glyph = "✕",
-                description = "Remove $appName",
-                tone = PixelPalette.Danger,
-                onClick = remove,
-                modifier = Modifier.padding(start = PixelSpace.Snug),
-            )
-        }
+        RowGlyphButton(
+            glyph = "›",
+            // The arrow opens the app's rule, which is also where its removal lives, so
+            // the description names the destination rather than the glyph.
+            description = "Open $appName settings",
+            tone = PixelPalette.Primary,
+            onClick = open,
+        )
     }
 }
 
@@ -200,6 +163,3 @@ private fun RowGlyphButton(
 
 /** §8's icon slot. 40dp nominal; unboxed, since the row is the frame. */
 private val IconBoxSize = 40.dp
-
-/** Enough for a `REMOVE 0:24` readout, so the strip is legible, not a squeezed chip. */
-private val DelayedStripMinWidth = 112.dp

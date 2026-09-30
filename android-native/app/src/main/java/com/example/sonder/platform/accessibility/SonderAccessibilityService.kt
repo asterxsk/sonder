@@ -7,7 +7,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Rect
+import android.media.AudioManager
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -58,6 +61,14 @@ class SonderAccessibilityService : AccessibilityService() {
         getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
     }
 
+    /** Reference to the platform's audio service, for [pauseMedia]. */
+    private val audioManager by lazy {
+        getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    /** Reused across probes: allocating a Rect per window per pass is per-pass garbage. */
+    private val pipBounds = Rect()
+
     /**
      * Screen off = the blocker must go: it must never cover the keyguard, and there is
      * nothing on screen to enforce against. Screen on starts that enforcement again.
@@ -93,6 +104,8 @@ class SonderAccessibilityService : AccessibilityService() {
             activePackage = ActiveWindowPackage(::activePackage),
             content = ActiveWindowContent(::showsMarkers),
             appCloser = AppCloser(::closePackage),
+            mediaPauser = MediaPauser(::pauseMedia),
+            pipWindows = PipWindows(::hasPipWindow),
         )
         AccessibilityGate.onServiceConnected(this)
     }
@@ -294,6 +307,60 @@ class SonderAccessibilityService : AccessibilityService() {
         if (BuildConfig.DEBUG) Log.d(TAG, "APP_CLOSED(pkg=$packageName)")
     }
 
+    /**
+     * Stop what the app in front is playing — see [MediaPauser], which is the contract this
+     * implements.
+     *
+     * `KEYCODE_MEDIA_PAUSE` rather than `KEYCODE_MEDIA_PLAY_PAUSE`: the latter *toggles*, so
+     * dispatching it at an app that is already paused would start it — the exact opposite of
+     * what the blocker wants, and reachable whenever the user had paused the reel themselves
+     * before the gate went up. A dedicated pause is a no-op on an app that is not playing.
+     *
+     * The key goes to whoever holds the media session, which is the app the user was watching:
+     * our own overlay is deliberately not focusable, so it cannot be holding one. A failure
+     * here is logged and dropped — the blocker is already up, and a video that keeps playing
+     * is a nuisance, not a hole in the gate.
+     */
+    private fun pauseMedia() {
+        runCatching {
+            val now = android.os.SystemClock.uptimeMillis()
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0),
+            )
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE, 0),
+            )
+            if (BuildConfig.DEBUG) Log.d(TAG, "MEDIA_PAUSED")
+        }.onFailure { Log.w(TAG, "media pause failed", it) }
+    }
+
+    /**
+     * Whether [packageName] owns a window much smaller than the screen — see [PipWindows],
+     * which is the contract this implements, including why the answer fails closed on an
+     * unmeasurable window.
+     *
+     * Both dimensions are tested rather than the area: a PiP window is a small rectangle, and
+     * a full-screen window with a big letterboxed video inside it is not one. The threshold is
+     * two fifths of the screen in each direction, which is comfortably above Android's own
+     * maximum PiP size and comfortably below any window a user would call "the app".
+     *
+     * The window's own package is read from its root, the same way [activePackage] reads it,
+     * because the window-type check alone would answer about the *system's* PiP container
+     * rather than about the app inside it.
+     */
+    private fun hasPipWindow(packageName: String): Boolean = runCatching {
+        val listed = windows ?: return@runCatching false
+        val metrics = resources.displayMetrics
+        val maxWidth = metrics.widthPixels * PIP_MAX_SCREEN_FRACTION
+        val maxHeight = metrics.heightPixels * PIP_MAX_SCREEN_FRACTION
+        listed.any { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@any false
+            if (window.root?.packageName?.toString() != packageName) return@any false
+            window.getBoundsInScreen(pipBounds)
+            pipBounds.width() in 1..maxWidth.toInt() && pipBounds.height() in 1..maxHeight.toInt()
+        }
+    }.getOrDefault(false)
+
     override fun onInterrupt() = Unit
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -349,6 +416,15 @@ class SonderAccessibilityService : AccessibilityService() {
          * the cost of a miss is an ungated feed, and that is the direction to fail in.
          */
         const val MAX_NODES_VISITED = 400
+
+        /**
+         * How much of the screen a window may cover and still count as picture-in-picture.
+         *
+         * Two fifths in each direction: above Android's own maximum PiP size and far below
+         * any window a user would call "the app". Asserting both dimensions is what keeps a
+         * full-screen window with a letterboxed video inside it from reading as a float.
+         */
+        private const val PIP_MAX_SCREEN_FRACTION = 0.4f
     }
 }
 

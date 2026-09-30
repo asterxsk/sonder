@@ -36,13 +36,10 @@ android {
         targetSdk = 36
         versionCode = releaseVersionCode?.toIntOrNull() ?: 1
         versionName = releaseVersionName ?: "1.0"
-        // Enforcement timers, in the build rather than only in the debug variant: the
-        // release values have to exist for the code that reads them to compile, and the
-        // debug block below shortens them so rules can be checked on-device in seconds.
-        // RuleDefaults takes the min against the policy constant, so a shortened value
-        // here can only ever make a timer stricter, never longer.
-        buildConfigField("long", "ACCESS_WINDOW_MILLIS", "300000L")
-        buildConfigField("long", "ABSENCE_REVOKE_MILLIS", "60000L")
+        // No enforcement timers are declared here any more. Every one of them was wall-clock
+        // — an access window, an absence window, a grant expiry — and the bank model replaced
+        // all three with time that only moves while the app it belongs to is in front, so
+        // there is nothing left to shorten for a debug build.
     }
 
     signingConfigs {
@@ -76,10 +73,6 @@ android {
             }
         }
         debug {
-            // Debug builds shorten timers so enforcement rules can be verified on-device
-            // in seconds: a 60-second access window and a 20-second absence window.
-            buildConfigField("long", "ACCESS_WINDOW_MILLIS", "60000L")
-            buildConfigField("long", "ABSENCE_REVOKE_MILLIS", "20000L")
         }
     }
     compileOptions {

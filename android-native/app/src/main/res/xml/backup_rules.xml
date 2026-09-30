@@ -3,12 +3,13 @@
    See https://developer.android.com/guide/topics/data/autobackup
 
    The enforcement database is deliberately not backed up. It is not a record of what the
-   user configured so much as the state of a running timer: grants, debt, lockouts and the
-   day's tally, all keyed on absolute epoch millis. Restored onto a different device at a
-   different moment, a grant lets an app be used without a hand ever being played, and a
-   lockout can arrive with a deadline that no longer means anything. SQLite backup works at
-   file granularity, so the targets list travels with them — the price of not restoring a
-   lockout onto a device that never earned it.
+   user configured so much as the state of a running clock: the banks, the day each belongs
+   to and the moment each was last billed, all keyed on absolute epoch millis. Restored
+   onto a different device at a different moment, a bank is time nobody won, and the list
+   of targets it belongs to is a decision the user is supposed to make again on the new
+   device. SQLite backup works at file granularity, so excluding the database takes the
+   targets list with it — the price of not restoring minutes onto a phone that never
+   earned them.
 -->
 <full-backup-content>
     <exclude domain="database" path="." />

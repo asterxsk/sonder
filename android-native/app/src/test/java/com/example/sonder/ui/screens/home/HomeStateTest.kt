@@ -1,364 +1,196 @@
 package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
-import com.example.sonder.data.repo.EnforcementRepository
+import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.model.EnforcementState
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
-import java.time.ZoneOffset
+import com.example.sonder.domain.model.TimeBankSnapshot
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Home's pure mapper. Every case supplies `nowMillis`, so remaining text is
- * deterministic — no clock, no Room, no Android.
+ * Home's mapper. It reads a bank that belongs to a day, so the day is an input here as much as
+ * the clock is — a row that reads yesterday's balance as today's is the whole failure mode this
+ * mapper has to not have.
  */
 class HomeStateTest {
 
-    private val t0 = 1_000_000L
+    private val utc = ZoneId.of("UTC")
+    private val t0 = 1_700_000_000_000L
+    private val today = AccessPolicy.epochDayOf(t0, utc)
 
-    private fun target(packageName: String, label: String, enabled: Boolean = true) = TargetEntity(
+    @Test
+    fun `no targets is the LIMIT APPS prompt`() {
+        val state = mapHomeState(targets = emptyList(), banks = emptyList(), nowMillis = t0, zoneId = utc)
+        assertEquals(HomeSummary.NoTargets, state.summary)
+        assertTrue(state.rows.isEmpty())
+    }
+
+    @Test
+    fun `a disabled target is not on Home at all`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a", enabled = false)),
+            banks = listOf(bank("com.example.a", 30 * 60_000L)),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(HomeSummary.NoTargets, state.summary)
+        assertTrue(state.rows.isEmpty())
+    }
+
+    @Test
+    fun `an enabled target with nothing banked is idle`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a")),
+            banks = emptyList(),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
+        assertEquals(0L, state.rows.single().bankMillis)
+        assertEquals("", state.rows.single().remainingText)
+    }
+
+    @Test
+    fun `an enabled target with a bank is the active row`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a", label = "App")),
+            banks = listOf(bank("com.example.a", 29 * 60_000L)),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        val row = (state.summary as HomeSummary.Active).row
+        assertEquals("com.example.a", row.packageName)
+        assertEquals(29 * 60_000L, row.bankMillis)
+        assertEquals("29:00", row.remainingText)
+        assertEquals(EnforcementState.GRANTED, row.state)
+    }
+
+    @Test
+    fun `a bank from yesterday reads as nothing and the row goes idle`() {
+        // The daily allowance without a daily table: the row survives midnight, it simply
+        // stops counting, and every app starts the day gated.
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a")),
+            banks = listOf(bank("com.example.a", 30 * 60_000L, epochDay = today - 1)),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
+        assertEquals(0L, state.rows.single().bankMillis)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
+    }
+
+    @Test
+    fun `the panel names the bank that is about to run out`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a"), target("com.example.b")),
+            banks = listOf(
+                bank("com.example.a", 30 * 60_000L),
+                bank("com.example.b", 2 * 60_000L),
+            ),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals("com.example.b", (state.summary as HomeSummary.Active).row.packageName)
+        // ...and the list agrees: the smaller bank is the one that matters first.
+        assertEquals("com.example.b", state.rows.first().packageName)
+    }
+
+    @Test
+    fun `rows with no bank fall back to name order`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.c"), target("com.example.a")),
+            banks = emptyList(),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(listOf("com.example.a", "com.example.c"), state.rows.map { it.packageName })
+    }
+
+    @Test
+    fun `a granted row outranks an idle one`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a"), target("com.example.z")),
+            banks = listOf(bank("com.example.z", 60_000L)),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals("com.example.z", state.rows.first().packageName)
+    }
+
+    @Test
+    fun `a bank with nothing left is not an active row`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a")),
+            banks = listOf(bank("com.example.a", 0L, emptySinceMillis = t0)),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
+        assertNull(state.rows.single().badgeText())
+    }
+
+    @Test
+    fun `the idle count is the number of limited apps`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a"), target("com.example.b"), target("com.example.c")),
+            banks = emptyList(),
+            nowMillis = t0,
+            zoneId = utc,
+        )
+        assertEquals(HomeSummary.Idle(enabledCount = 3), state.summary)
+    }
+
+    @Test
+    fun `a row with time reads GRANTED and one without reads LOCKED`() {
+        val granted = row(bankMillis = 30 * 60_000L)
+        assertEquals(HomeBadge.GRANTED, granted.badge())
+        assertEquals("30:00", granted.badgeText())
+        assertEquals("ACCESS GRANTED", granted.stateWord())
+
+        val idle = row(bankMillis = 0L)
+        assertEquals(HomeBadge.LOCKED, idle.badge())
+        assertEquals("LOCKED", idle.stateWord())
+    }
+
+    @Test
+    fun `remaining text is minutes and seconds`() {
+        assertEquals("00:30", formatRemaining(30_000L))
+        assertEquals("29:30", formatRemaining(29 * 60_000L + 30_000L))
+    }
+
+    private fun target(
+        packageName: String,
+        label: String = "App",
+        enabled: Boolean = true,
+    ) = TargetEntity(
         packageName = packageName,
         label = label,
         enabled = enabled,
-        createdAtMillis = 0L,
+        createdAtMillis = t0,
     )
 
-    private fun grant(packageName: String, endAtMillis: Long) =
-        GrantSnapshot(packageName = packageName, endAtMillis = endAtMillis, lastSeenMillis = t0)
+    private fun bank(
+        packageName: String,
+        remainingMillis: Long,
+        epochDay: Long = today,
+        emptySinceMillis: Long = 0L,
+    ) = TimeBankSnapshot(
+        packageName = packageName,
+        remainingMillis = remainingMillis,
+        epochDay = epochDay,
+        lastSeenMillis = t0,
+        emptySinceMillis = emptySinceMillis,
+    )
 
-    private fun lockout(packageName: String, untilMillis: Long, reason: String? = null) =
-        LockoutSnapshot(
-            packageName = packageName,
-            untilMillis = untilMillis,
-            reason = reason,
-        )
-
-    private fun capLockout(packageName: String, untilMillis: Long) =
-        lockout(packageName, untilMillis, reason = EnforcementRepository.LOCKOUT_REASON_DAILY_CAP)
-
-    private fun HomeState.row(packageName: String) = rows.single { it.packageName == packageName }
-
-    @Test
-    fun `excludes disabled targets`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.a", "ALPHA"), target("com.b", "BETA", enabled = false)),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals(listOf("com.a"), state.rows.map { it.packageName })
-    }
-
-    @Test
-    fun `maps grants and lockouts to the right state at the supplied time`() {
-        val targets = listOf(target("com.g", "GRANT"), target("com.l", "LOCK"), target("com.i", "IDLE"))
-        val grants = listOf(grant("com.g", t0 + 60_000L))
-        val lockouts = listOf(lockout("com.l", t0 + 120_000L))
-
-        val now = mapHomeState(targets, grants, lockouts, nowMillis = t0)
-        assertEquals(EnforcementState.GRANTED, now.row("com.g").state)
-        assertEquals(EnforcementState.LOCKED, now.row("com.l").state)
-        assertEquals(EnforcementState.IDLE, now.row("com.i").state)
-
-        // The same records read at a later supplied time: both windows have closed.
-        val later = mapHomeState(targets, grants, lockouts, nowMillis = t0 + 120_000L)
-        assertEquals(EnforcementState.IDLE, later.row("com.g").state)
-        assertEquals(EnforcementState.IDLE, later.row("com.l").state)
-    }
-
-    @Test
-    fun `formats positive remaining time as MM SS`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.g", "GRANT")),
-            grants = listOf(grant("com.g", t0 + 125_000L)),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals("02:05", state.row("com.g").remainingText)
-    }
-
-    @Test
-    fun `remaining text changes for timestamps one second apart`() {
-        val targets = listOf(target("com.g", "GRANT"))
-        val grants = listOf(grant("com.g", t0 + 60_000L))
-
-        val first = mapHomeState(targets, grants, emptyList(), nowMillis = t0).row("com.g").remainingText
-        val second = mapHomeState(targets, grants, emptyList(), nowMillis = t0 + 1_000L).row("com.g").remainingText
-
-        assertEquals("01:00", first)
-        assertEquals("00:59", second)
-        assertNotEquals(first, second)
-    }
-
-    @Test
-    fun `idle and expired rows carry no remaining text`() {
-        val idle = mapHomeState(
-            targets = listOf(target("com.i", "IDLE")),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-        assertEquals("", idle.row("com.i").remainingText)
-
-        val expired = mapHomeState(
-            targets = listOf(target("com.g", "GRANT")),
-            grants = listOf(grant("com.g", t0)),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-        assertEquals("", expired.row("com.g").remainingText)
-    }
-
-    @Test
-    fun `orders locked then granted then idle, then by label`() {
-        val state = mapHomeState(
-            targets = listOf(
-                target("com.i1", "BETA"),
-                target("com.g1", "ZULU"),
-                target("com.l1", "ALPHA"),
-                target("com.l2", "CHARLIE"),
-                target("com.i2", "ALPHA"),
-            ),
-            grants = listOf(grant("com.g1", t0 + 60_000L)),
-            lockouts = listOf(lockout("com.l1", t0 + 60_000L), lockout("com.l2", t0 + 60_000L)),
-            nowMillis = t0,
-        )
-
-        assertEquals(
-            listOf("com.l1", "com.l2", "com.g1", "com.i2", "com.i1"),
-            state.rows.map { it.packageName },
-        )
-    }
-
-    @Test
-    fun `summary picks the locked row over a live grant`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.g", "GRANT APP"), target("com.l", "LOCK APP"), target("com.i", "IDLE APP")),
-            grants = listOf(grant("com.g", t0 + 300_000L)),
-            lockouts = listOf(lockout("com.l", t0 + 600_000L)),
-            nowMillis = t0,
-        )
-
-        assertEquals(EnforcementState.LOCKED, state.row("com.l").state)
-        assertEquals("10:00", state.row("com.l").remainingText)
-        assertEquals(HomeSummary.Active(state.row("com.l")), state.summary)
-    }
-
-    @Test
-    fun `summary picks a live grant over idle rows`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.i", "IDLE APP"), target("com.g", "GRANT APP")),
-            grants = listOf(grant("com.g", t0 + 300_000L)),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals(HomeSummary.Active(state.row("com.g")), state.summary)
-    }
-
-    @Test
-    fun `no targets produces the no targets summary`() {
-        val state = mapHomeState(
-            targets = emptyList(),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals(HomeSummary.NoTargets, state.summary)
-        assertTrue(state.rows.isEmpty())
-    }
-
-    @Test
-    fun `limited but inactive targets produce the idle summary with the enabled count`() {
-        val state = mapHomeState(
-            targets = listOf(
-                target("com.a", "ALPHA"),
-                target("com.b", "BETA"),
-                target("com.c", "CHARLIE", enabled = false),
-            ),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals(HomeSummary.Idle(enabledCount = 2), state.summary)
-    }
-
-    @Test
-    fun `expired grant and lockout fall back to the idle summary`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.a", "ALPHA")),
-            grants = listOf(grant("com.a", t0)),
-            lockouts = listOf(lockout("com.a", t0)),
-            nowMillis = t0,
-        )
-
-        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
-    }
-
-    @Test
-    fun `disabling every target leaves nothing limited`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.a", "ALPHA", enabled = false)),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        assertEquals(HomeSummary.NoTargets, state.summary)
-        assertTrue(state.rows.isEmpty())
-    }
-
-    @Test
-    fun `cap lockout shows the reset wall clock instead of a countdown`() {
-        // 2024-01-01T00:00:00Z: a production cap lockout runs to the next local midnight.
-        val midnight = 1_704_067_200_000L
-        val state = mapHomeState(
-            targets = listOf(target("com.c", "CAPPED")),
-            grants = emptyList(),
-            lockouts = listOf(capLockout("com.c", midnight)),
-            nowMillis = midnight - 3 * 60 * 60_000L,
-            zoneId = ZoneOffset.UTC,
-        )
-
-        val row = state.row("com.c")
-        assertEquals(EnforcementState.LOCKED, row.state)
-        assertEquals(HomeLockout.DAILY_CAP, row.lockout)
-        // The countdown field stays empty: nothing may render a four-digit minute count.
-        assertEquals("", row.remainingText)
-        assertEquals("00:00", row.resetText)
-    }
-
-    @Test
-    fun `debt lockout keeps the ticking countdown and reads as debt`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.d", "DEBT")),
-            grants = emptyList(),
-            lockouts = listOf(lockout("com.d", t0 + 10 * 60_000L)),
-            nowMillis = t0,
-        )
-
-        val row = state.row("com.d")
-        assertEquals(HomeLockout.DEBT, row.lockout)
-        assertEquals("10:00", row.remainingText)
-        assertEquals("", row.resetText)
-    }
-
-    @Test
-    fun `a cap lockout ranks below a live grant while a debt lockout outranks it`() {
-        val targets = listOf(
-            target("com.g", "GRANT"),
-            target("com.c", "CAP"),
-            target("com.d", "DEBT"),
-        )
-        val grants = listOf(grant("com.g", t0 + 60_000L))
-        val lockouts = listOf(
-            capLockout("com.c", t0 + 600_000L),
-            lockout("com.d", t0 + 600_000L),
-        )
-
-        val state = mapHomeState(targets, grants, lockouts, nowMillis = t0, zoneId = ZoneOffset.UTC)
-
-        assertEquals(listOf("com.d", "com.g", "com.c"), state.rows.map { it.packageName })
-        // The short, actionable debt lockout is what the panel features — not the all-day cap.
-        assertEquals(HomeSummary.Active(state.row("com.d")), state.summary)
-    }
-
-    @Test
-    fun `the summary features a live grant over a cap lockout, and a lone cap on its own`() {
-        val withGrant = mapHomeState(
-            targets = listOf(target("com.g", "GRANT"), target("com.c", "CAP")),
-            grants = listOf(grant("com.g", t0 + 60_000L)),
-            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
-            nowMillis = t0,
-            zoneId = ZoneOffset.UTC,
-        )
-        assertEquals(HomeSummary.Active(withGrant.row("com.g")), withGrant.summary)
-
-        val capOnly = mapHomeState(
-            targets = listOf(target("com.c", "CAP")),
-            grants = emptyList(),
-            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
-            nowMillis = t0,
-            zoneId = ZoneOffset.UTC,
-        )
-        assertEquals(HomeSummary.Active(capOnly.row("com.c")), capOnly.summary)
-    }
-
-    @Test
-    fun `an idle row badges LOCKED with no override`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.i", "IDLE")),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        val row = state.row("com.i")
-        assertEquals(HomeBadge.LOCKED, row.badge())
-        // Null, not "": the badge reads plain LOCKED, never one with a trailing space.
-        assertEquals(null, row.badgeText())
-    }
-
-    @Test
-    fun `a granted row badges GRANTED with its MM SS countdown`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.g", "GRANT")),
-            grants = listOf(grant("com.g", t0 + 125_000L)),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        val row = state.row("com.g")
-        assertEquals(HomeBadge.GRANTED, row.badge())
-        assertEquals("02:05", row.badgeText())
-    }
-
-    @Test
-    fun `a debt lockout badges LOCKED with its countdown`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.d", "DEBT")),
-            grants = emptyList(),
-            lockouts = listOf(lockout("com.d", t0 + 10 * 60_000L)),
-            nowMillis = t0,
-        )
-
-        val row = state.row("com.d")
-        assertEquals(HomeBadge.LOCKED, row.badge())
-        assertEquals("10:00", row.badgeText())
-    }
-
-    @Test
-    fun `a daily cap lockout badges LOCKED reading CAPPED`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.c", "CAPPED")),
-            grants = emptyList(),
-            lockouts = listOf(capLockout("com.c", t0 + 600_000L)),
-            nowMillis = t0,
-            zoneId = ZoneOffset.UTC,
-        )
-
-        val row = state.row("com.c")
-        assertEquals(HomeBadge.LOCKED, row.badge())
-        assertEquals("CAPPED", row.badgeText())
-    }
-
-    @Test
-    fun `the accessibility state word for an idle row is LOCKED`() {
-        val state = mapHomeState(
-            targets = listOf(target("com.i", "IDLE")),
-            grants = emptyList(),
-            lockouts = emptyList(),
-            nowMillis = t0,
-        )
-
-        // The spoken state must match the visible badge, so IDLE reads LOCKED here too.
-        assertEquals("LOCKED", state.row("com.i").stateWord())
-    }
+    private fun row(bankMillis: Long) = HomeRow(
+        packageName = "com.example.a",
+        label = "App",
+        state = AccessPolicy.stateFor(enabled = true, bankMillis = bankMillis),
+        bankMillis = bankMillis,
+        remainingText = if (bankMillis > 0L) formatRemaining(bankMillis) else "",
+    )
 }

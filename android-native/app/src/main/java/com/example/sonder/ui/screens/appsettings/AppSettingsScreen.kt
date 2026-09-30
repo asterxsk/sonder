@@ -1,7 +1,6 @@
 package com.example.sonder.ui.screens.appsettings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,9 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,22 +35,24 @@ import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelConfirmDialog
+import com.example.sonder.ui.kit.PixelHoldButton
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTabs
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
- * Per-app access policy (§8, extended). One package's five knobs — each a segmented row
- * of presets — over its inherited values, plus a read-only view of the daily cap in use.
- * The label and package id head the screen; BACK returns to the Targets list, and system
- * back is the same move via the nav host.
+ * Per-app access policy (§8, extended): one package's bank ceiling, its scope where the app
+ * has a short-form surface, and the two destructive controls that need a wait to land.
  *
- * Every control here edits a draft. Nothing reaches the app until SAVE, which is what makes
- * "applied" something the screen can actually tell the user: the badge reads UNSAVED while
- * there is a difference and SAVED once a write has landed. Leaving with a pending draft
- * asks first, on both the button and system back — a save step that silently discards on
- * exit would be worse than the live writes it replaced.
+ * Every control here edits a draft. Nothing reaches the app until SAVE — which is itself a
+ * two-press hold, because a limit is easy to loosen and hard to notice loosening. Leaving with
+ * a pending draft asks first, on both the button and system back.
+ *
+ * REMOVE LIMIT sits under SAVE. It is the same thirty-second hold and it deletes the target
+ * outright, and it is refused — with the wait named on the button — while the app is inside the
+ * twelve hours that follow its bank running out.
  */
 @Composable
 fun AppSettingsScreen(
@@ -60,8 +63,22 @@ fun AppSettingsScreen(
 ) {
     LaunchedEffect(packageName) { viewModel.bind(packageName) }
     val ui by viewModel.ui.collectAsStateWithLifecycle()
-    val rules = ui.rules
-    val overrides = ui.overrides
+
+    // The screen closes for both completed acts: a saved limit and a removed one. The SAVED
+    // step is held on screen for a beat so the confirmation is read before the page goes.
+    var completed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        viewModel.finished.collect { finish ->
+            when (finish) {
+                AppSettingsFinish.SAVED -> {
+                    completed = true
+                    delay(SavedLingerMillis)
+                }
+                AppSettingsFinish.REMOVED -> Unit
+            }
+            onBack()
+        }
+    }
 
     var confirmingExit by remember { mutableStateOf(false) }
     val requestExit = {
@@ -86,7 +103,7 @@ fun AppSettingsScreen(
         Spacer(Modifier.height(PixelSpace.Room))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.Text(
+            Text(
                 ui.label ?: packageName,
                 style = PixelTypeScale.ScreenTitle,
                 fontFamily = PixelFont,
@@ -104,7 +121,7 @@ fun AppSettingsScreen(
                 )
             }
         }
-        androidx.compose.material3.Text(
+        Text(
             packageName,
             style = MonoTypeScale.PackageId,
             color = TextSoft,
@@ -124,64 +141,38 @@ fun AppSettingsScreen(
                     )
                     Spacer(Modifier.height(PixelSpace.Base))
                 }
-                Knob(
-                    title = "ACCESS PER WIN",
-                    presets = WinGrantPresets,
-                    current = rules.winGrantMillis,
-                    custom = overrides.winGrantMillis != null,
-                    onSelect = { value -> value?.let(viewModel::setWinGrant) },
-                )
-                Spacer(Modifier.height(PixelSpace.Base))
-                Knob(
-                    title = "LOSS PENALTY",
-                    presets = LossPenaltyPresets,
-                    current = rules.lossDebtMillis,
-                    custom = overrides.lossDebtMillis != null,
-                    onSelect = { value -> value?.let(viewModel::setLossDebt) },
-                )
-                Spacer(Modifier.height(PixelSpace.Base))
-                Knob(
-                    title = "DEBT CEILING",
-                    presets = DebtCeilingPresets,
-                    current = rules.maxDebtMillis,
-                    custom = overrides.maxDebtMillis != null,
-                    onSelect = { value -> value?.let(viewModel::setDebtCeiling) },
-                )
-                Spacer(Modifier.height(PixelSpace.Base))
-                Knob(
-                    title = "ABSENCE REVOKE",
-                    presets = AbsenceRevokePresets,
-                    current = rules.absenceRevokeMillis,
-                    custom = overrides.absenceRevokeMillis != null,
-                    onSelect = { value -> value?.let(viewModel::setAbsenceRevoke) },
-                )
-                Spacer(Modifier.height(PixelSpace.Base))
-                Knob(
-                    title = "DAILY CAP",
-                    presets = DailyCapPresets,
-                    current = rules.dailyCapMillis,
-                    // The cap has no global default to inherit: null means unlimited, which
-                    // is itself a chosen state, so this knob is always CUSTOM.
-                    custom = true,
-                    onSelect = { viewModel.setDailyCap(it) },
-                )
+                MaxControl(current = ui.maxMillis, onSelect = viewModel::setMax)
             }
         }
 
         Spacer(Modifier.height(PixelSpace.Base))
-        // Disabled while there is nothing to write, so the button's own state says whether
-        // the screen holds unpublished edits — the badge says it in words, this says it in
-        // the one control the user would reach for.
-        PixelButton(
-            text = "SAVE",
-            style = PixelButtonStyle.PRIMARY,
-            enabled = ui.dirty,
-            onClick = viewModel::save,
-            modifier = Modifier.fillMaxWidth(),
-        )
 
-        Spacer(Modifier.height(PixelSpace.Section))
-        TodayLine(ui)
+        // SAVE is a two-press hold: the second press only counts once the fill has run out,
+        // and the fill is cancelled by tapping it again. Same shape as REMOVE LIMIT below, and
+        // deliberately so — the two controls that change the rule are the two that take thirty
+        // seconds, and the one that changes nothing (the scope, the presets) takes none.
+        if (completed) {
+            PixelButton(
+                text = "SAVED",
+                style = PixelButtonStyle.SUCCESS,
+                enabled = false,
+                onClick = {},
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            PixelHoldButton(
+                text = "SAVE",
+                holdMillis = ConfirmHoldMillis,
+                onComplete = viewModel::save,
+                enabled = ui.dirty,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Spacer(Modifier.height(PixelSpace.Base))
+
+        RemoveLimit(ui = ui, onRemove = viewModel::removeLimit)
+
         Spacer(Modifier.height(PixelSpace.Edge))
     }
 
@@ -201,12 +192,78 @@ fun AppSettingsScreen(
 }
 
 /**
- * The scope control: what part of the app a target gates. Deliberately not a [Knob] — those
- * select among durations over an inherited default, and this is a choice between two kinds
- * of target with no default to fall back to. The description under it is the part that
- * matters: "WHOLE APP" and the surface's own name are not a severity dial, and the
- * difference between blocking an app and blocking one screen inside it has to be legible
- * before the user picks one.
+ * REMOVE LIMIT: the same thirty-second hold as SAVE, and the app stops being a target.
+ *
+ * While the twelve-hour removal lock is running the button is disabled and says so, with the
+ * wait counting down on it. The lock is not a warning the user can click past: it is the price
+ * of having spent the app down to nothing, and it exists precisely so that running out is not
+ * answered by switching the rule off.
+ */
+@Composable
+private fun RemoveLimit(ui: AppSettingsUiState, onRemove: () -> Unit) {
+    val remaining = rememberLockRemaining(ui.removalLockedUntilMillis)
+
+    if (ui.removalLocked) {
+        PixelButton(
+            text = "REMOVE LIMIT — LOCKED ${formatRemaining(remaining)}",
+            style = PixelButtonStyle.DANGER,
+            enabled = false,
+            onClick = {},
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(PixelSpace.Snug))
+        Text(
+            text = "THIS APP RAN OUT OF TIME. ITS LIMIT CANNOT BE REMOVED UNTIL THE LOCK RUNS OUT," +
+                " AND A WON HAND CLEARS IT EARLY.",
+            style = MonoTypeScale.Metadata,
+            color = TextSoft,
+        )
+        return
+    }
+
+    PixelHoldButton(
+        text = "✕  REMOVE LIMIT",
+        holdMillis = ConfirmHoldMillis,
+        onComplete = onRemove,
+        tone = PixelPalette.Danger,
+        fillColor = PixelPalette.Danger,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(PixelSpace.Snug))
+    Text(
+        text = "REMOVING THE LIMIT STOPS THIS APP BEING GATED AT ALL. THE BANK GOES WITH IT.",
+        style = MonoTypeScale.Metadata,
+        color = TextSoft,
+    )
+}
+
+/**
+ * A second-by-second read of a deadline that is hours away.
+ *
+ * The ticker only runs while the deadline is in the future, and it stops there rather than
+ * counting up: once the lock has run out the button behind it is the live one, and a screen
+ * left open from before then re-reads the lock on the next bind.
+ */
+@Composable
+private fun rememberLockRemaining(untilMillis: Long): Long {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(untilMillis) {
+        if (untilMillis <= System.currentTimeMillis()) return@LaunchedEffect
+        while (true) {
+            now = System.currentTimeMillis()
+            if (untilMillis <= now) break
+            delay(1_000)
+        }
+    }
+    return (untilMillis - now).coerceAtLeast(0L)
+}
+
+/**
+ * The scope control: what part of the app a target gates. Deliberately not a preset row — those
+ * select among durations, and this is a choice between two kinds of target with no default to
+ * fall back to. The description under it is the part that matters: "WHOLE APP" and the surface's
+ * own name are not a severity dial, and the difference between blocking an app and blocking one
+ * screen inside it has to be legible before the user picks one.
  *
  * @param surfaceLabel what this app calls its short-form surface ("REELS", "SHORTS"). It
  *   comes from [ShortsCatalog], which is also what decides whether this control is offered
@@ -220,7 +277,7 @@ private fun ScopeControl(
     onSelect: (BlockScope) -> Unit,
 ) {
     val options = listOf(BlockScope.WHOLE_APP, BlockScope.SHORTS_ONLY)
-    androidx.compose.material3.Text(
+    Text(
         "WHAT IS BLOCKED",
         style = PixelTypeScale.SectionTitle,
         fontFamily = PixelFont,
@@ -233,7 +290,7 @@ private fun ScopeControl(
         onSelect = { index -> onSelect(options[index]) },
     )
     Spacer(Modifier.height(PixelSpace.Snug))
-    androidx.compose.material3.Text(
+    Text(
         when (current) {
             BlockScope.WHOLE_APP -> "The whole app is gated. Every screen needs a won hand."
             BlockScope.SHORTS_ONLY ->
@@ -246,116 +303,64 @@ private fun ScopeControl(
 }
 
 /**
- * One knob: its name, whether the value is chosen (CUSTOM) or inherited (DEFAULT), and a
- * row of presets with the current one selected. [custom] must come from the raw stored
- * override, not a comparison of the effective value against the default: an effective
- * value that equals the default is ambiguous between chosen and inherited, and the label
- * exists precisely to tell those apart.
+ * The bank ceiling: how much access this app can hold at once.
+ *
+ * One control rather than the five the old model had, because the bank is the whole of a rule
+ * now — a win adds the stake up to this number, a loss takes the stake off, and time is spent
+ * only by using the app. There is no OFF preset: a bank with no ceiling is not a bank, and an
+ * app whose access never ran out would not need a gate at all.
  */
 @Composable
-private fun Knob(
-    title: String,
-    presets: List<Preset>,
-    current: Long?,
-    custom: Boolean,
-    onSelect: (Long?) -> Unit,
-) {
-    // A stored value that matches no preset lights no segment: indexOfFirst returns -1, and
-    // a row with nothing lit reads as broken rather than as custom. That case is reachable
-    // whenever the value in force is not one of the offered ones — an override written
-    // before the presets changed, or a debug build's shortened default.
-    //
-    // It used to get a lit segment of its own, appended to the row. Six segments do not fit
-    // the panel: the row is equal-weight, so adding one took each segment from 180px to
-    // 150px and the labels wrapped to two lines ("2:0 / 0", "DEFAU / LT"). The readout
-    // belongs in the status column instead, where it was already saying CUSTOM or DEFAULT
-    // and only had to be extended to say *what*.
-    val matched = presets.indexOfFirst { it.value == current }
-    val status = if (custom) "CUSTOM" else "DEFAULT"
+private fun MaxControl(current: Long, onSelect: (Long) -> Unit) {
+    val matched = BankSizePresets.indexOfFirst { it.value == current }
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        androidx.compose.material3.Text(
-            title,
+        Text(
+            "BANK SIZE",
             style = PixelTypeScale.SectionTitle,
             fontFamily = PixelFont,
             color = PixelPalette.Text,
         )
-        androidx.compose.material3.Text(
-            if (matched >= 0) status else "$status ${formatDuration(current ?: 0L)}",
+        Text(
+            if (matched >= 0) "MAX" else "CUSTOM ${formatDuration(current)}",
             style = PixelTypeScale.Badge,
             fontFamily = PixelFont,
-            color = if (custom) PixelPalette.Primary else PixelPalette.Muted,
+            color = PixelPalette.Muted,
         )
     }
     Spacer(Modifier.height(PixelSpace.Snug))
     PixelTabs(
-        tabs = presets.map { it.label },
+        tabs = BankSizePresets.map { it.label },
         selected = matched,
-        onSelect = { index -> onSelect(presets[index].value) },
+        onSelect = { index -> onSelect(BankSizePresets[index].value) },
+    )
+    Spacer(Modifier.height(PixelSpace.Snug))
+    Text(
+        "THE MOST TIME THIS APP CAN HOLD. A WIN STOPS ADDING AT THIS NUMBER.",
+        style = MonoTypeScale.Metadata,
+        color = TextSoft,
     )
 }
 
-/** The daily cap in force, as access granted today over the cap (or UNLIMITED). */
-@Composable
-private fun TodayLine(ui: AppSettingsUiState) {
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column {
-            androidx.compose.material3.Text(
-                "TODAY",
-                style = PixelTypeScale.SectionTitle,
-                fontFamily = PixelFont,
-                color = PixelPalette.Text,
-            )
-            Spacer(Modifier.height(PixelSpace.Snug))
-            androidx.compose.material3.Text(
-                "ACCESS GRANTED  ${formatDuration(ui.grantedTodayMillis)} / " +
-                    (ui.rules.dailyCapMillis?.let(::formatDuration) ?: "UNLIMITED"),
-                style = MonoTypeScale.Body,
-                color = TextSoft,
-            )
-        }
-    }
-}
+private data class Preset(val label: String, val value: Long)
 
-/** A preset's display label and the millis it writes; null means unlimited (daily cap OFF). */
-private data class Preset(val label: String, val value: Long?)
-
-private val WinGrantPresets = listOf(
-    Preset("2:00", 2 * 60_000L),
-    Preset("5:00", 5 * 60_000L),
-    Preset("10:00", 10 * 60_000L),
-    Preset("15:00", 15 * 60_000L),
-    Preset("30:00", 30 * 60_000L),
-)
-private val LossPenaltyPresets = listOf(
-    Preset("5:00", 5 * 60_000L),
-    Preset("10:00", 10 * 60_000L),
-    Preset("20:00", 20 * 60_000L),
-    Preset("30:00", 30 * 60_000L),
-)
-private val DebtCeilingPresets = listOf(
-    Preset("30:00", 30 * 60_000L),
-    Preset("1:00", 60 * 60_000L),
-    Preset("2:00", 2 * 60 * 60_000L),
-)
-private val AbsenceRevokePresets = listOf(
-    Preset("0:30", 30_000L),
-    Preset("1:00", 60_000L),
-    Preset("2:00", 2 * 60_000L),
-    Preset("5:00", 5 * 60_000L),
-)
-private val DailyCapPresets = listOf(
-    Preset("OFF", null),
+private val BankSizePresets = listOf(
     Preset("30:00", 30 * 60_000L),
     Preset("1:00", 60 * 60_000L),
     Preset("2:00", 2 * 60 * 60_000L),
     Preset("3:00", 3 * 60 * 60_000L),
 )
 
-/** Millis to `H:MM:SS` above an hour, else `MM:SS`, for the TODAY line. */
+/** How long SAVE and REMOVE LIMIT hold before a second press counts. */
+private const val ConfirmHoldMillis = 30_000L
+
+/** How long SAVED stays on screen before the page closes onto Targets. */
+private const val SavedLingerMillis = 600L
+
+/** Millis to `H:MM:SS`, for a lock that is hours away. */
 private fun formatDuration(millis: Long): String {
     val totalSeconds = millis / 1000
     val hours = totalSeconds / 3600
@@ -366,4 +371,10 @@ private fun formatDuration(millis: Long): String {
     } else {
         String.format(Locale.ROOT, "%02d:%02d", minutes, seconds)
     }
+}
+
+/** Countdown readout for the locked button: short enough to sit inside a button. */
+private fun formatRemaining(millis: Long): String {
+    val totalSeconds = (millis / 1000).coerceAtLeast(0)
+    return String.format(Locale.ROOT, "%d:%02d:%02d", totalSeconds / 3600, (totalSeconds % 3600) / 60, totalSeconds % 60)
 }

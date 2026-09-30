@@ -5,12 +5,9 @@ enum class EnforcementState {
     /** Not being enforced (target disabled). */
     DISABLED,
 
-    /** Access granted and running. */
+    /** The bank has time in it: the app is open. */
     GRANTED,
 
-    /** Locked out — serving debt or cooldown. */
-    LOCKED,
-
-    /** Enforced, no active grant, may play blackjack. */
+    /** Enforced, bank empty, may play blackjack. */
     IDLE,
 }

@@ -14,7 +14,7 @@ class SonderApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Notifications.ensureChannels(this)
-        // Warm the in-memory enforcement snapshot (targets/grants/lockouts) so the
+        // Warm the in-memory enforcement snapshot (targets and their banks) so the
         // accessibility hot path never waits on Room before showing the block.
         enforcementRepository.start()
     }

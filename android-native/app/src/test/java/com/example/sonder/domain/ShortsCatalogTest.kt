@@ -14,11 +14,13 @@ class ShortsCatalogTest {
 
     private val instagram = "com.instagram.android"
     private val youtube = "com.google.android.youtube"
+    private val facebook = "com.facebook.katana"
 
     @Test
-    fun `the two apps with a short-form surface are catalogued`() {
+    fun `the apps with a short-form surface are catalogued`() {
         assertTrue(ShortsCatalog.isCatalogued(instagram))
         assertTrue(ShortsCatalog.isCatalogued(youtube))
+        assertTrue(ShortsCatalog.isCatalogued(facebook))
     }
 
     @Test
@@ -31,6 +33,7 @@ class ShortsCatalogTest {
     fun `new targets for the catalogued apps are scoped to shorts`() {
         assertEquals(BlockScope.SHORTS_ONLY, ShortsCatalog.defaultScopeFor(instagram))
         assertEquals(BlockScope.SHORTS_ONLY, ShortsCatalog.defaultScopeFor(youtube))
+        assertEquals(BlockScope.SHORTS_ONLY, ShortsCatalog.defaultScopeFor(facebook))
     }
 
     @Test
@@ -74,6 +77,28 @@ class ShortsCatalogTest {
     }
 
     @Test
+    fun `a decorated facebook reels id is recognised`() {
+        assertTrue(
+            ShortsCatalog.isScopedSurface(
+                facebook,
+                listOf("com.facebook.katana:id/reels_viewer"),
+            ),
+        )
+    }
+
+    @Test
+    fun `a decorated facebook stories id is recognised`() {
+        // The other half of Facebook's surface, and the one whose marker list is easiest to
+        // get wrong: the tray of story rings sits on the news feed, so only the viewer counts.
+        assertTrue(
+            ShortsCatalog.isScopedSurface(
+                facebook,
+                listOf("com.facebook.katana:id/stories_viewer"),
+            ),
+        )
+    }
+
+    @Test
     fun `matching is case-insensitive`() {
         assertTrue(
             ShortsCatalog.isScopedSurface(
@@ -106,6 +131,18 @@ class ShortsCatalogTest {
                     "com.google.android.youtube:id/results",
                     "com.google.android.youtube:id/watch_player",
                     "com.google.android.youtube:id/bottom_bar",
+                ),
+            ),
+        )
+        // The stories tray is the Facebook case of the same trap: the rings ride on top of the
+        // news feed, so a marker for the tray would gate the feed itself.
+        assertFalse(
+            ShortsCatalog.isScopedSurface(
+                facebook,
+                listOf(
+                    "com.facebook.katana:id/feed_recycler_view",
+                    "com.facebook.katana:id/stories_tray",
+                    "com.facebook.katana:id/tab_bar",
                 ),
             ),
         )
@@ -146,9 +183,11 @@ class ShortsCatalogTest {
     fun `each catalogued app names its own surface`() {
         // Instagram has Reels, YouTube has Shorts. A combined label named a screen one of
         // the two does not have, which is what the settings screen used to show both of
-        // them.
+        // them. Facebook is the one app where the combined label is right, because its
+        // surface genuinely is both Reels and Stories.
         assertEquals("REELS", ShortsCatalog.surfaceLabelFor(instagram))
         assertEquals("SHORTS", ShortsCatalog.surfaceLabelFor(youtube))
+        assertEquals("REELS & STORIES", ShortsCatalog.surfaceLabelFor(facebook))
     }
 
     @Test
@@ -161,12 +200,18 @@ class ShortsCatalogTest {
     }
 
     @Test
-    fun `no two apps share a marker`() {
-        // A shared fragment would mean one app's ids could fire the other app's gate —
-        // harmless while both are scoped the same way, and a landmine the moment either
-        // list is edited.
-        val all = ShortsCatalog.cataloguedPackages().flatMap(ShortsCatalog::markersFor)
-        assertEquals(all.size, all.toSet().size)
+    fun `no marker is repeated inside one app's own list`() {
+        // Deliberately per-app rather than across the catalogue. Instagram and Facebook both
+        // name their Reels viewer `reels_viewer`, and that fragment is a real one two shipping
+        // apps share — a cross-app rule would fail the build over a fact about Instagram, and
+        // a duplicate *within* a list is the one that is actually dead weight. Cross-fire is
+        // not possible in the first place: `showsMarkers` walks only windows whose root
+        // package is the package being asked about, so Instagram's fragment is never tested
+        // against Facebook's tree.
+        ShortsCatalog.cataloguedPackages().forEach { pkg ->
+            val markers = ShortsCatalog.markersFor(pkg)
+            assertEquals("$pkg repeats a marker", markers.size, markers.toSet().size)
+        }
     }
 
     @Test
@@ -177,7 +222,7 @@ class ShortsCatalogTest {
         // to guard went unlabelled — an empty tab in the settings screen, and a target row
         // naming a surface with the generic fallback word.
         val catalogued = ShortsCatalog.cataloguedPackages()
-        assertEquals(setOf(instagram, youtube), catalogued)
+        assertEquals(setOf(instagram, youtube, facebook), catalogued)
         catalogued.forEach { pkg ->
             assertTrue(
                 "$pkg is catalogued but carries no markers",

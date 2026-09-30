@@ -8,7 +8,6 @@ import com.example.sonder.domain.DealtHand
 import com.example.sonder.domain.model.Card
 import com.example.sonder.domain.model.Hand
 import com.example.sonder.domain.model.HandOutcome
-import com.example.sonder.platform.scheduling.GrantExpiryScheduler
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -26,34 +25,27 @@ data class TableState(
     val playerHand: Hand? = null,
     val dealerUp: Hand? = null,
     val dealerFull: Hand? = null, // revealed after stand
-    val debtMinutes: Long = 0,
+    /** The bet this hand is played for, as the table resolved it. */
+    val stakeMillis: Long = AccessPolicy.CHIPS.first(),
+    /** Whether the selected bet is ALL IN, which follows the bank rather than a chip. */
+    val allIn: Boolean = false,
+    /** Unspent access this app has earned; the whole of what "granted" means. */
+    val bankMillis: Long = 0L,
+    /** The app's ceiling, which a win can never take the bank past. */
+    val maxMillis: Long = AccessPolicy.DEFAULT_MAX_MILLIS,
     val message: String = "",
     val showResult: Boolean = false,
     val lastOutcome: HandOutcome? = null,
-    /** Effective win grant for this target: the per-app override, else the global default. */
-    val winGrantMillis: Long = AccessPolicy.WIN_GRANT_MILLIS,
-    /** Remaining allowance under the app's daily cap; null when the app has no cap. */
-    val dailyRemainingMillis: Long? = null,
-    /**
-     * Whether the last settled hand actually granted access. A debt-free win grants
-     * nothing once the daily cap is spent, so the RESOLVED success path must key off
-     * this rather than off "won with no debt", or the gate would report CONTINUE with
-     * no grant behind it and the coordinator would re-raise the gate.
-     */
-    val lastHandGranted: Boolean = false,
-    /** True while the app is under an active DAILY_CAP lockout; the cap is not time-served. */
-    val capLocked: Boolean = false,
-    /**
-     * Time still owed on a debt that has reached its ceiling; 0 at any lower debt.
-     *
-     * A hand can take the debt to the ceiling *while the table is open*, so this cannot be
-     * left to the blocker's decision path: the panel has to switch to the wait-it-out state
-     * the moment that happens, or the player is offered another hand at the ceiling, which
-     * is the one state where hands are meant to stop.
-     */
-    val debtLockRemainingMillis: Long = 0,
+    /** The bank the last settled hand left behind; the result line reads it, not the live one. */
+    val lastBankAfterMillis: Long = 0L,
 ) {
     enum class Phase { IDLE, DEALING, PLAYER_TURN, DEALER_TURN, RESOLVED }
+
+    /** Nothing left to spend: the state the panel is warning about. */
+    val outOfTime: Boolean get() = bankMillis <= 0L
+
+    /** Whether the RESOLVED panel can offer another hand against the bank just built. */
+    val canPlayAgain: Boolean get() = bankMillis > 0L
 }
 
 /**
@@ -61,11 +53,16 @@ data class TableState(
  * the blocker can live in a service-hosted overlay window. Previously this logic
  * sat in a ViewModel behind BlockActivity, which dragged the blocker into the
  * detox app's task.
+ *
+ * The economy it plays is a per-app bank of access time ([AccessPolicy]). A hand is played
+ * for a stake the player picks from the fixed chips, or for the whole bank; a win credits the
+ * stake up to the app's ceiling, a loss debits it down to nothing, and a push moves nothing.
+ * The bank is only ever spent by using the app, so the panel is what the player sees when it
+ * has run out — and the hand is the way back in.
  */
 @Singleton
 class GateController @Inject constructor(
     private val repository: EnforcementRepository,
-    private val expiryScheduler: GrantExpiryScheduler,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow(TableState())
@@ -96,10 +93,10 @@ class GateController @Inject constructor(
     /** Point the table at a target. Re-entering the same app keeps an in-progress hand. */
     fun begin(targetPackage: String) {
         if (_state.value.targetPackage == targetPackage && _state.value.phase != TableState.Phase.IDLE) {
-            // Same target, hand in progress: keep the hands, but the policy can have
-            // moved underneath (a hand settled in another window, the day rolled over),
-            // so the cap and the grant are re-read rather than left stale.
-            scope.launch { refreshPolicy() }
+            // Same target, hand in progress: keep the hands, but the bank can have moved
+            // underneath — a hand settled elsewhere, the day rolled over, time drained by a
+            // re-check pass — so it is re-read rather than left stale.
+            scope.launch { refreshBank() }
             return
         }
         // A reused gate can retarget to a different package, so a fresh start must
@@ -107,65 +104,63 @@ class GateController @Inject constructor(
         deck = emptyList()
         dealt = null
         _state.value = TableState(targetPackage = targetPackage)
-        scope.launch { refreshPolicy() }
+        scope.launch { refreshBank() }
     }
 
     /**
-     * Re-reads debt and the app's per-app rules so the gate shows the effective win
-     * grant and today's remaining allowance under the cap. Called on start and after
-     * every settled hand, since a win both changes debt and spends allowance.
+     * Re-read the app's bank and ceiling, and re-resolve the bet against them.
+     *
+     * Called on start and after every settled hand, since a hand moves the bank and a bank of
+     * nothing changes what the bets mean. An ALL IN bet is re-pointed at the new balance, and
+     * falls back to a chip when there is no balance left to be all in with.
      */
-    private suspend fun refreshPolicy() {
+    private suspend fun refreshBank() {
         val pkg = _state.value.targetPackage
         if (pkg.isEmpty()) return
-        val rules = repository.rulesFor(pkg)
-        val grantedToday = repository.dailyGrantedMillis(pkg)
-        val debt = repository.currentDebt(pkg)
-        val cap = repository.cachedMaxDebt(pkg)
-        val lockoutRemaining = repository.lockoutRemainingMillis(pkg)
-        // A cap lockout is read from the lockout row, not inferred from a zero
-        // allowance: the win that spends the cap grants access AND writes the
-        // lockout, so both are true at once and only the row separates them.
-        val capLocked = repository.lockoutReason(pkg) == EnforcementRepository.LOCKOUT_REASON_DAILY_CAP &&
-            lockoutRemaining > 0L
-        val resolved = _state.value.phase == TableState.Phase.RESOLVED &&
-            _state.value.lastOutcome == HandOutcome.WIN &&
-            !_state.value.lastHandGranted
-        _state.value = _state.value.copy(
-            // A win that granted nothing left the user still blocked, and the panel has to
-            // say which kind of blocked: debt off the books is progress worth naming, and
-            // "YOU WIN" alone over a gate that is about to come back up is what made a
-            // paid-down win look like a way in.
-            message = if (resolved) {
-                when {
-                    capLocked -> "YOU WIN — DAILY LIMIT SPENT"
-                    debt > 0L -> "YOU WIN — DEBT ${debt / 60_000} MIN LEFT"
-                    else -> "DEBT CLEARED — WIN AGAIN TO GET IN"
-                }
-            } else {
-                _state.value.message
-            },
-            debtMinutes = debt / 60_000,
-            winGrantMillis = rules.winGrantMillis,
-            dailyRemainingMillis = rules.dailyCapMillis?.let { (it - grantedToday).coerceAtLeast(0L) },
-            capLocked = capLocked,
-            // At the ceiling the wait is whichever is longer: the lockout the last loss
-            // wrote, or the debt standing behind it.
-            debtLockRemainingMillis = if (AccessPolicy.isDebtAtCap(debt, cap)) {
-                maxOf(lockoutRemaining, debt)
-            } else {
-                0L
-            },
+        val bank = repository.cachedRemaining(pkg)
+        val max = repository.cachedMaxMillis(pkg)
+        val current = _state.value
+        val keepAllIn = current.allIn && bank > 0L
+        _state.value = current.copy(
+            bankMillis = bank,
+            maxMillis = max,
+            allIn = keepAllIn,
+            stakeMillis = if (keepAllIn) bank else AccessPolicy.CHIPS.first(),
         )
+    }
+
+    /**
+     * Choose the bet: a chip at face value, or the whole bank.
+     *
+     * A chip is staked at its face value even when the bank holds less, and that is the
+     * point of the economy rather than an oversight: a player who has lost everything can
+     * still sit down, and the bet they cannot cover is a bet they can lose — floored at
+     * nothing — or win their way back with.
+     */
+    fun stake(chipMillis: Long) {
+        if (chipMillis !in AccessPolicy.CHIPS) return
+        val current = _state.value
+        if (current.phase != TableState.Phase.IDLE && current.phase != TableState.Phase.RESOLVED) return
+        _state.value = current.copy(stakeMillis = chipMillis, allIn = false)
+    }
+
+    /** Bet the whole bank. Refused at nothing, where there is no bank to go all in with. */
+    fun allIn() {
+        val current = _state.value
+        if (current.phase != TableState.Phase.IDLE && current.phase != TableState.Phase.RESOLVED) return
+        if (current.bankMillis <= 0L) return
+        _state.value = current.copy(stakeMillis = current.bankMillis, allIn = true)
     }
 
     fun deal() {
         val pkg = _state.value.targetPackage
         if (pkg.isEmpty()) return
-        if (_state.value.capLocked) return // the cap is spent: a hand cannot grant access today
-        // At the debt ceiling the wait is the way out, not another hand — the deep guard
-        // behind the panel switch, so no path can start a game that should not run.
-        if (_state.value.debtLockRemainingMillis > 0L) return
+        // A bet is only placed from a resting table. Mid-hand the stake is already committed
+        // to the cards on the felt, and re-dealing over them would take the old hand's stake
+        // off the books without ever settling it.
+        val phase = _state.value.phase
+        if (phase != TableState.Phase.IDLE && phase != TableState.Phase.RESOLVED) return
+
         deck = BlackjackRules.shuffledDeck()
         dealt = BlackjackRules.deal(deck)
         deck = dealt!!.remainingDeck
@@ -177,7 +172,6 @@ class GateController @Inject constructor(
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
-            lastHandGranted = false,
             message = "HIT OR STAND?",
         )
     }
@@ -221,17 +215,19 @@ class GateController @Inject constructor(
     }
 
     fun playAgain() {
-        // "Play again" resets the table without leaving the blocker.
-        _state.value = _state.value.copy(
+        // "Play again" rests the table without leaving the blocker. The bank is re-read rather
+        // than kept: the hand that just settled is the thing that moved it.
+        val current = _state.value
+        _state.value = current.copy(
             phase = TableState.Phase.IDLE,
             playerHand = null,
             dealerUp = null,
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
-            lastHandGranted = false,
             message = "",
         )
+        scope.launch { refreshBank() }
     }
 
     /** User earned access: release the gate and reset the table for next time. */
@@ -247,10 +243,10 @@ class GateController @Inject constructor(
     /**
      * User wants out of the blocked app rather than a hand.
      *
-     * Grants nothing: the grant a win would have produced is exactly what this must not
-     * hand out, or closing the blocker would be the cheapest way to open the app. The table
-     * is reset so a later visit starts clean, and the request goes out for the coordinator to
-     * act on.
+     * Grants nothing: the access a win would have produced is exactly what this must not hand
+     * out, or closing the blocker would be the cheapest way to open the app. The table is
+     * reset so a later visit starts clean, and the request goes out for the coordinator to act
+     * on.
      */
     fun closeApp() {
         val pkg = _state.value.targetPackage
@@ -311,24 +307,29 @@ class GateController @Inject constructor(
      * The two hands travel with it because this is the last moment they exist: the table
      * resets on the next deal, and the ledger is the only place a finished hand can be read
      * back from. They are captured in memory, never re-derived from the deck.
+     *
+     * The stake is read from the table at the moment of settlement, not from the state that
+     * comes back: the bet was placed when the hand was dealt, and a bet changed while the
+     * dealer was playing would settle the hand for an amount nobody agreed to.
      */
     private fun settle(pkg: String, outcome: HandOutcome, playerHand: Hand?, dealerHand: Hand?) {
+        val stake = _state.value.stakeMillis
         scope.launch {
-            val grantedUntil = repository.onHandResult(pkg, outcome, playerHand, dealerHand)
-            if (grantedUntil != null) {
-                expiryScheduler.scheduleExpiry(pkg, grantedUntil)
-            }
+            val bankAfter = repository.onHandResult(
+                packageName = pkg,
+                outcome = outcome,
+                stakeMillis = stake,
+                playerHand = playerHand,
+                dealerHand = dealerHand,
+            )
             if (_state.value.targetPackage == pkg && _state.value.phase == TableState.Phase.RESOLVED) {
-                // Mark the resolved state first so refreshPolicy's copy keeps it. The
-                // grant result is recorded here because a WIN can still grant nothing
-                // (spent cap), and the gate's success branch must not fire without a
-                // grant behind it. refreshPolicy re-reads the debt as well.
                 _state.value = _state.value.copy(
                     showResult = true,
                     lastOutcome = outcome,
-                    lastHandGranted = grantedUntil != null,
+                    lastBankAfterMillis = bankAfter,
                 )
-                refreshPolicy()
+                // Re-reads the bank the hand just moved, and re-points an ALL IN bet at it.
+                refreshBank()
             }
         }
     }

@@ -25,7 +25,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
@@ -40,8 +39,6 @@ import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTimer
 import com.example.sonder.ui.kit.TimerTone
-import com.example.sonder.ui.kit.pixelShadow
-import com.example.sonder.ui.kit.pixelSteppedCorners
 
 /**
  * Home: the console view of live enforcement state (§14 badges), then the limited
@@ -189,8 +186,6 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
 
                 is HomeSummary.Active -> {
                     val row = summary.row
-                    val capped = row.lockout == HomeLockout.DAILY_CAP
-                    val locked = row.state == EnforcementState.LOCKED
                     androidx.compose.material3.Text(
                         text = row.label,
                         style = PixelTypeScale.SectionTitle,
@@ -198,21 +193,15 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
                         color = PixelPalette.Text,
                     )
                     Spacer(Modifier.height(PixelSpace.Snug))
-                    PixelStatusBadge(
-                        tone = if (locked) BadgeTone.LOCKED else BadgeTone.GRANTED,
-                        labelOverride = if (capped) "CAPPED" else null,
-                    )
+                    // An active row is always one with time in the bank: nothing else is
+                    // counting down, and nothing else can be spent.
+                    PixelStatusBadge(tone = BadgeTone.GRANTED)
                     Spacer(Modifier.height(PixelSpace.Base))
-                    if (capped) {
-                        // A cap resets at the next local midnight: a wall clock, not a countdown.
-                        HomeResetFrame(resetText = row.resetText)
-                    } else {
-                        PixelTimer(
-                            timeText = row.remainingText,
-                            caption = if (locked) "LOCKED FOR" else "ACCESS LEFT",
-                            tone = if (locked) TimerTone.LOCKED else TimerTone.GRANTED,
-                        )
-                    }
+                    PixelTimer(
+                        timeText = row.remainingText,
+                        caption = "ACCESS LEFT",
+                        tone = TimerTone.GRANTED,
+                    )
                 }
             }
         }
@@ -222,10 +211,8 @@ private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
 /** One limited app: label, its live state badge, and the package id underneath. */
 @Composable
 private fun HomeTargetPanel(row: HomeRow) {
-    val capped = row.lockout == HomeLockout.DAILY_CAP
     val stateWord = row.stateWord()
-    // A capped row has no MM:SS interval to read; name the wall clock it resets at instead.
-    val detail = if (capped) "RESETS ${row.resetText}" else row.remainingText
+    val detail = row.remainingText
     val description = listOf(row.label, stateWord, detail)
         .filter { it.isNotEmpty() }
         .joinToString(", ")
@@ -272,34 +259,3 @@ private val CursorBlockSize = 8.dp
 /** "1 APP LIMITED" / "3 APPS LIMITED" — the panel's live enabled count. */
 private fun limitedCountLabel(count: Int): String =
     if (count == 1) "1 APP LIMITED" else "$count APPS LIMITED"
-
-/**
- * A daily-cap lockout ends at the next local midnight, so it is drawn as that wall
- * clock in the timer's frame grammar rather than as a ticking MM:SS countdown.
- */
-@Composable
-private fun HomeResetFrame(resetText: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .background(PixelPalette.Surface)
-                .pixelShadow()
-                .pixelSteppedCorners()
-                .border(PixelSpace.Stroke, PixelPalette.Primary)
-                .padding(horizontal = PixelSpace.Room, vertical = PixelSpace.Snug),
-        ) {
-            androidx.compose.material3.Text(
-                text = resetText,
-                style = PixelTypeScale.Timer,
-                fontFamily = PixelFont,
-                color = PixelPalette.Primary,
-            )
-        }
-        androidx.compose.material3.Text(
-            text = "RESETS",
-            style = PixelTypeScale.Badge,
-            color = TextSoft,
-            modifier = Modifier.padding(top = PixelSpace.Snug),
-        )
-    }
-}

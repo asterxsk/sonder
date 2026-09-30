@@ -6,13 +6,10 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         TargetEntity::class,
-        GrantEntity::class,
-        DebtEntity::class,
-        LockoutEntity::class,
+        TimeBankEntity::class,
         HandEntity::class,
-        DailyUsageEntity::class,
     ],
-    version = 4,
+    version = 5,
     // The schema is exported so the hand-written migrations have a checked reference:
     // without it, a column added to the DDL but not to the migration compiles, passes every
     // test, and only fails on a device upgrading from the previous version.
@@ -20,9 +17,6 @@ import androidx.room.RoomDatabase
 )
 abstract class SonderDatabase : RoomDatabase() {
     abstract fun targetDao(): TargetDao
-    abstract fun grantDao(): GrantDao
-    abstract fun debtDao(): DebtDao
-    abstract fun lockoutDao(): LockoutDao
+    abstract fun timeBankDao(): TimeBankDao
     abstract fun handDao(): HandDao
-    abstract fun dailyUsageDao(): DailyUsageDao
 }

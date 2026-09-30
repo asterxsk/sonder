@@ -6,22 +6,21 @@ import android.os.PowerManager
 import android.util.Log
 import com.example.sonder.BuildConfig
 import com.example.sonder.data.repo.EnforcementRepository
-import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.BlockScope
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.domain.ForegroundWatch
 import com.example.sonder.domain.GateDecision
 import com.example.sonder.domain.GateDecider
 import com.example.sonder.domain.ShortsCatalog
-import com.example.sonder.domain.model.GrantSnapshot
-import com.example.sonder.domain.model.LockoutSnapshot
 import com.example.sonder.platform.accessibility.ActiveWindowContent
 import com.example.sonder.platform.accessibility.ActiveWindowPackage
 import com.example.sonder.platform.accessibility.AppCloser
 import com.example.sonder.platform.accessibility.ForegroundWindows
+import com.example.sonder.platform.accessibility.MediaPauser
+import com.example.sonder.platform.accessibility.PipWindows
 import com.example.sonder.platform.foreground.ForegroundResolver
+import com.example.sonder.platform.notifications.Notifications
 import com.example.sonder.platform.overlay.GateOverlayHost
-import com.example.sonder.platform.scheduling.GrantExpiryScheduler
 import com.example.sonder.ui.gate.GateController
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -46,7 +45,7 @@ import kotlinx.coroutines.launch
  *  - transient surfaces (shade, IME, keyguard, our own overlay window) never
  *    disturb the blocker
  *  - home/recents and the detox app itself release it
- *  - a real app is gated only if it is an enabled target without an active grant
+ *  - a real app is gated only if it is an enabled target whose bank is empty
  *  - any app that is not a blocked target releases the blocker
  *
  * Events are serialized on a single-threaded dispatcher and read the warm
@@ -69,7 +68,6 @@ class EnforcementCoordinator @Inject constructor(
     private val repository: EnforcementRepository,
     private val overlayHost: GateOverlayHost,
     private val foregroundResolver: ForegroundResolver,
-    private val expiryScheduler: GrantExpiryScheduler,
     private val controller: GateController,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
@@ -84,7 +82,7 @@ class EnforcementCoordinator @Inject constructor(
     /**
      * Window-list evidence, supplied by the service while it is connected.
      *
-     * The four fields below are written from the accessibility-service main thread
+     * The fields below are written from the accessibility-service main thread
      * ([onServiceConnected], [onScreenOff], [onServiceStopped]) and read and written from
      * the re-check's single-threaded dispatcher, with no lock between them. Volatile rather
      * than a holder object because each is read on its own and the pair is only ever used
@@ -111,6 +109,12 @@ class EnforcementCoordinator @Inject constructor(
     /** Leave-a-gated-app, supplied by the service while it is connected. */
     @Volatile private var appCloser: AppCloser? = null
 
+    /** Stop-what-is-playing, supplied by the service while it is connected. */
+    @Volatile private var mediaPauser: MediaPauser? = null
+
+    /** Is-this-app-floating, supplied by the service while it is connected. */
+    @Volatile private var pipWindows: PipWindows? = null
+
     /** Collector for the gate's CLOSE control; alive for as long as the service is. */
     private var closeJob: Job? = null
 
@@ -134,9 +138,17 @@ class EnforcementCoordinator @Inject constructor(
     private var probeAtMillis = 0L
     private var probePackage: String? = null
 
-    /** Package and time of the last last-seen write, so the hot path does not write per event. */
-    private var lastSeenPackage: String? = null
-    private var lastSeenAtMillis = 0L
+    /** Package and time of the last drain, so the hot path does not write per event. */
+    private var billedPackage: String? = null
+    private var billedAtMillis = 0L
+
+    init {
+        // The one event that used to be an alarm: the bank reaching zero. The notification
+        // needs a Context, which the repository does not hold, so it is posted from here.
+        repository.onBankDrained { pkg ->
+            Notifications.notifyAccessExpired(context, pkg)
+        }
+    }
 
     /**
      * Start re-checking the real foreground for as long as the service is up.
@@ -156,11 +168,15 @@ class EnforcementCoordinator @Inject constructor(
         activePackage: ActiveWindowPackage,
         content: ActiveWindowContent,
         appCloser: AppCloser,
+        mediaPauser: MediaPauser,
+        pipWindows: PipWindows,
     ) {
         foregroundWindows = windows
         activeWindowPackage = activePackage
         activeWindowContent = content
         this.appCloser = appCloser
+        this.mediaPauser = mediaPauser
+        this.pipWindows = pipWindows
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0
@@ -226,6 +242,20 @@ class EnforcementCoordinator @Inject constructor(
      */
     private suspend fun reconcile(mine: Int) {
         val now = System.currentTimeMillis()
+
+        // Picture-in-picture is the one way out of the gate that does not go through it, so
+        // it is settled first and takes precedence over everything below. A gated app that
+        // was closed while a video was playing can come back as a small floating window,
+        // which is not a window-state event for its activity and so is named by nothing else
+        // in this class.
+        if (screenIsInUse() && isCurrent(mine)) {
+            val floating = pipTargetToCover(now)
+            if (floating != null) {
+                coverFloating(floating)
+                return
+            }
+        }
+
         val resolved = foregroundPackage(now)
         val observed = scopedAppInFront(resolved) ?: resolved ?: return
 
@@ -252,13 +282,12 @@ class EnforcementCoordinator @Inject constructor(
 
         when (step.action) {
             // A granted app the user is sitting inside emits no further window events, so
-            // nothing else refreshes the last-seen stamp. Without this the stamp ages past
-            // the absence window while the user never left, and the next event revokes a
-            // grant for an absence that did not happen. The re-check is the only thing
-            // that can see they are still there.
+            // nothing else bills the time it is spending. Without this the bank would stand
+            // still while the user never left, and every minute in the app would be free.
+            // The re-check is the only thing that can see they are still there.
             ForegroundWatch.Action.IGNORE ->
                 if (surface == ForegroundSurface.APP && watchedDecision == GateDecision.GRANTED) {
-                    touchLastSeen(observed, now)
+                    billForeground(observed, now)
                 }
 
             // Releasing is the dangerous direction from a pass as well as from an event.
@@ -311,14 +340,22 @@ class EnforcementCoordinator @Inject constructor(
         return resolved
     }
 
-    /** Refresh the last-seen stamp at most once per [LAST_SEEN_MIN_INTERVAL_MILLIS]. */
-    private suspend fun touchLastSeen(pkg: String, nowMillis: Long) {
-        if (pkg == lastSeenPackage && nowMillis - lastSeenAtMillis < LAST_SEEN_MIN_INTERVAL_MILLIS) {
+    /**
+     * Charge the app's bank for the time it has been in front, at most once per
+     * [BILL_MIN_INTERVAL_MILLIS].
+     *
+     * The interval is the drain's resolution, not a permission: the repository bills from the
+     * stamp left by the previous call, so time is never lost by skipping a beat — it is
+     * simply charged in slightly larger steps. Writing on every window event would be a Room
+     * round trip per event on the serialized decision dispatcher.
+     */
+    private suspend fun billForeground(pkg: String, nowMillis: Long) {
+        if (pkg == billedPackage && nowMillis - billedAtMillis < BILL_MIN_INTERVAL_MILLIS) {
             return
         }
-        lastSeenPackage = pkg
-        lastSeenAtMillis = nowMillis
-        repository.recordLastSeen(pkg, nowMillis)
+        billedPackage = pkg
+        billedAtMillis = nowMillis
+        repository.billUsage(pkg, nowMillis)
     }
 
     /**
@@ -414,6 +451,40 @@ class EnforcementCoordinator @Inject constructor(
     }
 
     /**
+     * The enabled target currently playing on in a picture-in-picture window with nothing
+     * left in its bank, or null.
+     *
+     * An app with time in the bank is left alone: a float is then something the user paid
+     * for, and it is exactly what the gate promised them. An app with an empty bank has paid
+     * nothing, and a small window is the one place it can keep running without one.
+     */
+    private fun pipTargetToCover(nowMillis: Long): String? {
+        if (!repository.isCacheReady()) return null
+        val probe = pipWindows ?: return null
+        return repository.enabledPackages().firstOrNull { pkg ->
+            repository.cachedRemaining(pkg, nowMillis) <= 0L && probe.hasPipWindow(pkg)
+        }
+    }
+
+    /**
+     * Pause the float and put the blocker over it.
+     *
+     * Both halves matter and neither is redundant: the pause stops the audio the opaque
+     * window cannot, and the window stops the picture. The blocker is raised for the floating
+     * app rather than for whatever is in front, because it is the floating app the user is
+     * watching — the panel then offers the hand that would earn its time back.
+     */
+    private fun coverFloating(pkg: String) {
+        mediaPauser?.pauseMedia()
+        val label = repository.enabledTarget(pkg)?.label?.takeIf { it.isNotBlank() }
+            ?: pkg.substringAfterLast('.').uppercase()
+        overlayHost.showGate(pkg, label)
+        watchedPackage = pkg
+        watchedDecision = GateDecision.GATE
+        if (BuildConfig.DEBUG) Log.d(TAG, "PIP_COVERED(pkg=$pkg)")
+    }
+
+    /**
      * Whether the accessibility window list agrees that [observed] is really the app on
      * screen, so a release the re-check decided for it can be applied.
      *
@@ -431,10 +502,7 @@ class EnforcementCoordinator @Inject constructor(
     /** One line per applied state, so a logcat trace shows which event won a transition. */
     private fun blockState(decision: GateDecision, pkg: String, reason: String) {
         if (!BuildConfig.DEBUG) return
-        val locked = decision == GateDecision.GATE ||
-            decision == GateDecision.REVOKE ||
-            decision == GateDecision.LOCKOUT
-        Log.d(TAG, "BLOCK_STATE_CHANGED(locked=$locked pkg=$pkg decision=$decision $reason)")
+        Log.d(TAG, "BLOCK_STATE_CHANGED(locked=${decision == GateDecision.GATE} pkg=$pkg decision=$decision $reason)")
     }
 
     /** A release that was applied rather than refused; the blocker is down for it. */
@@ -472,6 +540,18 @@ class EnforcementCoordinator @Inject constructor(
      */
     private fun scopedSurfacePresent(pkg: String, scope: BlockScope): Boolean {
         if (scope != BlockScope.SHORTS_ONLY) return true
+        return shortFormSurfacePresent(pkg)
+    }
+
+    /**
+     * Whether [pkg] is showing one of its catalogue's short-form surfaces, whatever its
+     * scope.
+     *
+     * Used for the pause as well as for the scope: a whole-app YouTube target showing Shorts
+     * is a target whose video must stop under the blocker, and answering that from the scope
+     * would leave the one case the user actually reported still playing.
+     */
+    private fun shortFormSurfacePresent(pkg: String): Boolean {
         val markers = ShortsCatalog.markersFor(pkg)
         if (markers.isEmpty()) return false
         return activeWindowContent?.showsMarkers(pkg, markers) == true
@@ -482,11 +562,11 @@ class EnforcementCoordinator @Inject constructor(
      * not have to be decided again.
      *
      * A gate is settled only while its window is genuinely up, so a blocker the system
-     * removed is raised again on the next pass. A grant is settled only while it is still
-     * live: a grant that lapses or is revoked mid-use brings the blocker up without
-     * waiting for the user to leave and come back. A passing app is never settled —
-     * re-deciding is what lets a target enabled while its app is open start being
-     * blocked, and it covers the enforcement cache still being cold on the first passes.
+     * removed is raised again on the next pass. A grant is settled only while the bank still
+     * holds time: the drain can empty it mid-use, and the blocker has to come up then rather
+     * than waiting for the user to leave and come back. A passing app is never settled —
+     * re-deciding is what lets a target enabled while its app is open start being blocked,
+     * and it covers the enforcement cache still being cold on the first passes.
      *
      * A [BlockScope.SHORTS_ONLY] gate is settled like any other, which it was not at first.
      * The exception existed to notice the user leaving Reels for the Instagram feed, where no
@@ -499,23 +579,12 @@ class EnforcementCoordinator @Inject constructor(
     private fun stillSettled(pkg: String): Boolean = when (watchedDecision) {
         GateDecision.PASS -> false
 
-        GateDecision.GRANTED ->
-            repository.cachedGrant(pkg)?.endAtMillis?.let { it > System.currentTimeMillis() } == true
+        GateDecision.GRANTED -> repository.cachedRemaining(pkg) > 0L
 
-        GateDecision.GATE, GateDecision.REVOKE -> overlayHost.shownForPackage == pkg
-
-        // A lockout is settled only while its deadline is still ahead. Past it the wait has
-        // been served and the pass has to decide again, or the panel sits over the app
-        // against a timer that has already run out and never hands it back.
-        GateDecision.LOCKOUT ->
-            overlayHost.shownForPackage == pkg && lockoutIsRunning(pkg)
+        GateDecision.GATE -> overlayHost.shownForPackage == pkg
 
         null -> false
     }
-
-    /** Whether a live lockout row still has time on it. */
-    private fun lockoutIsRunning(pkg: String): Boolean =
-        repository.cachedLockout(pkg)?.untilMillis?.let { it > System.currentTimeMillis() } == true
 
     fun onForeground(
         pkg: String,
@@ -542,6 +611,12 @@ class EnforcementCoordinator @Inject constructor(
                 ForegroundSurface.TRANSIENT -> return@launch
 
                 ForegroundSurface.HOME, ForegroundSurface.OWN -> {
+                    // A floating window has no event of its own, so the way Home lands while
+                    // one is up is as a release — and honouring it is how a gated app ends up
+                    // playing on over the launcher. The pass that follows would raise the
+                    // blocker again, and the two answers together are a flash loop; so the
+                    // release is refused here for the same reason the pass refuses it.
+                    if (pipTargetToCover(System.currentTimeMillis()) != null) return@launch
                     // Recents and Home deliver their window events in bursts, and the
                     // launcher's own event can land *after* the blocked app's. Releasing
                     // on that one event is what uncovered an app the user was looking at.
@@ -571,42 +646,12 @@ class EnforcementCoordinator @Inject constructor(
     ): GateDecision {
         val now = System.currentTimeMillis()
 
-        // Housekeeping: purge an expired grant row so enforcement resumes.
-        repository.cachedGrant(pkg)?.takeIf { it.endAtMillis <= now }?.let {
-            repository.revokeGrant(pkg)
-        }
-        // A debt lockout that has run out has been served, so the debt goes with it —
-        // otherwise the app keeps gating against a timer that is already over. The caches
-        // catch up asynchronously, so this pass decides on the cleared values itself.
-        val debtServed = repository.cachedLockout(pkg)
-            ?.takeIf { (it.reason ?: EnforcementRepository.LOCKOUT_REASON_DEBT) == EnforcementRepository.LOCKOUT_REASON_DEBT }
-            ?.takeIf { it.untilMillis <= now }
-            ?.let { repository.serveDebtIfLockoutElapsed(pkg, now) }
-            ?: false
-
         val target = repository.enabledTarget(pkg)
-        val debtMillis = if (debtServed) 0L else repository.cachedDebt(pkg)
-        val debtAtCap = AccessPolicy.isDebtAtCap(debtMillis, repository.cachedMaxDebt(pkg))
         val scope = repository.cachedBlockScope(pkg)
         val scopedSurface = scopedSurfacePresent(pkg, scope)
         val decision = GateDecider.decide(
             targetEnabled = target != null,
-            grant = repository.cachedGrant(pkg)?.let {
-                GrantSnapshot(it.packageName, it.endAtMillis, it.lastSeenMillis)
-            },
-            lockout = if (debtServed) {
-                null
-            } else {
-                repository.cachedLockout(pkg)?.let {
-                    LockoutSnapshot(it.packageName, it.untilMillis, it.reason)
-                }
-            },
-            nowMillis = now,
-            debtAtCap = debtAtCap,
-            // The target's own absence window rather than the global default: the two
-            // paths used to disagree, so a per-app override changed what the repository's
-            // own check said and nothing about what the live gate did.
-            absenceRevokeMillis = repository.cachedAbsenceRevoke(pkg),
+            bankMillis = repository.cachedRemaining(pkg, now),
             blockScope = scope,
             scopedSurfacePresent = scopedSurface,
         )
@@ -616,53 +661,47 @@ class EnforcementCoordinator @Inject constructor(
 
         when (decision) {
             GateDecision.PASS ->
-                // A cache that has not answered yet says "no grants, no targets" about
-                // every package, and releasing on that answer is how a blocked app gets
-                // through in the first moments after the service starts. Raising is the
-                // safe direction and is never gated this way.
-                if (repository.isCacheReady()) {
+                // A cache that has not answered yet says "no targets" about every package,
+                // and releasing on that answer is how a blocked app gets through in the
+                // first moments after the service starts. Raising is the safe direction and
+                // is never gated this way. A floating window is the same kind of refusal:
+                // a PASS for some other app must not uncover the float.
+                if (!repository.isCacheReady()) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "cache still warming; holding the blocker rather than releasing $pkg")
+                    }
+                } else if (pipTargetToCover(now) != null) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "release refused: a gated app is still floating")
+                    }
+                } else {
                     overlayHost.dismiss(reason = "not a target: $pkg")
-                } else if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "cache still warming; holding the blocker rather than releasing $pkg")
                 }
 
             GateDecision.GRANTED -> {
-                touchLastSeen(pkg, now)
+                // Billing before the release, so the time this event was raised for is
+                // charged to the session that is about to run rather than to the one after.
+                billForeground(pkg, now)
                 overlayHost.dismiss(reason = "granted: $pkg")
             }
 
-            GateDecision.REVOKE -> {
-                repository.revokeGrant(pkg)
-                // The alarm outlives the grant otherwise, and fires later to announce an
-                // expiry that has already happened.
-                expiryScheduler.cancelExpiry(pkg)
+            GateDecision.GATE -> {
+                // A clip behind the blocker does not stop because the picture was covered:
+                // on a short-form surface it keeps advancing, so the reel the user was
+                // watching as good as plays itself out behind the wall. Scoped to the
+                // catalogue rather than to every gate, so opening a whole-app target does
+                // not kill music the user chose to keep playing.
+                if (shortFormSurfacePresent(pkg)) mediaPauser?.pauseMedia()
                 overlayHost.showGate(pkg, label)
             }
-
-            GateDecision.LOCKOUT -> overlayHost.showLockout(
-                pkg = pkg,
-                label = label,
-                // The deadline, not the time left: the panel counts down against a clock,
-                // and the coordinator can be called again a moment later with a slightly
-                // different remainder, which would move the deadline on every event.
-                //
-                // A debt at the ceiling waits out its lockout; if that row is somehow
-                // already gone, the debt itself is the time still owed.
-                untilMillis = repository.cachedLockout(pkg)
-                    ?.takeIf { it.untilMillis > now }
-                    ?.untilMillis
-                    ?: (now + debtMillis),
-            )
-
-            GateDecision.GATE -> overlayHost.showGate(pkg, label)
         }
 
         if (BuildConfig.DEBUG) {
             Log.d(
                 TAG,
                 "pkg=$pkg surface=$surface class=$className scope=$scope " +
-                    "scopedSurface=$scopedSurface decision=$decision " +
-                    "blocker=${overlayHost.shownForPackage}",
+                    "scopedSurface=$scopedSurface bank=${repository.cachedRemaining(pkg, now)} " +
+                    "decision=$decision blocker=${overlayHost.shownForPackage}",
             )
         }
         return decision
@@ -691,6 +730,8 @@ class EnforcementCoordinator @Inject constructor(
         activeWindowPackage = null
         activeWindowContent = null
         appCloser = null
+        mediaPauser = null
+        pipWindows = null
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0
@@ -714,10 +755,13 @@ class EnforcementCoordinator @Inject constructor(
         const val FOREGROUND_MEMO_MILLIS = 400L
 
         /**
-         * How often a last-seen stamp is written for the app on screen. The stamp only has
-         * to stay inside the absence window — 20 seconds in debug, 60 in release — so a
-         * write per window event is pure cost on the serialized decision dispatcher.
+         * How often the bank is billed for the app on screen.
+         *
+         * The resolution of the drain, not a permission: the repository measures from the
+         * stamp the previous call left, so a skipped beat is charged late rather than lost.
+         * Billing per window event would be a Room round trip per event on the serialized
+         * decision dispatcher.
          */
-        const val LAST_SEEN_MIN_INTERVAL_MILLIS = 5_000L
+        const val BILL_MIN_INTERVAL_MILLIS = 5_000L
     }
 }
