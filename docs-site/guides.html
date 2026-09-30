@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Guides — Sonder Docs</title>
-<meta name="description" content="How-to guides: verify enforcement on-device, manage targets and debt, survive OEM battery managers.">
+<meta name="description" content="How-to guides: verify enforcement on-device, manage targets and the time bank, survive OEM battery managers.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -54,34 +54,43 @@
     <p class="lede">Task-oriented how-tos. Each one is short and does one thing.</p>
 
     <h2 id="verify-enforcement">Verify enforcement on-device</h2>
-    <p>Debug builds shorten the timers so the whole loop fits in a minute:</p>
+    <p>Nothing is shortened for debug builds any more — there is no debug constant to
+    wait out, because the only clock that matters is the one that runs while you are
+    looking at the app. The constants to know:</p>
     <table>
-      <thead><tr><th>Constant</th><th>Release</th><th>Debug</th></tr></thead>
+      <thead><tr><th>Constant</th><th>Value</th></tr></thead>
       <tbody>
-        <tr><td>Access window (win)</td><td>5 min</td><td>1 min</td></tr>
-        <tr><td>Absence revocation</td><td>&gt;60 s</td><td>&gt;20 s</td></tr>
+        <tr><td>Chips</td><td>2:00 / 5:00 / 10:00, or ALL IN</td></tr>
+        <tr><td>Billing step</td><td>≤ 10 s of foreground time</td></tr>
+        <tr><td>Maximum bank</td><td>your setting, default 60:00</td></tr>
+        <tr><td>Removal lock after a drained bank</td><td>12 h</td></tr>
       </tbody>
     </table>
-<pre data-copy="# with a debug APK installed:
-# 1. open a target app → gate appears
-# 2. win a hand → app opens with a 60s clock
-# 3. leave the app, return after 25s → grant revoked
-# 4. lose a hand, close the gate → lockout timer shows
-# 5. reopen the target → gate appears again (lockout) or debt screen"># with a debug APK installed:
-# 1. open a target app → gate appears
-# 2. win a hand → app opens with a 60s clock
-# 3. leave the app, return after 25s → grant revoked
-# 4. lose a hand, close the gate → lockout timer shows
-# 5. reopen the target → gate appears again (lockout) or debt screen</pre>
+<pre data-copy="# on a target app with an empty bank:
+# 1. open it → the gate, with the chips on it
+# 2. bet the 2:00 chip and win → you're in, no second screen
+# 3. sit in the app for a minute → Home shows the bank about a minute lighter
+# 4. leave for two minutes, come back → the bank is where you left it
+# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT is locked
+# 6. reopen the target → the gate is back, playable from nothing"># on a target app with an empty bank:
+# 1. open it → the gate, with the chips on it
+# 2. bet the 2:00 chip and win → you're in, no second screen
+# 3. sit in the app for a minute → Home shows the bank about a minute lighter
+# 4. leave for two minutes, come back → the bank is where you left it
+# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT is locked
+# 6. reopen the target → the gate is back, playable from nothing</pre>
     <p>Watch the state badges on Home: <span class="badge granted">✓ GRANTED</span>
-    <span class="badge playing">♠ PLAYING</span> <span class="badge locked">▣ LOCKED</span>
-    <span class="badge cooldown">⌛ COOLDOWN</span>.</p>
+    <span class="badge locked">▣ LOCKED</span>. The gate itself carries the other two:
+    <span class="badge playing">♠ PLAYING</span>
+    <span class="badge cooldown">⌛ OUT OF TIME</span>.</p>
 
     <h2 id="add-remove-targets">Add or remove targets</h2>
     <ol>
-      <li>Open <strong>TARGETS</strong> from the dock.</li>
-      <li>Use the ALL / LIMITED tabs and the search field to find an app.</li>
-      <li>Tap the row to toggle. ON = opening requires a won hand.</li>
+      <li>Open <strong>TARGETS</strong> from the dock and tap <strong>ADD</strong>.</li>
+      <li>Search the picker and check the apps you want limited.</li>
+      <li>Rows in the list are inert. The <strong>›</strong> arrow opens the app's own
+      settings, where the maximum and the scope are set, and where
+      <strong>REMOVE LIMIT</strong> lives — behind a 30-second hold.</li>
     </ol>
     <div class="panel">
       <p class="panel-title">Sonder itself</p>
@@ -90,13 +99,18 @@
       the detector so you can always reach the controls.</p>
     </div>
 
-    <h2 id="debt">Work off debt (or don't)</h2>
+    <h2 id="bank">Grow the bank, or spend it</h2>
     <ul>
-      <li><strong>Keep gambling:</strong> each win removes 10 minutes. Fastest route back in.</li>
-      <li><strong>Walk away:</strong> the debt becomes a lockout that ticks down in real time.</li>
-      <li><strong>Cap:</strong> debt maxes at 60 minutes. Extra losses at the cap change nothing — the cap is a mercy, not a magnet.</li>
+      <li><strong>Small chips:</strong> 2:00 and 5:00 bets make a loss cheap — the way to
+      feel out a bad streak without handing back the evening.</li>
+      <li><strong>ALL IN:</strong> the whole bank on one hand. Doubles it on a win, ends it on
+      a loss.</li>
+      <li><strong>Play again:</strong> after a win the panel keeps PLAY AGAIN beside CONTINUE,
+      so the bank you just built can be bet again — up to the ceiling you set.</li>
+
+      <li><strong>Push:</strong> nothing moves and the hand is re-dealt. Free.</li>
     </ul>
-    <p>Exact arithmetic: <a href="rules.html#debt-model">Access rules → debt model</a>.</p>
+    <p>Exact arithmetic: <a href="rules.html#outcomes">Access rules → hand outcomes</a>.</p>
 
     <h2 id="oem">Survive OEM battery managers</h2>
     <p>Xiaomi, Samsung, Huawei, and friends suspend background services. If the
@@ -113,10 +127,10 @@
     </ol>
 
     <h2 id="reset">Reset Sonder state</h2>
-    <p>Debt, grants, lockouts, and hand history live in a local Room database.
-    To start over: Android Settings → Apps → Sonder → Storage → Clear data.
-    That's also the honest way to cheat — which is why targets are chosen once
-    and meant to be kept.</p>
+    <p>Banks, targets, and hand history live in a local Room database. To start
+    over: Android Settings → Apps → Sonder → Storage → Clear data. That's also
+    the honest way to cheat — which is why targets are chosen once and meant to
+    be kept.</p>
 
     <footer class="footer">
       <span>Related: <a href="rules.html">access rules</a> · <a href="enforcement.html">enforcement internals</a></span>

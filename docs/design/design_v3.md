@@ -57,7 +57,7 @@ This gives the product an emotional identity that fits its actual purpose.
 | `text` | `#EAD7A1` | warm primary text |
 | `muted` | `#8A8168` | supporting text (lifted from `#7F765F`, which fell below 4.5:1 on Panel — see §3 contrast note) |
 | `success` | `#22C55E` | access granted |
-| `danger` | `#EF4444` | lockout |
+| `danger` | `#EF4444` | out of time |
 | `info` | `#5A9AC8` | informational |
 | `purple` | `#8B5CF6` | special state only |
 
@@ -203,7 +203,7 @@ Target rows become small inventory-like objects.
 
 ```text
 ┌────────────────────────────────┐
-│ (ICON) YouTube          ✎  ✕  │
+│ (ICON) YouTube              ›  │
 │        com.google...           │
 └────────────────────────────────┘
 ```
@@ -212,10 +212,11 @@ The row gets:
 - pixel border
 - tiny metadata line
 - app icon bare on the row's own ground, in a 40dp slot
-- two 48dp framed glyph buttons — `✎` edit and `✕` remove
+- one 48dp framed glyph button — `›` — that opens that app's per-app screen
 
 A target that gates only Reels/Shorts carries a third metadata line,
-`REELS ONLY` on Instagram and `SHORTS ONLY` on YouTube, under the package id. The
+`REELS ONLY` on Instagram, `SHORTS ONLY` on YouTube and `REELS & STORIES` on Facebook,
+under the package id. The
 line names the surface the app itself has — one app's label for the other's screen
 says the user is gating something that does not exist. Without it a shorts-scoped
 YouTube and a whole-app YouTube render identically, and the row would say a
@@ -224,17 +225,20 @@ scoped target, so whole-app rows keep the two-line metadata.
 
 The icon is the one thing in the row that is not framed. The row is already one framed
 object, so putting a second border around the icon made a picture inside a box rather
-than a list row; the icon reads as the row's own content, the buttons as its controls.
+than a list row; the icon reads as the row's own content, the arrow as its control.
 
 
-Both controls are delayed, and a served `✕` wait is not permission to remove: it raises a
-confirmation whose confirm control is red (`DANGER`). The wait buys time to think; the
-question is what the thinking is for.
+The row itself is inert and the arrow is its only control. Editing the rule and removing the
+target both live on the screen the arrow opens, so a target is changed in one place and there
+is one point of entry to reach it. `REMOVE LIMIT` sits there behind its own thirty-second hold,
+so removing a target is never the tap next to the one that saved it. The wait buys time to
+think; the question is what the thinking is for.
 
-### The edit screen commits on SAVE
+### The per-app screen commits on SAVE
 
-`✎` opens a per-app panel of numeric knobs and, for a catalogued app, a
-`[ WHOLE APP ] [ REELS ]` or `[ WHOLE APP ] [ SHORTS ]` scope tab, named for the
+`›` opens a per-app panel with a bank-size control and, for a catalogued app, a
+`[ WHOLE APP ] [ REELS ]`, `[ WHOLE APP ] [ SHORTS ]` or `[ WHOLE APP ] [ REELS & STORIES ]`
+scope tab, named for the
 surface that app has. Edits buffer in the screen and
 land in storage only on a full-width `SAVE`; the screen is not live-writing, so
 SAVE is not decoration — it is the only thing that persists.
@@ -242,7 +246,10 @@ SAVE is not decoration — it is the only thing that persists.
 Everything else on the screen follows from that. The badge next to the title
 reads `UNSAVED` while the draft differs from storage and `SAVED` after a commit,
 because a button that may or may not have done something is worse than no button.
-`SAVE` is disabled when there is nothing to commit. And leaving with a live draft
+`SAVE` is a two-press hold: the first press starts the button filling green, and only a second
+press once the fill has run its thirty seconds commits the draft — then the label becomes
+`SAVED` and the page closes back onto Targets. `SAVE` is disabled when there is nothing to
+commit. And leaving with a live draft
 — `‹ TARGETS` or system Back — raises a confirmation rather than dropping the
 work silently; without that guard, buffering would be strictly worse than writing
 each tap straight through.
@@ -279,7 +286,9 @@ Card backs can contain a tiny Sonder pixel motif:
 - crescent
 - `S` sprite
 
-No gambling chips, coins, poker tables or money.
+The stakes are named as chips — `2:00`, `5:00`, `10:00` and `ALL IN`, the whole bank — but a
+chip here is minutes of the user's own time, never money. No coins, cash, poker tables or
+casino felt.
 
 ## 10. Blocked screen
 
@@ -301,9 +310,9 @@ Example:
 
        is blocked.
 
-   Play one hand of
-   blackjack to earn
-     05:00 access.
+   Out of time. Stake
+    a chip and win a
+   hand to get back in.
 
   ┌──────────────────┐
   │ PLAY BLACKJACK → │
@@ -320,31 +329,25 @@ The environment is decoration; the framed content is the functional layer.
 
 CLOSE is not part of this section's original sketch and is now mandatory. A blocker that
 only offers a way *in* is a wall: the user has to know to press Back or Home, and inside an
-app that intercepts Back that is not an escape at all. It is rendered once, below whichever
-panel is showing — table or lockout — as a full-width secondary button, so the way out is
+app that intercepts Back that is not an escape at all. It is rendered once, below the table,
+as a full-width secondary button, so the way out is
 never competing with the way in and is never the control that gets clipped off the bottom.
 
 It sends Home and then a best-effort `killBackgroundProcesses`. On modern Android that call
 does not kill a foreground app, so Home is the real effect; the kill is a nudge for an app
 that is already backgrounded.
 
-### A second exit, on a lost hand
+### The way out on a lost hand
 
-CLOSE is the way out of the block screen; on a *settled loss* there is a second one, directly
-under the replay button: `✕  STOP — TAKE THE LOSS`. It is the same act as CLOSE and grants
-nothing, but it exists because of where the first one sits. A loss is the moment the debt
-just grew, and on a short screen the only other way out is below the timer, off the fold —
-so the cheapest-looking next move is always another hand, and the player who wants to stop
-bleeding has to go looking for the exit at the exact moment they are least inclined to. The
-button puts the exit next to the decision instead.
+CLOSE is the way out of the block screen, and a *settled loss* keeps it. A loss is the moment
+the bank just shrank, and on a short screen the way out must not be the thing pushed off the
+fold — so the panel offers `CONTINUE` while the bank still holds time, with `PLAY AGAIN` beside
+it to bet the remaining bank back up to the ceiling, and `✕  CLOSE APP` still renders below
+both. A hand that left the bank empty offers only `PLAY AGAIN` and CLOSE.
 
-It appears only on a loss. A hand that granted access has no debt to stop, and CONTINUE is
-already the way forward; a hand that won under a spent cap has nothing to continue to, so it
-takes the same loss treatment as any other hand that granted nothing.
-
-The bottom CLOSE is not replaced by it. It still renders in every state — table or lockout,
-live hand, settled hand, debt at its 60-minute ceiling — so the way out is never something
-the player has to earn, outlast or scroll to find.
+CLOSE is never replaced by the replay controls. It still renders in every state — live hand,
+settled hand, an empty bank — so the way out is never something the player has to earn,
+outlast or scroll to find.
 
 ### Centring
 
@@ -383,12 +386,12 @@ Use the same frame language, but red.
 ```text
        YOU LOSE
 
-   TRY AGAIN IN
+   THE BANK TAKES
 
-       09:58
+       05:00
 
  ┌───────────────────┐
- │  WAIT IT OUT      │
+ │  PLAY AGAIN       │
  └───────────────────┘
 ```
 
@@ -409,8 +412,8 @@ Frame:
 
 Use:
 - amber for warnings
-- green for granted access
-- red for lockout
+- green for a funded bank
+- red for an empty one
 
 Timer digits should use pixel typography.
 
@@ -424,7 +427,7 @@ Four canonical badges:
 `⌛ COOLDOWN`
 
 `♠ PLAYING` and `⌛ COOLDOWN` belong to the blackjack gate — the one screen where a hand is
-played and a lockout is named against it. Home uses `✓ GRANTED` and `▣ LOCKED`: a gated app
+played and an empty bank is named against it. Home uses `✓ GRANTED` and `▣ LOCKED`: a gated app
 you have not opened reads `LOCKED`, never `PLAYING`.
 
 Each has:
@@ -515,13 +518,13 @@ dividers for the same reason — the active segment is the whole signal.
 Toasts should resemble small RPG dialogue/status boxes.
 
 Success:
-`✓ Access granted. You have 5 minutes.`
+`✓ Access granted. You have 5 minutes in the bank.`
 
 Error:
-`▣ Better luck next time. Try again in 10 minutes.`
+`▣ Out of time for today. Win a hand to get back in.`
 
 Info:
-`i Left the app for too long. Access revoked.`
+`◔ Time's up. Access to YouTube has expired.`
 
 Use hard borders and small pixel shadows.
 
@@ -659,9 +662,9 @@ Recommended architecture:
 Keep:
 - BlackjackRules
 - AccessPolicy
+- AccessRules
 - Target
-- Grant
-- Lockout
+- TimeBank
 - EnforcementState
 
 pure and testable.
@@ -674,9 +677,10 @@ Native Android owns:
 - persistence
 
 Core rules remain:
-- win = 5 minutes
-- loss = 10 minutes
-- leaving for 20 seconds = revoke
+- the bank starts at 0 every local day
+- win = bank + the staked chip, capped at the app's max
+- loss = bank − the staked chip, never below 0
+- time is billed only while the app is in front
 - no root
 - no VPN
 - no device-owner requirement
@@ -691,7 +695,7 @@ Do NOT use:
 - circular floating action buttons
 - smooth animated UI
 - emoji as icons
-- casino chips
+- casino-chip imagery
 - casino green felt
 - fake 3D bevels everywhere
 - excessive particle effects

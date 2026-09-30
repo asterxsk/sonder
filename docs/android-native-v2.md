@@ -8,7 +8,7 @@ Implementation notes for the native (Kotlin + Compose) Sonder. Read alongside
 The product rules live in pure Kotlin under
 `android-native/app/src/main/java/com/example/sonder/domain/`: `AccessPolicy`,
 `BlackjackRules`, and the enforcement policy — `GateDecider`, `BlockScope`,
-`ShortsCatalog`, `ForegroundWatch`, `ForegroundSurface`. No Android imports; 105
+`ShortsCatalog`, `ForegroundWatch`, `ForegroundSurface`. No Android imports; 106
 unit tests cover them.
 
 **`BlackjackRules.kt`**
@@ -19,51 +19,52 @@ unit tests cover them.
   including soft 17
 - Natural blackjack (ace + ten-value on the first two cards) is an instant
   win; two naturals push
-- Push = free replay: debt and grants are untouched
+- Push = inert: the bank is untouched, and the hand is re-dealt
 
-**`AccessPolicy.kt`** — the debt model:
+**`AccessPolicy.kt`** — the time bank:
 
 | Input | Effect |
 | --- | --- |
-| Win at zero debt | `grantedUntil = now + 5 min` |
-| Loss | `debt = min(debt + 10 min, 60 min)` — the cap is hard |
-| Win with debt | `debt = max(debt − 10 min, 0)`; no grant, even when that clears the last of it |
-| Push | no change |
-| Walk away with debt | lockout until `now + debt` |
-| Debt at the ceiling | no table: the app waits the debt out (`GateDecider` → LOCKOUT) |
-| Lockout served | the debt it was serving is cleared with it |
-| Absence > 60 s during a grant | grant revoked regardless of remaining time |
+| Any read on a later local day | reads as 0 |
+| Win | `bank = min(bank + stake, maxMillis)` |
+| Loss | `bank = max(bank − stake, 0)` — never a debt |
+| Push | no change; the hand is re-dealt |
+| Stake | 2:00 / 5:00 / 10:00, or ALL IN = the whole bank |
+| Bank > 0 | the app is granted; the bank drains only while it is in front |
+| Bank reaches 0 | the gate comes up, and removal is refused for 12 h |
 
-Worked example: `L, L, W, W, W` → debt 20 → 10 → 0 → access granted.
+The stake is a stake, not a claim on the balance: every chip is played at face value even
+from an empty bank, so the table is reachable from nothing and a loss floors at zero. That
+is what makes a win the way back in — the bank *is* access, so there is no separate grant
+to earn and no debt to serve.
 
-A grant is earned by a hand played *from* a zero-debt state, so clearing what you owe and
-being let in are two separate hands. `L, W, W` → debt 10 → 0 (still blocked) → access: the
-win that pays off the last of the debt buys the debt, not the way in.
-At the 60-minute cap, further losses change nothing (`55 + 10 → 60`, not 65) — and
-at the cap the table closes: winning hands are the fast way to pay debt down, so the
-loop stays open below the ceiling, but at the ceiling there is nothing another loss
-could change and nothing another hand could win back. The wait is what serves a debt
-from then on, which is why an expired debt lockout clears the debt row along with
-itself (`EnforcementRepository.serveDebtIfLockoutElapsed`). Both the fresh decision and
-the session already on screen respect it — `GateController` reports the remaining wait
-in `TableState.debtLockRemainingMillis`, so the hand that reaches the ceiling ends the
-game instead of dealing another.
+Worked example: `L, L, W` at a 5:00 chip → the two losses floor at 0 (a loss is never a
+debt), and the win credits 5:00 — the third hand is the way in.
+
+`maxMillis` is the only per-app rule besides the scope, so nothing else can stand between a
+won hand and the app.
 
 ## 2. Time model
 
-All timers are **absolute UTC epoch millis** stored in Room
-(`GrantEntity.endAtMillis`, `LockoutEntity.untilMillis`, `DebtEntity.debtMillis`):
+The bank is one row per package in the Room `time_bank` table
+(`TimeBankEntity`: `remainingMillis`, `epochDay`, `lastSeenMillis`,
+`emptySinceMillis`), all of it **absolute epoch millis**:
 
-- Process death and device reboots never inflate or reset timers
-- `BootReceiver` purges expired grants/lockouts after reboot
-- `GrantExpiryScheduler` sets an inexact `AlarmManager` alarm at grant end;
-  `ExpiryReceiver` revokes and notifies (no `SCHEDULE_EXACT_ALARM` permission
-  needed — second-level precision is irrelevant for a 5-minute window)
+- Process death and device reboots never inflate or reset the bank
+- The bank only moves while the target is in front: the coordinator refreshes
+  `lastSeenMillis` every few seconds and drains by the elapsed gap, clamped to
+  `MAX_BILL_MILLIS = 10_000L`. Time away is never billed
+- Every app starts each local day at 0; a bank whose `epochDay` is any other day
+  reads as 0. Nothing carries over
+- `BootReceiver` only warms the bank cache after reboot — there is no alarm to
+  re-arm, and no `SCHEDULE_EXACT_ALARM` permission is needed
+- The old `GrantExpiryScheduler`, `ExpiryReceiver` and `RuleDefaults` are gone.
+  The "access expired" notification now fires the moment a bank drains to 0
 
-Debug builds override two constants via `buildConfigField`
-(`android-native/app/build.gradle.kts`): `ACCESS_WINDOW_MILLIS = 60_000` and
-`ABSENCE_REVOKE_MILLIS = 20_000`, so the full loop is verifiable on a device
-in about a minute.
+There are no debug-only timers any more: the `ACCESS_WINDOW_MILLIS` and
+`ABSENCE_REVOKE_MILLIS` `buildConfigField`s were deleted from
+`android-native/app/build.gradle.kts`, because a build that shortened a wall-clock
+window has nothing left to shorten when the only clock that matters is foreground use.
 
 ## 3. Detection and gating flow
 
@@ -77,10 +78,9 @@ SonderAccessibilityService (TYPE_WINDOW_STATE_CHANGED only, 50 ms delivery)
 EnforcementCoordinator (serialized on one dispatcher, warm cache, no DB waits)
   ├─ TRANSIENT (shade, IME, own overlay window) → ignore, blocker untouched
   ├─ HOME / OWN → release the blocker, unless the real foreground says otherwise
-  ├─ active grant? → absence check (now − lastSeen > 60 s ⇒ revoke) → touch lastSeen
+  ├─ bank holds time? → bill the foreground gap, touch lastSeen, no blocker
   ├─ not an enabled target? → release the blocker
   ├─ SHORTS_ONLY target, and the probe finds no Reels/Shorts marker? → PASS (no blocker)
-  ├─ lockout active? → lockout blocker only ("WAIT IT OUT")
   └─ otherwise → GateOverlayHost.showGate (the blackjack table)
 
 every 500 ms, in parallel with the events above (foreground re-check)
@@ -89,7 +89,7 @@ every 500 ms, in parallel with the events above (foreground re-check)
   │  no window event ever names Reels or Shorts
   ▼
 ForegroundWatch (pure policy)
-  ├─ APP    → decide it, unless the previous pass is still holding (gate up, grant live)
+  ├─ APP    → decide it, unless the previous pass is still holding (gate up, bank live)
   ├─ HOME / OWN → release, once two passes in a row agree
   └─ TRANSIENT → ignore
 ```
@@ -107,7 +107,7 @@ ForegroundWatch (pure policy)
   either), and a window is composed before it is added (so its first frame is
   painted). `dismiss` removes it. There is deliberately no middle state — hiding a
   window by resizing it leaves a blocker no state describes and nothing can
-  dismiss, which is how a lockout screen once ended up stranded over an unrelated
+  dismiss, which is how a blocker once ended up stranded over an unrelated
   app. A window the system takes away is noticed by `detachListener` and composed
   again on the next signal.
 - **Compose in the overlay** is hosted with the blocker's own view-tree owners
@@ -160,7 +160,7 @@ ForegroundWatch (pure policy)
   `ForegroundWatch` to the answer: an app is decided on every pass, a release
   waits for two agreeing passes so a lookup trailing a launch cannot uncover the
   app. Held state is re-examined rather than assumed — a blocker the system
-  removed, a grant that lapsed or was revoked mid-use, and a target enabled while
+  removed, a bank that drained mid-use, and a target enabled while
   its app is open all reach a blocker within one interval.
 - **A blocker window that goes away is noticed**: `GateOverlayHost` tracks the
   attach state of its window, so a window the system removed (revoked overlay
@@ -171,14 +171,16 @@ ForegroundWatch (pure policy)
   opened" — otherwise the blocker would dismiss itself the moment it appears.
 - **Scope is chosen when the target is born.** `TargetsFilter.newTarget` is the
   single place a target is created, and it sets `blockScope` from
-  `ShortsCatalog.defaultScopeFor`: Instagram and YouTube arrive
-  `SHORTS_ONLY`, everything else `WHOLE_APP`. The user can override it in the
-  edit tab, and the stored value is a raw `"WHOLE_APP" | "SHORTS_ONLY"` string
+  `ShortsCatalog.defaultScopeFor`: Instagram, YouTube and Facebook arrive
+  `SHORTS_ONLY`, everything else `WHOLE_APP`. The user can override it with the
+  scope control on the app's settings screen, and the stored value is a raw
+  `"WHOLE_APP" | "SHORTS_ONLY"` string
   read through `BlockScope.fromStored`, so an unrecognised value degrades to the
   conservative whole-app block rather than to no block at all.
-- Absence tracking: `lastSeenMillis` is updated on every window event for a
-  granted package. Absence is only *detected* on the next event (e.g. the user
-  returning), which is exactly when revocation matters.
+- Billing heartbeat: `lastSeenMillis` is refreshed every few seconds while a
+  banked package is in front and is never touched while it is not. The gap since
+  the last stamp is the drain, clamped to 10 s so a dead process or a reboot
+  cannot bill time nobody spent.
 
 ## 4. Permissions
 
@@ -186,8 +188,8 @@ ForegroundWatch (pure policy)
 | --- | --- | --- | --- |
 | Accessibility | special | foreground app detection | `ACTION_ACCESSIBILITY_SETTINGS` + `EXTRA_COMPONENT_NAME` |
 | Display over other apps | special | instant block overlay | `ACTION_MANAGE_OVERLAY_PERMISSION` + package URI |
-| Usage access | special | app picker, stats | `ACTION_USAGE_ACCESS_SETTINGS` |
-| Notifications | runtime (33+) | expiry/lockout notices | app notification settings |
+| Usage access | special | authoritative foreground re-check (`ForegroundResolver`) | `ACTION_USAGE_ACCESS_SETTINGS` |
+| Notifications | runtime (33+) | "time's up" notices | app notification settings |
 
 - **Onboarding wizard** (first launch): four steps, each with plain-English
   copy and a direct link; completes only when all are granted — or, for
@@ -223,13 +225,13 @@ images. The service description string and onboarding state this.
 
 ## 5. Persistence
 
-Room database `sonder.db` (schema v4):
+Room database `sonder.db` (schema v5):
 
-- `targets` — gated packages (package name PK, label, enabled, `blockScope`)
-- `grants` — one per package: `endAtMillis`, `lastSeenMillis`
-- `debt` — one row per package: accumulated millis (cap applied by policy)
-- `lockouts` — one per package: `untilMillis`
-- `hands` — history: package, outcome, debt-after, timestamp, plus `label`,
+- `targets` — gated packages (package name PK, label, enabled, `blockScope`,
+  `maxMillis`)
+- `time_bank` — one row per package: `remainingMillis`, `epochDay`,
+  `lastSeenMillis`, `emptySinceMillis`
+- `hands` — history: package, outcome, stake, bank-after, timestamp, plus `label`,
   `playerCards`, `dealerCards` (Stats screen)
 
 The three columns `MIGRATION_3_4` adds are snapshots taken at the moment the hand
@@ -250,20 +252,22 @@ happens at the repository boundary.
 cd android-native && ./gradlew testDebugUnitTest
 ```
 
-- `AccessPolicyTest` (29 tests): the L,L,W,W,W example, the 60-minute cap,
-  pay-down wins, push neutrality, lockout windows, absence boundaries
-  (59 s safe / 61 s revoked), grant expiry, state mapping
+- `AccessPolicyTest` (29 tests): the bank arithmetic, chip stakes at face value
+  from an empty bank, the ceiling clamp and the zero floor, the 10 s bill clamp,
+  the daily reset and the 12 h removal lock, state mapping
 - `BlackjackRulesTest` (15 tests): hard/soft totals, ace degradation, bust,
   naturals, deal order, dealer stands on hard and soft 17, settlement
-- `GateDeciderTest` (21 tests): grant/lockout/pass precedence, the lockout
-  ceiling, and the scoped-surface rule — a `SHORTS_ONLY` target with no surface
-  present passes even while a grant is live, so an Instagram grant never unlocks
+- `GateDeciderTest` (12 tests): pass/granted/gate precedence, and the
+  scoped-surface rule — a `SHORTS_ONLY` target with no surface present passes
+  even while the bank holds time, so time won in an Instagram Reel never unlocks
   Reels-only gating for the feed
-- `ShortsCatalogTest` (12) and `BlockScopeTest` (4): marker matching both ways,
-  `defaultScopeFor` for Instagram/YouTube/everything else, and `fromStored`
+- `ShortsCatalogTest` (17) and `BlockScopeTest` (4): marker matching both ways,
+  `defaultScopeFor` for Instagram/YouTube/Facebook/everything else, and `fromStored`
   mapping null and garbage to `WHOLE_APP`
 - `ForegroundWatchTest` (14) and `ForegroundSurfaceTest` (10): the pure
   re-check policy and the surface classifier
+- `HandNotationTest` (5): the card line stored with a settled hand
+  (`A♠ K♥ · 21`)
 
 CI (`.github/workflows/android-v2.yml`) runs the same suite on every push/PR
 touching `android-native/`, plus a release-variant compile check (no artifact,
@@ -297,21 +301,23 @@ GitHub Release.
 - Whole-app targets are the reliable path. A scoped target also degrades to
   "never gated" rather than "always gated" if the accessibility service is not
   connected, since a missing probe answers false.
-- Absence revocation is event-driven: if the user stays inside the granted
-  app, nothing needs to fire; revocation lands when they return or the window
-  changes. Grant end is alarm-driven, not absence-driven
+- Billing is foreground-driven: the bank drains only on the heartbeats the
+  coordinator sees while the app is in front, so time away — and a gap left by a
+  dead process or a reboot — is never charged. There is no absence threshold and
+  no wall-clock deadline left to fire
 - Battery optimizers / OEM killers can suspend the accessibility service; the
-  10-second audit catches a disabled service at next app open. Doze may delay
-  the inexact expiry alarm (grant may outlive its window by a few minutes in
-  extreme Doze — acceptable tradeoff, no exact-alarm permission)
+  10-second audit catches a disabled service at next app open. A drain that lands
+  while the service is down is simply deferred to the next heartbeat rather than
+  billed against wall-clock time
 - Splits/doubles are out of scope; the table is HIT/STAND by design
 - Release builds fall back to the Android debug key until signing secrets are
   configured — fine for sideloading, not accepted by Play
 
 ## 8. Play-review notes
 
-- No gambling imagery: no chips, coins, felt, or money. Copy says "hand",
-  "earn", "grant" — never bet/wager/pot. The debt is time, not money
+- No gambling imagery: no coins, cash, or felt, and no money changes hands. The
+  table names its stakes as **chips** — 2:00 / 5:00 / 10:00 and ALL IN — but a
+  chip is minutes of the user's own time, never a bet of money
 - Accessibility disclosure: the foreground package for every target, plus view
   identifiers for `SHORTS_ONLY` targets, stated in the service description
   string and during onboarding

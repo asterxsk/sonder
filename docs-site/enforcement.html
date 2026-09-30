@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Enforcement internals — Sonder Docs</title>
-<meta name="description" content="How Sonder v2 detects app opens, shows the gate, and revokes access — accessibility events, overlays, and absolute-epoch timers.">
+<meta name="description" content="How Sonder detects app opens, banks and bills time, raises the gate, and pauses what is playing behind it — accessibility events, overlays, and the drain.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -58,34 +58,39 @@
 2. SonderAccessibilityService receives TYPE_WINDOW_STATE_CHANGED
    (filtered: targets only, self/system/notification sources ignored,
    debounced against event floods)
-3. EnforcementCoordinator queries EnforcementRepository:
-   is this package enabled AND not currently granted?
-4. If blocked: BlockOverlay raises a full-screen SYSTEM_ALERT_WINDOW
-   instantly (covers the target's first frame)
-5. BlockActivity (the blackjack gate) starts on top
-6. Hand played → result settles into AccessPolicy
-   · win at zero debt → grant written (endAt = now + 5 min)
-   · loss             → debt += 10 min (cap 60) or lockout written
-7. Overlay drops; gate stays until closed or access granted
-8. Accessibility events keep refreshing lastSeenMillis while the
-   granted app is foreground — a gap >60 s revokes the grant</pre>
+3. EnforcementCoordinator asks GateDecider about the package's bank:
+   enabled AND bank > 0 → PASS/GRANTED, enabled AND bank = 0 → GATE
+4. If gated: GateOverlayHost raises a full-screen SYSTEM_ALERT_WINDOW
+   instantly (covers the target's first frame) and draws the table on it
+5. The blocker going up over a short-form surface pauses the clip behind it
+   (Instagram Reels, YouTube Shorts, Facebook Reels/Stories)
+6. Hand played → the stake settles into AccessPolicy
+   · win  → bank += stake, clamped to the target's max
+   · loss → bank -= stake, floored at 0
+7. A winning hand drops the overlay; the app is simply open
+8. While the banked app is in front, each pass refreshes lastSeenMillis
+   and drains the bank by the elapsed gap (clamped to 10 s). Nothing is
+   billed while the app is not in front, and nothing revokes a bank.
+9. Each pass also sweeps for a gated app left floating in
+   picture-in-picture: paused and covered like any other surface</pre>
 
     <h2 id="why-overlay">Why the overlay layer exists</h2>
     <p>Starting an activity from the background is restricted on modern
     Android, and even a fast Activity launch shows a frame or two of the
     target app first. The overlay is drawn the instant the blocked window is
     detected — before the target's content is meaningfully visible — and the
-    gate activity replaces it. If the overlay permission is missing, Sonder
-    degrades gracefully to the gate activity alone.</p>
+    gate is drawn inside it, so there is no second window to bring up. If the
+    overlay permission is missing, Sonder has nothing to cover the target with
+    and the gate cannot appear at all.</p>
 
     <h2 id="permissions">Why each permission is needed</h2>
     <table>
       <thead><tr><th>Permission</th><th>Used for</th><th>If missing</th></tr></thead>
       <tbody>
         <tr><td>Accessibility</td><td>Window-state detection (the trigger for everything)</td><td>No enforcement at all</td></tr>
-        <tr><td>Display over other apps</td><td>Instant shield while the gate loads</td><td>Target flashes visible briefly</td></tr>
-        <tr><td>Usage access</td><td>Backup detection path</td><td>Detection relies on a11y alone</td></tr>
-        <tr><td>Notifications (13+)</td><td>Lockout/expiry reminders</td><td>Silent lockouts</td></tr>
+        <tr><td>Display over other apps</td><td>The window the gate is drawn on</td><td>No gate at all</td></tr>
+        <tr><td>Usage access</td><td><code>ForegroundResolver</code>, the fallback that says which app is in front</td><td>Detection relies on a11y alone</td></tr>
+        <tr><td>Notifications (13+) — optional</td><td>One heads-up when an app's bank runs dry</td><td>You have to notice the timer yourself</td></tr>
       </tbody>
     </table>
 
@@ -98,19 +103,25 @@
     the audit re-runs when you return from Settings.</p>
 
     <h2 id="time">Why absolute epoch millis</h2>
-    <p>Every timer — grant end, lockout end, debt, last-seen — is stored as an
-    absolute instant, never a countdown. Consequences:</p>
+    <p>Every stored time — the bank's <code>lastSeenMillis</code>, the moment it
+    emptied, the timestamp on a hand — is an absolute instant, never a countdown.
+    Combined with a bank that only moves when the app is in front, that means there
+    are no alarms left to fire:</p>
     <ul>
-      <li>Force-kill Sonder mid-hand? Timers keep running.</li>
-      <li>Reboot? <code>BootReceiver</code> reschedules expiry alarms from the same instants.</li>
-      <li>Doze? AlarmManager with <code>setExactAndAllowWhileIdle</code> still fires.</li>
+      <li>Force-kill Sonder mid-hand? The hand is gone; the bank is not.</li>
+      <li>Reboot? <code>BootReceiver</code> warms the bank cache and nothing more.</li>
+      <li>Doze? Nothing to fire — the drain happens when the user opens the app,
+      not on a schedule.</li>
     </ul>
 
     <h2 id="limits">Known limitations</h2>
     <ul>
-      <li>Whole-app granularity — no per-feature (e.g. Shorts-only) gating in v2.</li>
-      <li>Absence detection is event-driven: it notices when the app's window
-      stops appearing, not literally every second.</li>
+      <li>Scope is per-app or per-surface — a Reels-only target cannot be scoped to
+      one tab of Reels.</li>
+      <li>The short-form detector reads view identifiers, so a rename in a shipping app
+      can blind it until the marker list catches up.</li>
+      <li>Picture-in-picture is recognised by window size, so an unusually small or large
+      float can be missed.</li>
       <li>Aggressive OEM battery managers can suspend the service —
       <a href="guides.html#oem">survival guide</a>.</li>
       <li>Release APKs fall back to the Android debug key until signing secrets

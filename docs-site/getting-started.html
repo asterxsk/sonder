@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — Sonder Docs</title>
-<meta name="description" content="Install Sonder v2, grant the four permissions, pick your first target, and play your first gate hand.">
+<meta name="description" content="Install Sonder, grant the four permissions, pick your first target, and play your first gate hand.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -88,10 +88,10 @@
     <table>
       <thead><tr><th>Permission</th><th>Why it's needed</th></tr></thead>
       <tbody>
-        <tr><td><strong>Accessibility</strong></td><td>Knows which app just came to the foreground. Reads the package name only — never screen content.</td></tr>
+        <tr><td><strong>Accessibility</strong></td><td>Knows which app just came to the foreground, and reads view identifiers to spot Reels, Shorts and Stories. Those are developer-chosen resource names — never screen content.</td></tr>
         <tr><td><strong>Display over other apps</strong></td><td>Shows the block screen the instant a limited app opens.</td></tr>
-        <tr><td><strong>Usage access</strong></td><td>Powers the app picker and stats.</td></tr>
-        <tr><td><strong>Notifications</strong></td><td>Tells you when access expires or a lockout ends.</td></tr>
+        <tr><td><strong>Usage access</strong></td><td>The fallback that says which app is in front when accessibility is slow.</td></tr>
+        <tr><td><strong>Notifications</strong></td><td>Tells you when an app's bank runs dry.</td></tr>
       </tbody>
     </table>
     <div class="panel amber">
@@ -103,29 +103,34 @@
     </div>
 
     <h2 id="first-target">4. Pick your first target</h2>
-    <p>Open <strong>TARGETS</strong> in the bottom dock, search for an app
-    (YouTube is a classic first victim), and tap its row to flip it
-    <strong>ON</strong>. Toggling on means: opening that app now requires
-    winning a hand of blackjack.</p>
+    <p>Open <strong>TARGETS</strong> in the bottom dock and tap <strong>ADD</strong>,
+    then search for an app (YouTube is a classic first victim) and check it. A
+    limited app now requires a won hand to open.</p>
+    <p>Each row in the list is inert: its one control is the <strong>›</strong> arrow,
+    which opens that app's own settings — its maximum bank, its scope, and the
+    <strong>SAVE</strong> and <strong>REMOVE LIMIT</strong> buttons. SAVE asks you to
+    press it twice, thirty seconds apart, so a rule cannot be changed in a hurry.</p>
 
     <h2 id="first-hand">5. Play your first hand</h2>
     <p>Leave Sonder, open the target app. The block screen appears immediately —
     tap it to enter the gate:</p>
     <ol>
+      <li><strong>Pick a chip</strong> — 2:00, 5:00, 10:00, or ALL IN for the
+      whole bank.</li>
       <li><strong>DEAL HAND</strong> — you get two cards, dealer shows one.</li>
       <li><strong>HIT</strong> to draw, <strong>STAND</strong> to hold.</li>
       <li>Beat the dealer without busting → <strong>CONTINUE</strong> → you're
-      dropped straight into the app with a 5-minute clock.</li>
+      dropped straight into the app with your winnings banked.</li>
     </ol>
-    <p>Lose, and you're sitting on 10 minutes of debt. Deal again — a win pays
-    10 minutes off. Win at zero debt and you're in. Full arithmetic:
-    <a href="rules.html">Access rules</a>.</p>
+    <p>Lose, and the stake comes off the bank — never below zero. An empty bank is
+    still playable: the chips stake at face value, so your next win is the way in.
+    Full arithmetic: <a href="rules.html">Access rules</a>.</p>
 
     <h2 id="verify">6. Verify it's enforcing</h2>
-    <p>While you're in the granted app, press home, make a coffee, come back
-    after more than a minute — Sonder should have revoked the grant and the
-    gate is waiting again. That's the absence rule. A quick app-switch back
-    within 60 seconds keeps your clock running.</p>
+    <p>While you're in the banked app, press home, make a coffee, come back
+    after more than a minute — the bank is still what you left it at, because
+    only time in the app is billed. Watch it tick: open the app for a minute,
+    leave for two, and come back to a bank one minute lighter.</p>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <div class="panel red">

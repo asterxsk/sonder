@@ -162,7 +162,7 @@
     if (!resultsList.length) {
       var empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "No results. Try “permissions”, “debt”, or “ci”.";
+      empty.textContent = "No results. Try “permissions”, “bank”, or “ci”.";
       results.appendChild(empty);
     } else {
       resultsList.forEach(function (hit) {

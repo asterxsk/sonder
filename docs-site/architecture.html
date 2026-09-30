@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Architecture — Sonder Docs</title>
-<meta name="description" content="Sonder v2 architecture reference: module map, key classes, data schema, and platform integrations.">
+<meta name="description" content="Sonder architecture reference: module map, key classes, the time-bank schema, and platform integrations.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -56,48 +56,59 @@
     <h2 id="layers">Layers</h2>
 <pre>UI (Compose, PixelKit) ─ ViewModels
         │
-Domain (pure Kotlin): BlackjackRules · AccessPolicy
-        │                          models · snapshots
+Domain (pure Kotlin): BlackjackRules · AccessPolicy · GateDecider
+        │                          BlockScope · ShortsCatalog · ForegroundWatch
 Data:  Room (SonderDatabase) · DataStore (settings)
-Platform: AccessibilityService · BlockOverlay · BlockActivity
-          PermissionAudit · GrantExpiryScheduler · BootReceiver</pre>
+Platform: AccessibilityService · GateOverlayHost · ForegroundResolver
+          PermissionAudit · BootReceiver</pre>
 
     <h2 id="map">Map of key classes</h2>
     <table>
       <thead><tr><th>Path (under <code>app/src/main/java/com/example/sonder/</code>)</th><th>Role</th></tr></thead>
       <tbody>
         <tr><td><code>domain/BlackjackRules.kt</code></td><td>Pure table rules: deck, deal, dealer AI, outcomes</td></tr>
-        <tr><td><code>domain/AccessPolicy.kt</code></td><td>Pure debt model: win/loss/push → grants &amp; lockout</td></tr>
+        <tr><td><code>domain/AccessPolicy.kt</code></td><td>Pure bank model: win/loss/push → credit/drain, the ceiling, the removal lock</td></tr>
+        <tr><td><code>domain/GateDecider.kt</code></td><td>One target + one bank → PASS / GRANTED / GATE</td></tr>
+        <tr><td><code>domain/ShortsCatalog.kt</code></td><td>The short-form surfaces (Reels, Shorts, Stories) and their markers</td></tr>
         <tr><td><code>domain/model/Models.kt</code></td><td>Card, Hand, DealtHand, outcome enums</td></tr>
-        <tr><td><code>data/db/</code></td><td>Room entities + DAOs (targets, grants, lockouts, hand history)</td></tr>
-        <tr><td><code>data/repo/EnforcementRepository.kt</code></td><td>Central coordinator: point lookups, settle results, revoke</td></tr>
-        <tr><td><code>data/settings/SettingsRepository.kt</code></td><td>DataStore: onboarding flag, debug flags</td></tr>
-        <tr><td><code>platform/accessibility/SonderAccessibilityService.kt</code></td><td>Window-state detector (debounced)</td></tr>
-        <tr><td><code>platform/enforcement/EnforcementCoordinator.kt</code></td><td>Event router: detection → overlay → gate</td></tr>
-        <tr><td><code>platform/enforcement/BlockOverlay.kt</code></td><td>Instant SYSTEM_ALERT_WINDOW shield while the gate loads</td></tr>
-        <tr><td><code>platform/block/BlockActivity.kt</code></td><td>Blackjack gate activity</td></tr>
+        <tr><td><code>data/db/</code></td><td>Room entities + DAOs (targets, time_bank, hand history)</td></tr>
+        <tr><td><code>data/repo/EnforcementRepository.kt</code></td><td>Central coordinator: bank cache, billing, settle results</td></tr>
+        <tr><td><code>data/settings/SettingsRepository.kt</code></td><td>DataStore: onboarding flag</td></tr>
+        <tr><td><code>platform/accessibility/SonderAccessibilityService.kt</code></td><td>Window detector, media pauser, PiP probe, app closer</td></tr>
+        <tr><td><code>platform/enforcement/EnforcementCoordinator.kt</code></td><td>Event router: detection → billing → overlay → gate</td></tr>
+        <tr><td><code>platform/overlay/GateOverlayHost.kt</code></td><td>The SYSTEM_ALERT_WINDOW that raises the gate over the target</td></tr>
+        <tr><td><code>platform/foreground/ForegroundResolver.kt</code></td><td>Which package is in front, and whether it is really on screen</td></tr>
         <tr><td><code>platform/permissions/PermissionAudit.kt</code></td><td>10-second delayed audit + deep-link prompts</td></tr>
-        <tr><td><code>platform/scheduling/GrantExpiryScheduler.kt</code></td><td>AlarmManager expiry, Doze-safe</td></tr>
+        <tr><td><code>platform/scheduling/BootReceiver.kt</code></td><td>Warms the bank cache after a reboot</td></tr>
       </tbody>
     </table>
 
     <h2 id="data">Data schema</h2>
     <ul>
-      <li><strong>TargetEntity</strong> — package, enabled flag, added-at</li>
-      <li><strong>GrantEntity</strong> — package, <code>endAtMillis</code>, <code>lastSeenMillis</code></li>
-      <li><strong>LockoutEntity</strong> — package, <code>untilMillis</code>, <code>debtMillis</code></li>
-      <li><strong>HandHistoryEntity</strong> — timestamp, result, debt delta (Stats screen)</li>
+      <li><strong>TargetEntity</strong> — package, label, enabled flag, added-at,
+      <code>maxMillis</code>, <code>blockScope</code></li>
+      <li><strong>TimeBankEntity</strong> — package, <code>remainingMillis</code>,
+      <code>epochDay</code>, <code>lastSeenMillis</code>, <code>emptySinceMillis</code></li>
+      <li><strong>HandEntity</strong> — timestamp, outcome, <code>stakeMillis</code>,
+      <code>bankAfterMillis</code>, the two hands and the label as played (Stats screen)</li>
     </ul>
-    <p>All times are absolute epoch millis — timers keep running across process
-    death, reboots, and Doze.</p>
+    <p>Three tables, because grants, debt, lockouts and the daily tally were four
+    descriptions of one thing: how much time is left in this app. A bank row carries
+    its own day, so yesterday's remainder is simply not today's access. All times are
+    absolute epoch millis.</p>
 
-    <h2 id="detection">Detection and the absence rule</h2>
+    <h2 id="detection">Detection and the billing rule</h2>
     <p>The accessibility service watches window-state changes only
     (TYPE_WINDOW_STATE_CHANGED), filtered to target packages, self, system
-    dialogs, and notifications. Events are debounced; each accepted event
-    updates <code>lastSeenMillis</code> for the package. A window event after a
-    gap longer than the absence threshold triggers revocation
-    (<a href="rules.html#timers">rules → timers</a>).</p>
+    dialogs, and notifications. Events are debounced. While a banked target is in
+    front, the coordinator refreshes <code>lastSeenMillis</code> at most every few
+    seconds, and each refresh drains the bank by the elapsed gap — clamped to ten
+    seconds — which is what makes the drain foreground-only by construction. There
+    is no absence rule and nothing revokes a bank
+    (<a href="rules.html#billing">rules → what the clock counts</a>).</p>
+    <p>Two probes run beside the decision: a media pause when the blocker goes up
+    over a short-form surface, and a sweep for a gated app left floating in
+    picture-in-picture, which is paused and covered the same way.</p>
 
     <h2 id="toolchain">Toolchain</h2>
     <table>

@@ -3,8 +3,9 @@
 > Be here, not everywhere.
 
 Sonder is an Android screen-time app with a twist: when you open an app you've
-decided to limit, you must win a hand of blackjack to get in. Losing doesn't
-just cost the hand — it adds lockout **debt** you have to play off or wait out.
+decided to limit, you must win a hand of blackjack to get in. What you win is a
+**bank of time** — and it only runs down while the app is actually in front of
+you.
 
 Sonder is a single native Android app — Kotlin and Jetpack Compose in
 [`android-native/`](android-native/). An earlier Flutter prototype was replaced
@@ -28,54 +29,61 @@ stepped shadows) implementing the design system in
 
 ### Access rules
 
-All timestamps are absolute UTC epoch millis; rules live in
+The bank lives in `time_bank` (one row per package); the rules are in
 [`android-native/.../domain/AccessPolicy.kt`](android-native/app/src/main/java/com/example/sonder/domain/AccessPolicy.kt).
 
 | Event | Result |
 | --- | --- |
-| Blackjack win with zero debt | Grant access for **5 minutes** |
-| Blackjack loss | **+10 minutes of debt** (capped at **60 minutes**) |
-| Win while carrying debt | Pay off 10 minutes of debt (no access yet) |
+| Bank above zero | The app opens — no hand, no gate |
+| Bank at zero | The gate: only a won hand gets you in |
+| Blackjack win | **Bank + the stake**, clamped to the app's maximum |
+| Blackjack loss | **Bank − the stake**, floored at zero — never a debt |
 | Push | Free replay — nothing changes |
-| Walk away with debt | Locked out until the full debt is served |
-| Absent from a granted app for **>60 s** | Grant revoked, regardless of time left |
+| Time in a banked app | Drained at the rate you use it, in steps of ≤ 10 s |
+| Time away from it | Not billed; the bank waits, and nothing revokes it |
+| Bank drained to zero | Removal of that limit is refused for **12 h** (a win clears it) |
 
-So `L, L, W, W, W` → debt 20 → 10 → 0 → access. You can keep gambling through
-a loss; walking away is what costs you the wait.
+Stakes are chips: **2:00**, **5:00**, **10:00**, or **ALL IN** (the whole bank,
+unavailable at zero). So `bet 5:00, win` → 5:00 banked; `bet 5:00, lose` → back
+to 0:00; `ALL IN on 15:00, win` → 30:00, up to the ceiling you set (default
+**60:00**, presets 30:00 / 1:00 / 2:00 / 3:00). Every app starts each day at
+zero, and nothing carries past midnight.
 
 Dealer stands on all 17s (including soft 17). Natural blackjack is an instant
-win. No wagers, wallet, ads, analytics, or account — "hand", "earn", "grant",
-never bet/wager/chips.
+win. No wagers, wallet, ads, analytics, or account — the chips are minutes you
+already won, never money.
 
 ### Build
 
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # domain rules tests (27 tests)
+./gradlew testDebugUnitTest    # unit tests (156; 106 of them the pure domain)
 ```
 
 Requires JDK 17 (`JAVA_HOME`) and an Android SDK with platform 37. Gradle
-9.3.1 comes via the wrapper (SHA-256 pinned). Debug builds shorten timers
-(`ACCESS_WINDOW_MILLIS`, `ABSENCE_REVOKE_MILLIS` in `app/build.gradle.kts`) so
-enforcement can be verified on-device in seconds. `minSdk 26`, `targetSdk 36`.
+9.3.1 comes via the wrapper (SHA-256 pinned). There are no shortened debug
+timers: the only clock that matters is foreground use, which you can watch
+drain. `minSdk 26`, `targetSdk 36`.
 
 ### Architecture
 
 ```text
 UI (Compose) ─ ViewModels (Hilt) ─ Domain (pure, unit-tested)
                                   ├─ BlackjackRules  deck · S17 · naturals
-                                  └─ AccessPolicy    debt · cap · revocation
+                                  ├─ AccessPolicy    bank · ceiling · removal lock
+                                  ├─ GateDecider     PASS · GRANTED · GATE
+                                  └─ ShortsCatalog   Reels · Shorts · Stories
         │
-Room (targets, grants, debt, lockouts, hands) + DataStore (settings)
+Room (targets, time_bank, hands) + DataStore (settings)
         │
 Platform
-  ├─ AccessibilityService   foreground detection + surface classification
+  ├─ AccessibilityService   foreground detection, media pause, PiP probe
   ├─ ForegroundResolver     authoritative foreground re-check (usage access)
   ├─ GateOverlayHost        the blocker: a service-owned SYSTEM_ALERT_WINDOW
   │                         overlay window hosting the blackjack gate
   ├─ PermissionAudit        checks + 10-second delayed on-open prompt
-  └─ Scheduling             boot receiver, grant-expiry alarms
+  └─ Scheduling             boot receiver (warms the bank cache)
 ```
 
 Full module map: [`android-native/README.md`](android-native/README.md).
@@ -84,11 +92,13 @@ Full module map: [`android-native/README.md`](android-native/README.md).
 
 Granted during onboarding, each with a plain-English explanation and a
 deep link: **Accessibility** (foreground app detection), **Display over other
-apps** (instant block), **Usage access** (app picker/stats), **Notifications**
-(expiry/lockout notices). If any is later revoked, the next app open re-checks
-after **10 seconds** (letting flaky accessibility state settle) and pops a
-pixel-styled prompt with direct links. No `QUERY_ALL_PACKAGES` — only
-launchable apps are visible. No root, no VPN, no device-owner APIs.
+apps** (the window the gate is drawn on), **Usage access** (the fallback that
+says which app is in front), **Notifications** (one heads-up when a bank runs
+dry — optional, and the wizard moves on without it). If a required one is later
+revoked, the next app open re-checks after **10 seconds** (letting flaky
+accessibility state settle) and pops a pixel-styled prompt with direct links.
+No `QUERY_ALL_PACKAGES` — only launchable apps are visible. No root, no VPN, no
+device-owner APIs.
 
 Enforcement internals, edge cases, and the QA checklist:
 [`docs/android-native-v2.md`](docs/android-native-v2.md).
@@ -122,20 +132,22 @@ time, never upgradeable.
 ### First-run setup
 
 1. Install the APK (CI artifacts or local build).
-2. Complete the onboarding wizard — grant all four permissions (each step
-   deep-links to the right settings page).
+2. Complete the onboarding wizard — grant the three required permissions (each
+   step deep-links to the right settings page; notifications can be skipped).
 3. Add the apps you want to limit in **Targets** — `ADD` opens a picker; tap apps to
-   select them and `DONE` to confirm.
-4. Open a target app → the gate appears → play blackjack.
+   select them and `DONE` to confirm. Each row's `›` arrow opens that app's own
+   settings, where the maximum bank, the scope and `REMOVE LIMIT` live.
+4. Open a target app → the gate appears → pick a chip, play blackjack.
 
 ---
 
 ## Privacy
 
-Sonder stores targets, onboarding state, and enforcement timestamps locally.
+Sonder stores targets, banks, onboarding state, and hand history locally.
 No network service, account, or analytics SDK. The accessibility service reads
-only the foreground window package — never screen content, URLs, or view-tree
-text.
+the foreground window's package name and its view identifiers — which are
+developer-chosen resource names, never screen content — and nothing is ever
+sent off the device.
 
 ## License
 

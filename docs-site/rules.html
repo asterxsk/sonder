@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Access rules — Sonder Docs</title>
-<meta name="description" content="The exact Sonder v2 rules: debt model, blackjack table rules, timer constants, state machine.">
+<meta name="description" content="The exact Sonder rules: the time bank, chip bets and all-in, blackjack table rules, billing constants, state machine.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -51,17 +51,68 @@
 
   <main class="content" id="main">
     <h1>ACCESS RULES</h1>
-    <p class="lede">The complete contract between you and the machine. These rules are implemented in pure Kotlin and enforced by 27 unit tests.</p>
+    <p class="lede">The complete contract between you and the machine. One number per app — a bank of usable time — and a blackjack hand that moves it. These rules are implemented in pure Kotlin and covered by 106 unit tests.</p>
+
+    <h2 id="bank">The time bank</h2>
+    <p>Each limited app has a bank of time measured in milliseconds. The bank is the
+    <em>only</em> thing that decides whether you get in:</p>
+    <ul>
+      <li>Bank above zero → the app opens, no questions asked.</li>
+      <li>Bank at zero → the gate, and only a won hand gets you past it.</li>
+    </ul>
+    <p>Every app starts each day at <strong>zero</strong>. There is no free allowance and
+    nothing carries over from yesterday: a bank belongs to a local calendar day, and a
+    read on a later day reports nothing in it.</p>
 
     <h2 id="outcomes">Hand outcomes</h2>
     <table>
       <thead><tr><th>Result</th><th>Effect</th></tr></thead>
       <tbody>
-        <tr><td><strong>Win</strong></td><td>+5:00 access to the target app, or −10:00 debt if you owe any</td></tr>
-        <tr><td><strong>Loss</strong></td><td>+10:00 lockout debt (capped at 60:00)</td></tr>
-        <tr><td><strong>Push</strong></td><td>Free replay — no effect, hand re-dealt</td></tr>
+        <tr><td><strong>Win</strong></td><td>Bank <strong>+ the stake</strong>, clamped to the app's maximum</td></tr>
+        <tr><td><strong>Loss</strong></td><td>Bank <strong>− the stake</strong>, floored at zero — never negative</td></tr>
+        <tr><td><strong>Push</strong></td><td>Free replay — no effect at all, hand re-dealt</td></tr>
       </tbody>
     </table>
+    <p>You choose the stake before the deal: a <strong>2:00</strong>, <strong>5:00</strong> or
+    <strong>10:00</strong> chip, or <strong>ALL IN</strong> — the whole bank, which is why
+    ALL IN is unavailable at zero. A chip stakes at face value even from an empty bank,
+    so a loss costs you nothing you did not already have and the win is the way back in.</p>
+
+    <div class="panel">
+      <p class="panel-title">Worked example</p>
+      <p style="margin:0">Empty bank, you bet the 5:00 chip and win: bank 5:00. Bet 5:00
+      again and lose: bank 0:00, out of time, back to the gate. Bet ALL IN on 5:00 and win:
+      bank 10:00. Two more all-in wins would read 20:00 and 40:00 — and the ceiling stops
+      it there, whatever the app's maximum is set to.</p>
+    </div>
+
+    <h2 id="billing">What the clock counts</h2>
+    <p>Time is spent by <em>using</em> the app, never by the wall clock:</p>
+    <ul>
+      <li>While a banked app is in the foreground, the bank is drained by the elapsed time —
+      stamped in steps of at most <strong>10 seconds</strong>.</li>
+      <li>Time away is not billed. Leave a 29:00 bank and come back an hour later: it still
+      reads 29:00.</li>
+      <li>Nothing revokes a bank. There is no absence threshold and no timer to race; the
+      drain is the only thing that ever takes time out.</li>
+    </ul>
+    <p>The step clamp is also what protects you from the machine: a reboot, a killed process
+    or a stalled service cannot bill a gap you were not present for.</p>
+
+    <h2 id="ceiling">The ceiling, and the removal lock</h2>
+    <table>
+      <thead><tr><th>Rule</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Maximum bank (per app, your setting)</td><td>default 60:00 — presets 30:00 / 1:00 / 2:00 / 3:00</td></tr>
+        <tr><td>Billing step</td><td>≤ 10 s of foreground time, per charge</td></tr>
+        <tr><td>Removal of a limit after the bank hits zero</td><td>refused for 12 h</td></tr>
+      </tbody>
+    </table>
+    <p>The maximum is a lid, not a floor: a win that would push the bank past it lands on
+    it, and a loss is never clamped up to it.</p>
+    <p>Draining a bank to zero also <strong>locks the limit's removal for 12 hours</strong>.
+    It is a padlock on the settings screen, not on the app: the gate behaves exactly as it
+    always does, and winning any hand clears the lock immediately.</p>
 
     <h2 id="blackjack">Table rules</h2>
     <ul>
@@ -69,56 +120,36 @@
       <li>Dealer stands on all 17s <em>including soft 17</em>.</li>
       <li>Blackjack on the deal (natural) = instant win, no play needed.</li>
       <li>HIT and STAND only — no double, split, or surrender. Deliberately austere.</li>
+      <li>After a resolved hand the panel keeps <strong>PLAY AGAIN</strong> beside
+      <strong>CONTINUE</strong>, so the bank you just built can be bet again — up to the
+      ceiling, or down to zero.</li>
     </ul>
-
-    <h2 id="debt-model">The debt model</h2>
-    <p>Debt is a negative bank you carry between hands. It exists so that a bad
-    streak is recoverable rather than a wall:</p>
-    <ul>
-      <li>Each <strong>win</strong> while in debt removes 10 minutes.</li>
-      <li>A win at <strong>zero debt</strong> grants 5 minutes of access.</li>
-      <li>Debt is <strong>capped at 60 minutes</strong> — further losses change nothing.</li>
-    </ul>
-
-    <div class="panel">
-      <p class="panel-title">Worked example</p>
-      <p style="margin:0">Three losses, two wins in a row: 10+10+10 = 30:00 debt,
-      then 30−10 = 20:00, then 20−10 = 10:00. You still owe 10 minutes and remain
-      locked out. You'd need one more win to reach 0 and a further win after that
-      to get in — a six-hand session total.</p>
-    </div>
-
-    <h2 id="timers">Timers and revocation</h2>
-    <table>
-      <thead><tr><th>Rule</th><th>Release</th><th>Debug</th></tr></thead>
-      <tbody>
-        <tr><td>Access granted by a win</td><td>5 min</td><td>1 min</td></tr>
-        <tr><td>Absent from granted app → access revoked</td><td>&gt;60 s</td><td>&gt;20 s</td></tr>
-        <tr><td>Debt cap</td><td>60 min</td><td>60 min</td></tr>
-        <tr><td>Lockout when you walk away with debt</td><td>= debt remaining</td><td>= debt remaining</td></tr>
-      </tbody>
-    </table>
-    <p>All timers are stored as absolute epoch milliseconds, so they survive
-    process death, reboots, and Doze. Revoke also fires if the granted app's
-    window closes for longer than the absence threshold — even with minutes
-    still on the clock.</p>
 
     <h2 id="state-machine">State machine</h2>
-<pre>            ┌─────────┐   open target    ┌─────────┐
-            │  IDLE   │ ───────────────▶ │  GATE   │ (BlockActivity)
-            └─────────┘                  └────┬────┘
-                 ▲              win     lose  │ keep gambling
-                 │ +5min        ┌──────┐ ┌────▼─────┐
-                 │              │GRANT │ │  DEBT    │◀───┐
-            ┌────┴─────┐        └──┬───┘ └────┬─────┘    │ loss
-            │ IN APP   │◀───────────┘          │ walk away│
-            │ (timer)  │   absent >60s         ┌──▼──────┐  │
-            └──────────┘ ─────────▶IDLE        │ LOCKOUT │──┘
-                                               └─────────┘</pre>
-    <p>Any timer expiring or revocation event returns the machine to
-    <strong>IDLE</strong>; the gate reappears the next time the target is
-    opened. Source of truth:
-    <code>domain/AccessPolicy.kt</code> + <code>domain/BlackjackRules.kt</code>.</p>
+<pre>   ┌──────────────┐   open target    ┌──────────────┐
+   │     IDLE     │ ───────────────▶ │     GATE     │
+   │   bank = 0   │                  │   bet chip   │
+   └──────────────┘                  └───────┬──────┘
+          ▲                                  │
+          │                        win ┌─────┴─────┐ lose
+          │                            ▼           ▼
+          │                     ┌────────────┐  bank −= stake
+          │                     │  RESOLVED  │  floored at 0
+          │                     │ PLAY AGAIN │  ──▶ GATE
+          │                     └──────┬─────┘
+          │                            │
+          │                      CONTINUE
+          │                            │
+   ┌──────┴───────┐        bank > 0 → the app just opens
+   │    IN APP    │ ◀──────────────────┘
+   │ drained only │
+   │  in front    │
+   └──────┬───────┘
+          │ bank reaches 0, by use or by a loss
+          └──────▶ GATE again, removal locked for 12 h</pre>
+    <p>There is no lockout state and no debt state to leave: the machine is the bank.
+    Source of truth: <code>domain/AccessPolicy.kt</code> +
+    <code>domain/GateDecider.kt</code> + <code>domain/BlackjackRules.kt</code>.</p>
 
     <footer class="footer">
       <span>Related: <a href="enforcement.html">enforcement internals</a> · <a href="explanation.html">why blackjack?</a></span>

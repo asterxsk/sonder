@@ -60,16 +60,16 @@
     a hand of blackjack:</p>
 
     <div class="rules-row">
-      <span class="badge granted">✓ WIN → +5:00 ACCESS</span>
-      <span class="badge locked">▣ LOSS → +10:00 DEBT</span>
-      <span class="badge cooldown">⌛ DEBT CAP → 60:00</span>
-      <span class="badge playing">♠ ABSENT 60s → REVOKED</span>
+      <span class="badge granted">✓ WIN → BANK + STAKE</span>
+      <span class="badge locked">▣ LOSS → BANK − STAKE</span>
+      <span class="badge cooldown">⌛ BANK 0 → GATE</span>
+      <span class="badge playing">♠ ONLY TIME USED IS BILLED</span>
     </div>
 
-    <p>Losing doesn't just cost the hand — it adds <strong>lockout debt</strong>.
-    You can keep gambling to pay it off, or walk away and serve the wait. Leave
-    a granted app for more than 60 seconds and access is revoked, even with
-    time on the clock.</p>
+    <p>What you win is a <strong>bank of time</strong> that only runs down while the app is
+    actually in front of you — leave, and it waits for you. Bet a 2, 5 or 10 minute chip,
+    or go all in; losing takes the stake off the bank and nothing more, down to zero. Hit
+    zero and the gate is the only way back in.</p>
 
     <div class="grid2">
       <section class="panel amber">
@@ -82,14 +82,14 @@
         </div>
         <p style="margin:0; color:var(--muted); font-size:13px;">Dealer stands on
         all 17s. Natural blackjack is an instant win. A push is a free replay.
-        No chips, no wagers, no money — the stake is your time.</p>
+        No money and no buy-in — the chips are minutes of your own time.</p>
       </section>
 
       <section class="panel">
         <h2 class="panel-title">START HERE</h2>
         <ol style="margin:0; padding-left:20px;">
           <li><a href="getting-started.html">Install &amp; set up</a> — APK, permissions, first target</li>
-          <li><a href="rules.html">Learn the rules</a> — the exact debt arithmetic</li>
+          <li><a href="rules.html">Learn the rules</a> — the exact bank arithmetic</li>
           <li><a href="guides.html">Verify on-device</a> — debug timers make the loop fast</li>
         </ol>
       </section>

@@ -1,10 +1,11 @@
 # Sonder v2 — native Android (Kotlin + Compose)
 
 Pixel-art screen-time blocking. You choose the apps; opening one forces a hand of
-blackjack. Win → 5 minutes of access. Lose → +10 minutes of lockout **debt**
-(capped at 60 minutes). Keep playing to pay debt off — win at zero debt grants
-access. Walk away with debt and you're locked out until it's served. Leave a
-granted app for more than 60 seconds and access is revoked, time remaining or not.
+blackjack. Access is a per-app, per-day **time bank** that starts empty: win a
+hand and the bank grows by the chip you staked; lose and it shrinks by the same.
+The bank only drains while the app is actually in front, so time away is never
+billed. Run it to zero and the gate comes up again. Nothing carries over — every
+app starts each local day at zero.
 
 Built with Jetpack Compose, Hilt, and Room. It implements the Pixel UI v3
 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
@@ -15,27 +16,27 @@ Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # domain rules tests (27 tests)
+./gradlew testDebugUnitTest    # unit tests (156; 106 in the pure domain layer)
 ```
 
 Requires JDK 17 via `JAVA_HOME` and an Android SDK with platform 37. Gradle
 9.3.1 comes via the wrapper (SHA-256 pinned). The committed `gradle.properties`
 never pins a JDK path — set `JAVA_HOME` in your environment instead.
 
-Debug builds shorten timers (`ACCESS_WINDOW_MILLIS = 60_000`,
-`ABSENCE_REVOKE_MILLIS = 20_000` in `build.gradle.kts`) so enforcement rules
-can be verified on-device in seconds. `minSdk 26`, `targetSdk 36`.
+There are no debug-only timers left to shorten: the only clock that matters is
+foreground use, which is measured the same in every build. `minSdk 26`,
+`targetSdk 36`.
 
 ## Rules
 
 | Event | Result |
 | --- | --- |
-| Win with zero debt | +5:00 access |
-| Loss | +10:00 debt (cap 60:00) |
-| Win with debt | pays 10:00 of debt |
-| Push | free replay |
-| Walk away with debt | locked until served |
-| Absent >60 s during a grant | revoked |
+| Start of day | bank 0, every app |
+| Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) |
+| Win | bank += stake, capped at the app's max (default 60:00) |
+| Loss | bank -= stake, floored at 0 — never a debt |
+| Push | inert re-deal |
+| Bank reaches 0 | gate up; removal refused for 12 h |
 
 ## Architecture
 
@@ -43,10 +44,11 @@ can be verified on-device in seconds. `minSdk 26`, `targetSdk 36`.
 app/src/main/java/com/example/sonder/
 ├── domain/            pure rules — no Android (fully unit-tested)
 │   ├── BlackjackRules.kt    deck, deal, dealer-stands-on-17, settle
-│   ├── AccessPolicy.kt      debt model, 60-min cap, absence revocation
+│   ├── AccessPolicy.kt      the time bank: chips, billing, the daily reset
+│   ├── AccessRules.kt       the one per-app rule: the bank's max size
 │   └── model/               Card, Hand, EnforcementState, snapshots
 ├── data/
-│   ├── db/            Room: targets, grants, debt, lockouts, hands
+│   ├── db/            Room: targets, time_bank, hands
 │   ├── repo/          EnforcementRepository (single mutation point)
 │   └── settings/      DataStore (onboarding flag)
 ├── platform/
@@ -54,17 +56,18 @@ app/src/main/java/com/example/sonder/
 │   ├── foreground/    authoritative foreground re-check (usage access)
 │   ├── overlay/       GateOverlayHost — the blocker window hosting the gate
 │   ├── enforcement/   coordinator: decisions → show/hide the blocker
-│   ├── notifications/ channels + expiry notifications
+│   ├── notifications/ channels + the "time's up" heads-up
 │   ├── permissions/   audit + 10-second delayed on-open check + deep links
-│   └── scheduling/    boot receiver, grant-expiry alarms
+│   └── scheduling/    boot receiver (warms the bank cache)
 └── ui/
     ├── gate/          the blackjack gate: state machine + composable UI
     ├── kit/           PixelKit: panels, buttons, tabs, timer, badges, toasts
     └── screens/       onboarding, home, targets, targetpicker, blackjack, stats, settings
 ```
 
-Timers are absolute epoch millis everywhere: grants, lockouts and debt survive
-process death and reboots.
+Every timestamp is absolute epoch millis, so process death and reboots never
+corrupt the bank: elapsed is measured only between heartbeats that actually saw
+the app in front.
 
 ## Permissions
 

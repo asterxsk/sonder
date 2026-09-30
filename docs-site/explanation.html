@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Why blackjack? — Sonder Docs</title>
-<meta name="description" content="The design rationale behind Sonder's friction gate: why a card game beats a timer, and what the debt model borrows from behavioral economics.">
+<meta name="description" content="The design rationale behind Sonder's friction gate: why a card game beats a timer, and what a bank of won time borrows from behavioral economics.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -57,19 +57,24 @@
     <p>Most screen-time tools rely on willpower at the moment of temptation —
     the exact moment you have the least of it. Sonder moves the cost earlier:
     to get in, you must play a hand. Losing doesn't just fail to reward you;
-    it <em>raises the price</em>. The 5-minute access window then forces a
-    deliberate re-entry each time, converting "one quick scroll" into a
-    conscious decision that costs a win per five minutes.</p>
+    it takes back time you were already holding. Every minute in the app has to
+    be won first, so "one quick scroll" becomes a hand you have to sit through,
+    and the scroll you win has a visible end.</p>
 
-    <h2 id="debt">Why debt instead of hard lockout</h2>
+    <h2 id="bank">Why a bank rather than a lockout</h2>
     <p>A hard lockout after a loss is a dead end: it teaches nothing and
-    invites uninstalling. The debt model (v2's design) keeps the door
-    visibly open — every win pays 10 minutes back, so recovery is always
-    1–6 hands away. This mirrors commitment devices in behavioral
-    economics: punishment that's escapable through effort sustains
-    motivation, while punishment that's escapable only by quitting the tool
-    destroys it. The 60-minute cap exists for the same reason — it bounds
-    the spiral.</p>
+    invites uninstalling. An empty bank is not a lockout — it is a price. The
+    door stays visibly open, and every win buys time that is <em>yours</em>:
+    it sits in the bank until you spend it, and only the minutes you actually
+    use are deducted. That is the difference that matters. A wall-clock grant
+    punishes you for leaving; a bank rewards you for being deliberate, because
+    walking away with 29 minutes is walking away with 29 minutes.</p>
+    <p>The betting is what keeps it from being a grind. Small chips make a bad
+    streak cheap; all-in turns a good run into an evening, and the ceiling you
+    set is what stops a good run from becoming an unbounded one. This mirrors
+    commitment devices in behavioral economics: a cost that is escapable
+    through effort sustains motivation, while a cost escapable only by quitting
+    the tool destroys it.</p>
 
     <h2 id="chance">Why chance, not a quiz or a hold</h2>
     <ul>
@@ -78,10 +83,10 @@
       <li><strong>A hand of chance</strong> can't be grooved into muscle memory. Each gate session is genuinely uncertain, so the "maybe I'll just lose and be locked out" calculus stays honest.</li>
     </ul>
     <p>Blackjack specifically is fast (~10 seconds per hand), has clean
-    rules that fit a phone screen, and — unlike loot-box mechanics — the
-    stakes are time, never money. That distinction matters for both ethics
-    and Play Store review: nothing here is wagered, purchased, or won of
-    monetary value.</p>
+    rules that fit a phone screen, and — unlike loot-box mechanics — the chips
+    are minutes you already won, not money. There is no buy-in and no purchase:
+    nothing here is bought, sold, or won of monetary value, which matters for
+    both ethics and Play Store review.</p>
 
     <h2 id="honesty">The honesty problem</h2>
     <p>No enforcement app can survive a determined user — clear data, disable
