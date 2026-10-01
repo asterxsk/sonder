@@ -25,8 +25,12 @@ data class TableState(
     val playerHand: Hand? = null,
     val dealerUp: Hand? = null,
     val dealerFull: Hand? = null, // revealed after stand
-    /** The bet this hand is played for, as the table resolved it. */
-    val stakeMillis: Long = AccessPolicy.TABLE_STAKE_MILLIS,
+    /**
+     * The bet this hand is played for, as the table resolved it. Zero means no chip has been
+     * chosen yet — there is no default bet, so the table opens with nothing on it and the
+     * DEAL control asks for a chip rather than dealing a hand nobody agreed to.
+     */
+    val stakeMillis: Long = 0L,
     /** Whether the selected bet is ALL IN, which follows the bank rather than a chip. */
     val allIn: Boolean = false,
     /** Unspent access this app has earned; the whole of what "granted" means. */
@@ -41,15 +45,35 @@ data class TableState(
 ) {
     enum class Phase { IDLE, DEALING, PLAYER_TURN, DEALER_TURN, RESOLVED }
 
-    /** Nothing left to spend: the state the panel is warning about. */
+    /** Nothing left to spend, whatever the table is doing. */
     val outOfTime: Boolean get() = bankMillis <= 0L
 
-    /** Whether the RESOLVED panel can offer another hand against the bank just built. */
-    val canPlayAgain: Boolean get() = bankMillis > 0L
+    /**
+     * Whether the hand on the table was won, which is the only thing that opens the app.
+     *
+     * Keyed to the *outcome* rather than to the bank, because a push leaves the bank exactly
+     * as it was: a table that read "there is time in the bank, come in" would hand a free
+     * entry to a hand nobody won, which is the whole of what this gate exists to prevent.
+     */
+    val justWon: Boolean get() =
+        showResult && lastOutcome == HandOutcome.WIN && lastBankAfterMillis > 0L
 
     /**
-     * Whether the selected bet is one the table can deal: a chip the bank covers, or the
-     * smallest chip, which the table deals for whatever the bank holds — including nothing.
+     * Whether the app is done for the day: the bank is spent and the table is at rest.
+     *
+     * The phase matters. A hand settled against an emptied bank — the bet took the lot —
+     * still has a result to show, and replacing it with the wall mid-session would swallow
+     * the one piece of feedback the player just played for. The wall belongs to the moment
+     * the user comes back to an app with nothing in it, which is exactly `IDLE`.
+     */
+    val lockedOut: Boolean get() = outOfTime && phase == Phase.IDLE
+
+    /** Whether a chip has been chosen at all. No chip, no bet, and DEAL has nothing to deal. */
+    val hasStake: Boolean get() = stakeMillis > 0L
+
+    /**
+     * Whether the selected bet is one the table can deal: a chip the bank covers. The bank
+     * backs the bet without exception, so an empty bank deals nothing.
      */
     val stakePlayable: Boolean get() = AccessPolicy.canStake(bankMillis, stakeMillis)
 }
@@ -118,11 +142,13 @@ class GateController @Inject constructor(
      *
      * Called on start and after every settled hand, since a hand moves the bank and a bank of
      * nothing changes what the bets mean. An ALL IN bet is re-pointed at the new balance, and
-     * falls back to a chip when there is no balance left to be all in with.
+     * is dropped outright when there is no balance left to be all in with.
      *
-     * A chip bet is left exactly where the player put it. Only ALL IN follows the bank: it is
-     * the bet that *is* the balance, and a table that reset a chosen chip to the first one
-     * every time the bank was re-read would undo the player's pick on every settled hand.
+     * A chip bet is left exactly where the player put it, and is only ever cleared — never
+     * swapped for another chip. The bank shrinking under a chosen chip is not a reason to
+     * place a smaller bet on the player's behalf: it is money they did not agree to put up,
+     * and the table's job is to say the bet no longer fits (the readout under the row does)
+     * rather than to silently re-bet for them.
      */
     private suspend fun refreshBank() {
         val pkg = _state.value.targetPackage
@@ -133,10 +159,8 @@ class GateController @Inject constructor(
         val keepAllIn = current.allIn && bank > 0L
         val stake = when {
             keepAllIn -> bank
-            // A bet the bank has shrunk below is not a bet: it falls back to the largest chip
-            // the bank still covers, or to the smallest one when it covers none — which is
-            // the table's own stake, and so the bet an empty bank is dealt.
-            !AccessPolicy.canStake(bank, current.stakeMillis) -> affordableChip(bank)
+            current.allIn -> 0L
+            !AccessPolicy.canStake(bank, current.stakeMillis) -> 0L
             else -> current.stakeMillis
         }
         _state.value = current.copy(
@@ -146,11 +170,6 @@ class GateController @Inject constructor(
             stakeMillis = stake,
         )
     }
-
-    /** The largest chip [bankMillis] can be dealt, or the table's own when it covers none. */
-    private fun affordableChip(bankMillis: Long): Long =
-        AccessPolicy.CHIPS.lastOrNull { AccessPolicy.canStake(bankMillis, it) }
-            ?: AccessPolicy.TABLE_STAKE_MILLIS
 
     /**
      * Choose the bet: a chip at face value, or the whole bank.
@@ -185,8 +204,9 @@ class GateController @Inject constructor(
         // off the books without ever settling it.
         val phase = _state.value.phase
         if (phase != TableState.Phase.IDLE && phase != TableState.Phase.RESOLVED) return
-        // A hand is dealt for a bet the table can carry: a chip the bank backs, or the
-        // smallest chip over an empty bank. Anything else is time invented rather than won.
+        // A hand is dealt for a bet the table can carry: a chip the bank backs. No chip at
+        // all is not a bet either — the table opens with nothing selected on purpose, and
+        // dealing one for the user would place a wager they never chose.
         if (!_state.value.stakePlayable) return
 
         deck = BlackjackRules.shuffledDeck()

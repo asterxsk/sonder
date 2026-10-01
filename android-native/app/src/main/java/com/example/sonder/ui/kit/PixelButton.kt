@@ -52,7 +52,18 @@ private fun colors(style: PixelButtonStyle, enabled: Boolean) = when (style) {
     PixelButtonStyle.DANGER -> if (enabled) {
         Tetrad(PixelPalette.Danger, PixelPalette.Danger, PixelPalette.Bg, PixelPalette.DangerDark)
     } else {
-        Tetrad(PixelPalette.Panel, PixelPalette.BorderDark, PixelPalette.Muted, Color.Transparent)
+        // The one style whose *disabled* form is not grey, because its disabled form is not
+        // "switched off" — it is a refusal, and the red is the message. Two controls use it
+        // and both are saying no to something: the gate's prompt for a chip that has not been
+        // picked, and REMOVE LIMIT while the removal lock is running. Dressing those in the
+        // shared grey is how the gate's prompt came out as an ordinary dead button rather
+        // than as the thing telling the user what to do next.
+        //
+        // Still unmistakably not-pressable: the fill is dead panel rather than the bright
+        // danger block of the enabled form, and there is no shadow to press into. Only the
+        // frame and the label carry the red, at 4.6:1 on the fill — above the body floor,
+        // which the muted grey was chosen for and red would not clear at a lighter weight.
+        Tetrad(PixelPalette.Panel, PixelPalette.Danger, PixelPalette.Danger, Color.Transparent)
     }
 }
 

@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,6 +32,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import java.time.ZoneId
+import java.util.Locale
 import kotlinx.coroutines.delay
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.model.Card
@@ -50,19 +53,26 @@ import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelPanel
 import com.example.sonder.ui.kit.PixelStatusBadge
+import com.example.sonder.ui.kit.PixelTimer
+import com.example.sonder.ui.kit.TimerTone
 
 /**
- * The blocker surface (design_v3 §10–12), hosted either inside the service-owned
- * system overlay window or, for previews, any Compose host. Stateless: all state
- * and actions come from the caller, so it can live outside an Activity.
+ * The gate surface (design_v3 §10–12), hosted either inside the service-owned system
+ * overlay window or, for previews, any Compose host. Stateless: all state and actions come
+ * from the caller, so it can live outside an Activity.
  *
- * There is one mode, because there is one state the blocker is ever raised in: the app has
- * nothing left in its bank. The table is the way back in, and CLOSE is the way out.
+ * It has two faces, and which one is drawn is the whole of the difference between them:
  *
- * CLOSE sits below the table, rendered once here rather than inside it. It is the way *out* —
- * the way in is a hand — and it is the only control this screen has that is always present,
- * which is the point: §10 through §12 never specify one, and without it a blocked app is a
- * wall the user has to know to press Back or Home to escape, which inside an app that
+ *  - **The table**, while the bank still holds time. A won hand is the way in, and the bank
+ *    is spent by using the app rather than by winning. Nothing is dealt until a chip is
+ *    chosen, so the bet is always one the player actually placed.
+ *  - **The wall**, when the bank is spent. There is no table and nothing to play for: the
+ *    day is done, and the only controls are the countdown to the refill and the way out.
+ *
+ * CLOSE sits below either, rendered once here rather than inside the table. It is the way
+ * *out* — the way in is a hand — and it is the only control this screen has that is always
+ * present, which is the point: §10 through §12 never specify one, and without it a gated app
+ * is a wall the user has to know to press Back or Home to escape, which inside an app that
  * intercepts Back is not an escape at all. It renders in every state: the way out is never
  * something the user has to earn or outlast.
  */
@@ -80,7 +90,7 @@ fun GateContent(
     onClose: () -> Unit,
 ) {
     // Centred rather than top-anchored: the panel is a fixed stack, and against a tall
-    // screen a top-anchored one leaves the whole lower half of the blocker empty. The
+    // screen a top-anchored one leaves the whole lower half of the gate empty. The
     // centring has to come from the box rather than from Column(verticalArrangement = ...):
     // the column scrolls, and a scrolling column is measured against an unbounded height, so
     // it has no spare space to distribute and the arrangement never applies.
@@ -104,18 +114,22 @@ fun GateContent(
         ) {
             Spacer(Modifier.height(12.dp))
 
-            BlackjackBlocker(
-                label = label,
-                state = state,
-                onDeal = onDeal,
-                onStake = onStake,
-                onAllIn = onAllIn,
-                onHit = onHit,
-                onStand = onStand,
-                onAccessGranted = onAccessGranted,
-                onPlayAgain = onPlayAgain,
-                onClose = onClose,
-            )
+            if (state.lockedOut) {
+                LockedBlocker(label = label)
+            } else {
+                BlackjackBlocker(
+                    label = label,
+                    state = state,
+                    onDeal = onDeal,
+                    onStake = onStake,
+                    onAllIn = onAllIn,
+                    onHit = onHit,
+                    onStand = onStand,
+                    onAccessGranted = onAccessGranted,
+                    onPlayAgain = onPlayAgain,
+                    onClose = onClose,
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
 
@@ -134,6 +148,87 @@ fun GateContent(
     }
 }
 
+/**
+ * The wall: the bank is spent, so there is nothing to stake and nothing to win.
+ *
+ * It counts down to the next refill rather than to nothing, because "come back tomorrow" with
+ * no number on it reads as a wall with no door. The countdown is derived from the clock
+ * through [AccessPolicy.nextLocalMidnight] rather than from a stored deadline, so it cannot
+ * be stale after a process death, a reboot, or a timezone change — the same reason the refill
+ * itself is a read predicate and not an alarm.
+ *
+ * There is no chip row here even greyed out. A control that exists only to say "no" invites
+ * the tap that finds out; the absence of the table is the message, and the countdown says how
+ * long it lasts.
+ */
+@Composable
+private fun LockedBlocker(label: String) {
+    PixelStatusBadge(BadgeTone.LOCKED)
+
+    Spacer(Modifier.height(16.dp))
+
+    PixelPanel(modifier = Modifier.fillMaxWidth()) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = label.uppercase(),
+                style = PixelTypeScale.ScreenTitle,
+                fontFamily = PixelFont,
+                color = PixelPalette.Text,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "OUT OF TIME — LOCKED FOR TODAY",
+                style = MonoTypeScale.Metadata,
+                color = PixelPalette.Danger,
+            )
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+
+    RefillCountdown()
+}
+
+/**
+ * Time until the bank is refilled, ticking once a second.
+ *
+ * [nowMillis] is state, not a clock read inside the composition, so the digits change when
+ * the tick changes them and not on every unrelated recomposition. The tick is a plain
+ * coroutine — the same cadence [PixelHoldButton] serves a hold on — rather than an animated
+ * float, because this is a clock and not a motion: §18's quantisation governs interpolation,
+ * and a countdown has nothing to interpolate.
+ */
+@Composable
+private fun RefillCountdown(
+    nowMillis: Long = System.currentTimeMillis(),
+    zoneId: ZoneId = ZoneId.systemDefault(),
+) {
+    var now by remember(nowMillis) { mutableLongStateOf(nowMillis) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000L)
+            now = System.currentTimeMillis()
+        }
+    }
+
+    // Floored at zero: in the second between midnight passing and the tick that notices, the
+    // subtraction goes negative, and a countdown must never render as time owing.
+    val left = (AccessPolicy.nextLocalMidnight(now, zoneId) - now).coerceAtLeast(0L)
+    val totalSeconds = left / 1_000L
+
+    PixelTimer(
+        timeText = String.format(
+            Locale.ROOT,
+            "%02d:%02d:%02d",
+            totalSeconds / 3_600,
+            (totalSeconds % 3_600) / 60,
+            totalSeconds % 60,
+        ),
+        caption = "UNTIL YOUR BANK REFILLS",
+        tone = TimerTone.LOCKED,
+    )
+}
+
 @Composable
 private fun BlackjackBlocker(
     label: String,
@@ -147,16 +242,15 @@ private fun BlackjackBlocker(
     onPlayAgain: () -> Unit,
     onClose: () -> Unit,
 ) {
-    // §14 status badge row. Played from the bank the *table* is holding rather than from the
-    // last outcome, so a settled win whose time has already been spent by a re-check pass
-    // cannot keep a GRANTED badge over an app that is once again empty.
-    when {
-        state.showResult && state.lastBankAfterMillis > 0L ->
-            PixelStatusBadge(BadgeTone.GRANTED)
-        state.outOfTime ->
-            PixelStatusBadge(BadgeTone.COOLDOWN, labelOverride = "OUT OF TIME")
-        else ->
-            PixelStatusBadge(BadgeTone.PLAYING)
+    // §14 status badge row. GRANTED is the badge of a hand that was won, and it is keyed to
+    // the win rather than to the bank the hand left: a push leaves time in the bank without
+    // granting anything, so a balance-keyed badge would read GRANTED over the one outcome
+    // that must not open a door. The wall is drawn instead of this whole composable when the
+    // bank is gone, so there is no third case here.
+    if (state.justWon) {
+        PixelStatusBadge(BadgeTone.GRANTED)
+    } else {
+        PixelStatusBadge(BadgeTone.PLAYING)
     }
 
     Spacer(Modifier.height(16.dp))
@@ -171,14 +265,7 @@ private fun BlackjackBlocker(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = if (state.outOfTime) {
-                    // No time banked, but not a dead end: the table deals the smallest chip
-                    // from an empty bank, so the line says what this screen is actually
-                    // waiting for — a won hand — rather than a wall with no way past it.
-                    "BANK EMPTY — WIN A HAND TO GET IN"
-                } else {
-                    "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}"
-                },
+                text = "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}",
                 style = MonoTypeScale.Metadata,
                 color = PixelPalette.Muted,
             )
@@ -301,12 +388,7 @@ private fun BlackjackBlocker(
                 enabled = true,
             )
             Spacer(Modifier.height(PixelSpace.Snug))
-            PixelButton(
-                text = "♠  DEAL HAND",
-                onClick = onDeal,
-                enabled = state.stakePlayable,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            DealControl(state = state, onDeal = onDeal, text = "♠  DEAL HAND")
         }
 
         TableState.Phase.PLAYER_TURN -> {
@@ -325,10 +407,11 @@ private fun BlackjackBlocker(
         }
 
         TableState.Phase.RESOLVED -> {
-            // CONTINUE is the way in and is offered only when there is something to spend,
-            // which is what the badge above is also keyed to. A hand that left the bank empty
-            // must not offer a way into an app the coordinator is about to cover again.
-            if (state.canPlayAgain) {
+            // CONTINUE is the way in, and only a won hand has one. A push leaves the bank
+            // exactly as it was, so a table that keyed this to the bank would open the app
+            // on a hand nobody won — and a loss leaves time in the bank too, which is why
+            // the gate above is keyed to the outcome rather than to the balance.
+            if (state.justWon) {
                 PixelButton(
                     text = "CONTINUE →",
                     onClick = onAccessGranted,
@@ -336,41 +419,20 @@ private fun BlackjackBlocker(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(PixelSpace.Snug))
-                // PLAY AGAIN sits under CONTINUE rather than replacing it: the time won is
-                // already banked, so the player chooses between spending it and betting it
-                // back for more up to the ceiling.
-                StakeChooser(
-                    state = state,
-                    onStake = onStake,
-                    onAllIn = onAllIn,
-                    enabled = true,
-                )
-                Spacer(Modifier.height(PixelSpace.Snug))
-                PixelButton(
-                    text = "♠  PLAY AGAIN",
-                    onClick = onDeal,
-                    style = PixelButtonStyle.SECONDARY,
-                    enabled = state.stakePlayable,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                // The hand took the lot. Nothing is left to spend and the chips above the
-                // smallest are greyed, so the table deals the smallest one — the bet an empty
-                // bank is played for — and PLAY AGAIN stays open for it.
-                StakeChooser(
-                    state = state,
-                    onStake = onStake,
-                    onAllIn = onAllIn,
-                    enabled = true,
-                )
-                Spacer(Modifier.height(PixelSpace.Snug))
-                PixelButton(
-                    text = "♠  PLAY AGAIN",
-                    onClick = onDeal,
-                    enabled = state.stakePlayable,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
+            // PLAY AGAIN sits under CONTINUE rather than replacing it: the time won is
+            // already banked, so the player chooses between spending it and betting it back
+            // for more up to the ceiling. It is offered whether or not the hand was won, and
+            // whether or not the bank survived it — betting the rest back up is the point of
+            // a table, and the chips say for themselves which bets the bank can still cover.
+            StakeChooser(
+                state = state,
+                onStake = onStake,
+                onAllIn = onAllIn,
+                enabled = true,
+            )
+            Spacer(Modifier.height(PixelSpace.Snug))
+            DealControl(state = state, onDeal = onDeal, text = "♠  PLAY AGAIN")
         }
 
         else -> {
@@ -385,15 +447,52 @@ private fun BlackjackBlocker(
     }
 
 /**
+ * The deal control, which is also the prompt when there is nothing to deal.
+ *
+ * With no chip chosen there is no bet and nothing to deal, so the button does not sit greyed
+ * out waiting to be understood — it says what it is waiting for, in the palette's red, and
+ * stops being a button at all. It becomes a control the moment a chip is on the table, and
+ * then it only greys out in the one case the readout under the chips already explains: a bet
+ * the bank has shrunk below.
+ *
+ * [text] is the resting label — DEAL HAND at an opening table, PLAY AGAIN after a settled
+ * hand — so the same control serves both without the caller having to remember which.
+ */
+@Composable
+private fun DealControl(
+    state: TableState,
+    onDeal: () -> Unit,
+    text: String,
+) {
+    if (state.hasStake) {
+        PixelButton(
+            text = text,
+            onClick = onDeal,
+            enabled = state.stakePlayable,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        // Disabled, not wired to nothing: it is a prompt rather than a control, and the
+        // DANGER tetrad draws exactly that — a red frame that reads as a stop rather than as
+        // an action. TalkBack gets the same sentence the eye does.
+        PixelButton(
+            text = "PLEASE SELECT A CHIP",
+            onClick = {},
+            style = PixelButtonStyle.DANGER,
+            enabled = false,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
  * The chips: three fixed bets plus the whole bank.
  *
  * A chip is a bet drawn on the bank, so a chip the bank cannot cover is greyed: there is no
- * time behind it, and the win it would pay out would be time invented rather than won. ALL IN
- * greys out with them, since it is the whole bank and there is no bank to put in.
- *
- * The smallest chip is the one exception: it is the table's own stake, dealt for whatever the
- * bank holds including nothing, so an empty bank still has a bet on it — the seat, not a
- * grant. Everything above it stays greyed until it is won.
+ * time behind it, and the win it would pay out would be time invented rather than won. There
+ * is no exception to that, and none of the chips is selected on the table's arrival — the bet
+ * is the player's to place, so the table opens with an empty felt and the deal control asking
+ * for a chip.
  *
  * Each stake carries its own chip art, one hue per denomination, so the row is read as four
  * different bets rather than the same button four times at four prices. The chip is drawn in
@@ -460,13 +559,16 @@ private fun StakeChooser(
     }
     Spacer(Modifier.height(4.dp))
     Text(
-        text = if (state.stakePlayable) {
-            "BET ${formatRemaining(state.stakeMillis)}  ·  BANK ${formatRemaining(state.bankMillis)}"
-        } else {
-            // The selected bet outruns the bank. It is a momentary disagreement — the table
-            // re-resolves the bet whenever the bank moves — so the readout names the thing
-            // that resolves it rather than leaving a greyed chip unexplained.
-            "BET TOO BIG FOR THE BANK — PICK A SMALLER CHIP"
+        text = when {
+            !state.hasStake ->
+                "BANK ${formatRemaining(state.bankMillis)}  ·  PICK A CHIP TO PLAY"
+            state.stakePlayable ->
+                "BET ${formatRemaining(state.stakeMillis)}  ·  BANK ${formatRemaining(state.bankMillis)}"
+            else ->
+                // The selected bet outruns the bank. The table re-reads the bet whenever the
+                // bank moves, so this is a momentary disagreement — and the readout names the
+                // thing that resolves it rather than leaving a greyed chip unexplained.
+                "BET TOO BIG FOR THE BANK — PICK A SMALLER CHIP"
         },
         style = MonoTypeScale.Metadata,
         color = PixelPalette.Muted,
