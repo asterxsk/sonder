@@ -71,6 +71,8 @@ fun PixelButton(
     style: PixelButtonStyle = PixelButtonStyle.PRIMARY,
     enabled: Boolean = true,
     minHeight: Dp = PixelSpace.Target,
+    horizontalPadding: Dp = PixelSpace.Room,
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -114,7 +116,7 @@ fun PixelButton(
     ) {
         Box(
             modifier = Modifier
-                .padding(horizontal = PixelSpace.Room, vertical = PixelSpace.Base)
+                .padding(horizontal = horizontalPadding, vertical = PixelSpace.Base)
                 // Shadow padding is OUTSIDE the text box; clickable covers the
                 // whole button including the shadow strip, so edge taps register.
                 .padding(
@@ -123,16 +125,40 @@ fun PixelButton(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            androidx.compose.material3.Text(
-                text = text,
-                style = PixelTypeScale.Button,
-                fontFamily = PixelFont,
-                color = when {
-                    !enabled -> PixelPalette.Muted
-                    pressed && style == PixelButtonStyle.PRIMARY -> OnPrimaryMuted
-                    else -> textColor
-                },
-            )
+            // Icon over label, never beside it. Beside, the two share whatever width the
+            // button has — and the chips row puts four of these across one screen, so each
+            // button is around 70dp and an icon on the same line as the label squeezes both.
+            // Stacked, the chip takes the full width it needs and the label sits under it at
+            // its natural size; the button just grows taller, which costs nothing here.
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(
+                    PixelSpace.Tight,
+                ),
+            ) {
+                // A graphic that belongs to the label rather than to the button — the chips
+                // are the icon for the bet, and a stake with no chip above it reads as a
+                // plain text button. Drawn by the caller so this kit stays free of any one
+                // screen's vocabulary; the press transform above already moves it with the
+                // text, which is what makes it sit *in* the button rather than on it.
+                leading?.invoke()
+                androidx.compose.material3.Text(
+                    text = text,
+                    style = PixelTypeScale.Button,
+                    fontFamily = PixelFont,
+                    // Never wrapped. A label that breaks onto a second line grows the button
+                    // and, worse, breaks unevenly: at this width "2 MIN" fits and "10 MIN"
+                    // does not, so the row of four chips ends up two different heights with
+                    // no reason the eye can read. The caller narrows the padding instead.
+                    maxLines = 1,
+                    softWrap = false,
+                    color = when {
+                        !enabled -> PixelPalette.Muted
+                        pressed && style == PixelButtonStyle.PRIMARY -> OnPrimaryMuted
+                        else -> textColor
+                    },
+                )
+            }
         }
     }
 }

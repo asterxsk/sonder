@@ -43,6 +43,9 @@ import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.ui.kit.BadgeTone
+import com.example.sonder.ui.kit.ChipIcon
+import com.example.sonder.ui.kit.ChipState
+import com.example.sonder.ui.kit.ChipTier
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelPanel
@@ -169,10 +172,10 @@ private fun BlackjackBlocker(
             Spacer(Modifier.height(4.dp))
             Text(
                 text = if (state.outOfTime) {
-                    // Nothing to bet and nothing to win with: the day's opening stake is what
-                    // this screen is waiting for, so it names when that arrives rather than
-                    // inviting a hand the table will not deal.
-                    "OUT OF TIME — THE BANK OPENS AGAIN AT MIDNIGHT"
+                    // No time banked, but not a dead end: the table deals the smallest chip
+                    // from an empty bank, so the line says what this screen is actually
+                    // waiting for — a won hand — rather than a wall with no way past it.
+                    "BANK EMPTY — WIN A HAND TO GET IN"
                 } else {
                     "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}"
                 },
@@ -301,7 +304,7 @@ private fun BlackjackBlocker(
             PixelButton(
                 text = "♠  DEAL HAND",
                 onClick = onDeal,
-                enabled = state.stakeBacked,
+                enabled = state.stakePlayable,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -347,13 +350,13 @@ private fun BlackjackBlocker(
                     text = "♠  PLAY AGAIN",
                     onClick = onDeal,
                     style = PixelButtonStyle.SECONDARY,
-                    enabled = state.stakeBacked,
+                    enabled = state.stakePlayable,
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                // The hand took the lot. Nothing is left to spend and nothing is left to bet,
-                // so the chips come up greyed and this is the wall the day opens from: the
-                // stake it opens with is the next chip the player has.
+                // The hand took the lot. Nothing is left to spend and the chips above the
+                // smallest are greyed, so the table deals the smallest one — the bet an empty
+                // bank is played for — and PLAY AGAIN stays open for it.
                 StakeChooser(
                     state = state,
                     onStake = onStake,
@@ -364,7 +367,7 @@ private fun BlackjackBlocker(
                 PixelButton(
                     text = "♠  PLAY AGAIN",
                     onClick = onDeal,
-                    enabled = state.stakeBacked,
+                    enabled = state.stakePlayable,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -388,9 +391,14 @@ private fun BlackjackBlocker(
  * time behind it, and the win it would pay out would be time invented rather than won. ALL IN
  * greys out with them, since it is the whole bank and there is no bank to put in.
  *
- * When every chip is greyed there is nothing to bet and nothing to deal, and the line under
- * the row says so — the table is waiting for the day's opening stake rather than for a
- * decision the player cannot improve on.
+ * The smallest chip is the one exception: it is the table's own stake, dealt for whatever the
+ * bank holds including nothing, so an empty bank still has a bet on it — the seat, not a
+ * grant. Everything above it stays greyed until it is won.
+ *
+ * Each stake carries its own chip art, one hue per denomination, so the row is read as four
+ * different bets rather than the same button four times at four prices. The chip is drawn in
+ * the state the stake is in — affordable, chosen, or unaffordable — which is the same
+ * three-way split the button underneath it is painted in, so the two never disagree.
  *
  * The selected bet is the filled chip. A chip that is not selected is still pressable, as long
  * as the bank covers it.
@@ -408,15 +416,30 @@ private fun StakeChooser(
     ) {
         AccessPolicy.CHIPS.forEach { chip ->
             val selected = !state.allIn && state.stakeMillis == chip
+            val affordable = enabled && AccessPolicy.canStake(state.bankMillis, chip)
+            val tier = ChipTier.forStake(chip)
             PixelButton(
-                text = formatRemaining(chip),
+                // The stake in words rather than as a clock. "2 MIN" says what the chip buys;
+                // "02:00" beside a chip that is already the 2:00 bet says the same thing twice
+                // in the notation the bank readout below is using for something else.
+                text = tier.label,
                 onClick = { onStake(chip) },
                 style = if (selected) PixelButtonStyle.PRIMARY else PixelButtonStyle.SECONDARY,
-                // Backed by the bank, or nothing: a bet is played with time the player holds.
-                enabled = enabled && AccessPolicy.canStake(state.bankMillis, chip),
+                // Backed by the bank, or the table's own smallest chip: a bet is played with
+                // time the player holds, and the smallest one with the seat.
+                enabled = affordable,
                 modifier = Modifier.weight(1f),
+                // Four chips share one screen, so each button is about 76dp across and the
+                // default 16dp gutter would leave 44dp for a label that needs more. The
+                // padding comes off the sides rather than the label shrinking, because the
+                // label is the thing being read.
+                horizontalPadding = 4.dp,
+                leading = {
+                    ChipIcon(tier = tier, state = chipState(selected, affordable), size = 34.dp)
+                },
             )
         }
+
         PixelButton(
             text = "ALL IN",
             onClick = onAllIn,
@@ -425,25 +448,43 @@ private fun StakeChooser(
             // stops being affordable above zero, since it is whatever the bank holds.
             enabled = enabled && !state.outOfTime,
             modifier = Modifier.weight(1f),
+            horizontalPadding = 4.dp,
+            leading = {
+                ChipIcon(
+                    tier = ChipTier.HIGH,
+                    state = chipState(state.allIn, enabled && !state.outOfTime),
+                    size = 34.dp,
+                )
+            },
         )
     }
     Spacer(Modifier.height(4.dp))
     Text(
-        text = if (state.stakeBacked) {
+        text = if (state.stakePlayable) {
             "BET ${formatRemaining(state.stakeMillis)}  ·  BANK ${formatRemaining(state.bankMillis)}"
         } else {
-            // The bet is unaffordable in every denomination, so the readout is replaced by the
-            // one thing that changes it. Two reasons, and they read differently: an empty bank
-            // is out of time, and a bank too thin for the smallest chip is too little to bet.
-            if (state.outOfTime) {
-                "OUT OF TIME — THE BANK OPENS AGAIN AT MIDNIGHT"
-            } else {
-                "TOO LITTLE TO BET — THE BANK OPENS AGAIN AT MIDNIGHT"
-            }
+            // The selected bet outruns the bank. It is a momentary disagreement — the table
+            // re-resolves the bet whenever the bank moves — so the readout names the thing
+            // that resolves it rather than leaving a greyed chip unexplained.
+            "BET TOO BIG FOR THE BANK — PICK A SMALLER CHIP"
         },
         style = MonoTypeScale.Metadata,
         color = PixelPalette.Muted,
     )
+}
+
+/**
+ * The state a stake's chip is drawn in.
+ *
+ * Chosen beats affordable: a chip can be selected and simultaneously too big for the bank —
+ * the table re-resolves the bet when the bank moves, so for a moment the two disagree — and
+ * the chip has to show what the user picked rather than what the bank holds. The "bet too big"
+ * line under the row is what says the pick is unplayable.
+ */
+private fun chipState(selected: Boolean, affordable: Boolean): ChipState = when {
+    selected -> ChipState.SELECTED
+    affordable -> ChipState.READY
+    else -> ChipState.DEAD
 }
 
 @Composable

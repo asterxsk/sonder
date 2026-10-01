@@ -128,10 +128,10 @@ class EnforcementRepository @Inject constructor(
     /**
      * Unspent access right now, from the warm cache.
      *
-     * Day-aware: a row left over from an earlier local day reads as the day's opening stake,
-     * which is the whole of what the old `daily_usage` table used to enforce, and a package
-     * with no row reads the same way — nothing has been stored for today rather than nothing
-     * being available. Read on the foreground hot path, so it may not wait on Room.
+     * Day-aware: a row left over from an earlier local day reads 0, and so does a package
+     * with no row at all — nothing stored for today is nothing available, which is the whole
+     * of what the old `daily_usage` table used to enforce. Read on the foreground hot path,
+     * so it may not wait on Room.
      */
     fun cachedRemaining(pkg: String, nowMillis: Long = System.currentTimeMillis()): Long {
         val row = _banks.value[pkg]
@@ -301,9 +301,9 @@ class EnforcementRepository @Inject constructor(
         val bankBefore = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
         // Clamped to what the bank covers rather than trusted: the bank is what backs a bet,
         // and a stake drawn on time that does not exist would be paid out of nothing on a
-        // win. A hand that arrives here with more than the bank holds settles for what the
-        // bank holds — the same rule the table enforces before the cards are dealt.
-        val stake = stakeMillis.coerceIn(0L, bankBefore)
+        // win. The one stake a bank of nothing still covers is the smallest chip, the table's
+        // own — so a hand played from a locked app settles for that and no more.
+        val stake = stakeMillis.coerceIn(0L, bankBefore.coerceAtLeast(AccessPolicy.TABLE_STAKE_MILLIS))
         val bankAfter = AccessPolicy.onHandResult(
             outcome = outcome,
             bankMillis = bankBefore,

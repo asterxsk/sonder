@@ -70,10 +70,10 @@ data class HomeState(
  * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here — so
  * countdown text is deterministic in tests.
  *
- * A bank from an earlier day reads as the day's opening stake, which is what makes the
- * allowance daily without a table of its own: yesterday's leftovers are not today's access,
- * and a target that has never played reads the same way, because the day is what opens a
- * table rather than any hand that was played on it.
+ * A bank from an earlier day reads as 0, which is what makes the allowance daily without a
+ * table of its own: yesterday's leftovers are not today's access. A target that has never
+ * played reads the same way, so the row for an app added a moment ago says LOCKED — the
+ * table, not the app, is what that target opens to.
  */
 internal fun mapHomeState(
     targets: List<TargetEntity>,

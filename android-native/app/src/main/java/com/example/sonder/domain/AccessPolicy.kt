@@ -8,21 +8,21 @@ import java.time.ZoneId
 /**
  * Pure bank policy — the timing model locked in with the user:
  *
- * - Access is a **bank** of unspent time per app, starting at zero.
+ * - Access is a **bank** of unspent time per app, starting at zero. A target added just now
+ *   has no time at all, so it is locked from the moment it is added: the bank is what access
+ *   *is*, and nothing grants access but a hand that was won.
  * - The player stakes a chip (2:00 / 5:00 / 10:00, or the whole bank) before the hand.
  *   Win → `bank += stake`. Lose → `bank -= stake`, floored at 0. Push → nothing.
  * - **A bet is backed by the bank**: a stake the bank cannot cover cannot be played, so a
- *   win is always paid out of something that was at risk ([canStake]). An empty bank has
- *   nothing to bet and no hand to play until the day opens it again.
+ *   win is always paid out of something that was at risk ([canStake]). The one exception is
+ *   the smallest chip, which the table always deals with ([TABLE_STAKE_MILLIS]).
  * - The bank is capped at the app's own maximum ([AccessRules.maxMillis], default 1:00).
  * - **The clock only runs while the app is in front.** Elapsed foreground time is billed at
  *   [MAX_BILL_MILLIS] a step; time away is never billed and never revoked. This is what
  *   replaced the old absolute `endAtMillis` grant, which ran down while the user was
  *   elsewhere and was destroyed outright by a long enough absence.
- * - The bank belongs to a **local day**. A read on a later day reads
- *   [OPENING_STAKE_MILLIS], which is the daily cap the old `daily_usage` table used to
- *   enforce: yesterday's leftovers are not today's access, and today still opens with
- *   something to bet.
+ * - The bank belongs to a **local day**. A read on a later day reads 0: yesterday's
+ *   leftovers are not today's access, and the day opens locked like any other empty bank.
  * - The bank reaching zero **locks removal of the target** for [REMOVAL_LOCK_MILLIS].
  *
  * All timers are absolute epoch millis so process death/reboot never corrupts state.
@@ -56,24 +56,30 @@ object AccessPolicy {
     val CHIPS: List<Long> = listOf(2 * 60_000L, 5 * 60_000L, 10 * 60_000L)
 
     /**
-     * The stake a bank opens with at the start of each local day.
+     * The smallest chip: the stake the table deals for whatever the bank holds, including
+     * nothing.
      *
-     * A chip has to be backed, so a bank reading zero is a table with no chip on it at all:
-     * greyed chips, no hand, and no hand to win one with. This is what keeps that from being
-     * permanent — the day rolls over and the bank comes back holding the smallest chip, one
-     * hand's worth of a way back in. It is also the whole of the day's allowance that arrives
-     * unwon, which is deliberately the least a hand can be played for.
+     * It is not a grant, and deliberately not spendable — it is the seat at the table. An
+     * added target, and every bank at the start of a day, reads zero and is locked; this is
+     * the chip that lets a hand be played from that zero so the way in is always one hand
+     * away. Everything won with it is access, so access still only ever arrives by winning.
+     *
+     * It is the only stake that is not backed by the bank, and it is the smallest one for
+     * exactly that reason: whatever a hand is won for cannot be more than the least the
+     * table deals.
      */
-    val OPENING_STAKE_MILLIS: Long = CHIPS.first()
+    val TABLE_STAKE_MILLIS: Long = CHIPS.first()
 
     /**
      * Whether [stakeMillis] can be played from [bankMillis].
      *
-     * The bank backs the bet. Zero backs nothing, so an empty bank is a table with no seat at
-     * it until the day opens it again.
+     * The bank backs the bet, with one exception: [TABLE_STAKE_MILLIS] is always playable,
+     * because it is what the table deals from an empty bank — see its own note. Every larger
+     * chip needs the bank to cover it, so no hand can mint more time than the smallest chip
+     * out of nothing.
      */
     fun canStake(bankMillis: Long, stakeMillis: Long): Boolean =
-        stakeMillis > 0L && bankMillis >= stakeMillis
+        stakeMillis > 0L && (bankMillis >= stakeMillis || stakeMillis <= TABLE_STAKE_MILLIS)
 
     /**
      * The bank a settled hand leaves behind.
@@ -108,24 +114,21 @@ object AccessPolicy {
         (remainingMillis - elapsedMillis.coerceIn(0L, MAX_BILL_MILLIS)).coerceAtLeast(0L)
 
     /**
-     * Unspent access in a stored bank, reading a row from another local day as the day's
-     * opening stake rather than as the time it was left holding.
+     * Unspent access in a stored bank. A row from another local day reads as 0.
      *
-     * The day check is what makes the bank a daily allowance without a second table: the row
-     * survives midnight and is read at [OPENING_STAKE_MILLIS] instead of at what it stored,
-     * because yesterday's leftovers are not today's access — and because a day that opened at
-     * zero would be a day with no stake to play and no hand to win with.
+     * The day check is what makes the bank a daily allowance without a second table:
+     * yesterday's leftovers are not today's access. A day opens locked, exactly like an empty
+     * bank, and the way out of both is a hand played for [TABLE_STAKE_MILLIS].
      */
     fun bankAt(remainingMillis: Long, epochDay: Long, nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long =
-        if (epochDay == epochDayOf(nowMillis, zoneId)) remainingMillis.coerceAtLeast(0L) else OPENING_STAKE_MILLIS
+        if (epochDay == epochDayOf(nowMillis, zoneId)) remainingMillis.coerceAtLeast(0L) else 0L
 
     /**
      * [bankAt] for a package that has no stored row at all.
      *
-     * A package that has never played has no row, and reads as the day's opening stake for
-     * the same reason a stale row does: the table is opened by the day it is played on, so a
-     * target added this morning is playable this morning rather than sitting at a zero no
-     * hand could ever be dealt from.
+     * A package that has never played has no row, and reads 0 for the same reason a stale row
+     * does: it has been granted nothing. A target added a moment ago is therefore locked from
+     * the moment it is added, and opens to the table rather than to the app.
      */
     fun bankFor(
         storedMillis: Long?,
@@ -133,7 +136,7 @@ object AccessPolicy {
         nowMillis: Long,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): Long = if (storedMillis == null || epochDay == null) {
-        OPENING_STAKE_MILLIS
+        0L
     } else {
         bankAt(storedMillis, epochDay, nowMillis, zoneId)
     }

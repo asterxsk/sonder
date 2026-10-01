@@ -30,4 +30,23 @@ object PixelPalette {
     val CardFace = Color(0xFFEADFC7)    // playing card face (readability first)
     val CardInk = Color(0xFF18130E)     // playing card ink
     val ShadowPanel = Color(0xFF332816) // hard offset shadow for panels
+
+    /**
+     * The chips, one hue per stake, following the ordinary casino denomination ladder —
+     * blue is the ten, orange the twenty, green above it, purple the top chip. See
+     * [com.example.sonder.ui.kit.ChipTier] for which stake wears which.
+     *
+     * Cream is the single insert colour across every chip and every state. It is deliberately
+     * not a tier colour: the inserts are what carries the chip's shape once the chip is
+     * greyed at an empty bank, and if they dimmed with the tier a dead chip would be a smudge
+     * with nothing to read.
+     *
+     * Orange rather than the literal yellow of a $20 chip: the gate's own action button is
+     * this palette's amber, and a yellow chip sitting on it separates by almost nothing.
+     */
+    val ChipInsert = Color(0xFFF7ECCF)  // the eight edge inserts, on every chip
+    val ChipTen = Color(0xFF3774C4)     // 02:00 — the $10 chip
+    val ChipTwenty = Color(0xFFE2762B)  // 05:00 — the $20 chip
+    val ChipTwentyFive = Color(0xFF2FA05E) // 10:00 — the $25 chip
+    val ChipHigh = Color(0xFF8B5CF6)    // ALL IN — the top chip
 }

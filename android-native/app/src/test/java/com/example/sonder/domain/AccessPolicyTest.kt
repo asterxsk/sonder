@@ -111,14 +111,27 @@ class AccessPolicyTest {
 
     @Test
     fun `a chip is playable only when the bank covers it`() {
-        // The bank backs the bet. An empty bank backs nothing, which is what stops a win from
-        // being paid out of time that was never at risk.
+        // The bank backs the bet. A chip above the smallest one needs the bank behind it,
+        // which is what stops a win from being paid out of time that was never at risk.
         assertTrue(AccessPolicy.canStake(bankMillis = 2 * 60_000L, stakeMillis = 2 * 60_000L))
         assertTrue(AccessPolicy.canStake(bankMillis = 10 * 60_000L, stakeMillis = 5 * 60_000L))
         assertTrue(AccessPolicy.canStake(bankMillis = 60 * 60_000L, stakeMillis = 10 * 60_000L))
-        assertTrue(!AccessPolicy.canStake(bankMillis = 2 * 60_000L - 1L, stakeMillis = 2 * 60_000L))
-        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 2 * 60_000L))
-        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 1L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 5 * 60_000L - 1L, stakeMillis = 5 * 60_000L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 5 * 60_000L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 10 * 60_000L))
+    }
+
+    @Test
+    fun `the table's stake is dealt from an empty bank`() {
+        // The seat, not a grant: the smallest chip is the one bet an empty bank is played
+        // for, so a locked app is always one hand from being open. Every chip above it still
+        // needs the bank, which is what keeps a losing run from minting time.
+        assertTrue(
+            AccessPolicy.canStake(bankMillis = 0L, stakeMillis = AccessPolicy.TABLE_STAKE_MILLIS),
+        )
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = AccessPolicy.CHIPS[1]))
+        // Nothing is not a bet: ALL IN over an empty bank is refused with the chips.
+        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 0L))
     }
 
     @Test
@@ -127,12 +140,11 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `the day opens with the smallest chip on the table`() {
-        // The one stake that is not won: small enough to be the least a hand can be played
-        // for, and non-zero so that a bank the player has spent down to nothing is a table
-        // they can sit back down at.
-        assertEquals(2 * 60_000L, AccessPolicy.OPENING_STAKE_MILLIS)
-        assertEquals(AccessPolicy.CHIPS.first(), AccessPolicy.OPENING_STAKE_MILLIS)
+    fun `the table's stake is the smallest chip`() {
+        // Small, because it is the one stake that is not backed by the bank — the time a hand
+        // won with it pays out is time the table put up, so it is the least a hand can be for.
+        assertEquals(2 * 60_000L, AccessPolicy.TABLE_STAKE_MILLIS)
+        assertEquals(AccessPolicy.CHIPS.first(), AccessPolicy.TABLE_STAKE_MILLIS)
     }
 
     // --- billing ---------------------------------------------------------------
@@ -189,11 +201,11 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank from an earlier day reads as the day's opening stake`() {
-        // What the deleted daily_usage table used to do, with a stake on it: yesterday's
-        // leftovers are not today's access, and today does not open on nothing.
+    fun `a bank from an earlier day reads as nothing`() {
+        // What the deleted daily_usage table used to do: yesterday's leftovers are not today's
+        // access. The day opens locked like any other empty bank, and the way in is a hand.
         assertEquals(
-            AccessPolicy.OPENING_STAKE_MILLIS,
+            0L,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) - 1,
@@ -204,10 +216,10 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank from a later day reads as the day's opening stake`() {
+    fun `a bank from a later day reads as nothing`() {
         // A clock set back a day is the same problem in the other direction.
         assertEquals(
-            AccessPolicy.OPENING_STAKE_MILLIS,
+            0L,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) + 1,
@@ -218,10 +230,11 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank with no row reads as the day's opening stake`() {
-        // A target added this morning has never played, and has to be playable this morning.
+    fun `a target with no row reads as nothing and so is locked`() {
+        // A target added a moment ago has been granted nothing: no row is no access, and the
+        // app opens to the table rather than to the app.
         assertEquals(
-            AccessPolicy.OPENING_STAKE_MILLIS,
+            0L,
             AccessPolicy.bankFor(
                 storedMillis = null,
                 epochDay = null,
@@ -244,7 +257,7 @@ class AccessPolicyTest {
             ),
         )
         assertEquals(
-            AccessPolicy.OPENING_STAKE_MILLIS,
+            0L,
             AccessPolicy.bankFor(
                 storedMillis = 12 * 60_000L,
                 epochDay = today - 1,

@@ -26,7 +26,7 @@ data class TableState(
     val dealerUp: Hand? = null,
     val dealerFull: Hand? = null, // revealed after stand
     /** The bet this hand is played for, as the table resolved it. */
-    val stakeMillis: Long = AccessPolicy.CHIPS.first(),
+    val stakeMillis: Long = AccessPolicy.TABLE_STAKE_MILLIS,
     /** Whether the selected bet is ALL IN, which follows the bank rather than a chip. */
     val allIn: Boolean = false,
     /** Unspent access this app has earned; the whole of what "granted" means. */
@@ -47,8 +47,11 @@ data class TableState(
     /** Whether the RESOLVED panel can offer another hand against the bank just built. */
     val canPlayAgain: Boolean get() = bankMillis > 0L
 
-    /** Whether the selected bet is one the bank covers, and so a hand that can be dealt. */
-    val stakeBacked: Boolean get() = AccessPolicy.canStake(bankMillis, stakeMillis)
+    /**
+     * Whether the selected bet is one the table can deal: a chip the bank covers, or the
+     * smallest chip, which the table deals for whatever the bank holds — including nothing.
+     */
+    val stakePlayable: Boolean get() = AccessPolicy.canStake(bankMillis, stakeMillis)
 }
 
 /**
@@ -131,8 +134,8 @@ class GateController @Inject constructor(
         val stake = when {
             keepAllIn -> bank
             // A bet the bank has shrunk below is not a bet: it falls back to the largest chip
-            // the bank still covers, or to the smallest one — selected and greyed — when it
-            // covers none, which is the table showing what a bet would cost from nothing.
+            // the bank still covers, or to the smallest one when it covers none — which is
+            // the table's own stake, and so the bet an empty bank is dealt.
             !AccessPolicy.canStake(bank, current.stakeMillis) -> affordableChip(bank)
             else -> current.stakeMillis
         }
@@ -144,10 +147,10 @@ class GateController @Inject constructor(
         )
     }
 
-    /** The largest chip [bankMillis] covers, or the smallest chip when it covers none. */
+    /** The largest chip [bankMillis] can be dealt, or the table's own when it covers none. */
     private fun affordableChip(bankMillis: Long): Long =
         AccessPolicy.CHIPS.lastOrNull { AccessPolicy.canStake(bankMillis, it) }
-            ?: AccessPolicy.CHIPS.first()
+            ?: AccessPolicy.TABLE_STAKE_MILLIS
 
     /**
      * Choose the bet: a chip at face value, or the whole bank.
@@ -155,7 +158,8 @@ class GateController @Inject constructor(
      * A chip the bank does not cover is refused rather than clamped. The bet is drawn on the
      * bank, and a stake drawn on time that is not there would be paid out of nothing on a win
      * — the table's chips are greyed for the same reason, and this is the same rule kept
-     * where a tap cannot get around it.
+     * where a tap cannot get around it. The smallest chip is the exception the rule itself
+     * carries ([AccessPolicy.canStake]), so an empty bank can still sit down to a hand.
      */
     fun stake(chipMillis: Long) {
         if (chipMillis !in AccessPolicy.CHIPS) return
@@ -181,9 +185,9 @@ class GateController @Inject constructor(
         // off the books without ever settling it.
         val phase = _state.value.phase
         if (phase != TableState.Phase.IDLE && phase != TableState.Phase.RESOLVED) return
-        // A hand is dealt for a bet the bank backs. An empty bank has no seat at the table —
-        // the way back in is the stake the day opens with, not a hand played for nothing.
-        if (!_state.value.stakeBacked) return
+        // A hand is dealt for a bet the table can carry: a chip the bank backs, or the
+        // smallest chip over an empty bank. Anything else is time invented rather than won.
+        if (!_state.value.stakePlayable) return
 
         deck = BlackjackRules.shuffledDeck()
         dealt = BlackjackRules.deal(deck)

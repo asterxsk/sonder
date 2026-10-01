@@ -41,18 +41,19 @@ class HomeStateTest {
     }
 
     @Test
-    fun `an enabled target that has never played opens with the day's stake`() {
-        // No row means nothing has been played on this table, not that the table has nothing
-        // on it: the day opens every app with the smallest chip, or there is no hand to deal.
+    fun `an enabled target that has never played is locked`() {
+        // A target added a moment ago has been granted nothing. No row is no access, so the
+        // app reads LOCKED and opening it raises the table rather than letting it through.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = emptyList(),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(AccessPolicy.OPENING_STAKE_MILLIS, state.rows.single().bankMillis)
-        assertEquals("02:00", state.rows.single().remainingText)
-        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
+        assertEquals(0L, state.rows.single().bankMillis)
+        // No timer to show: a locked row carries the state, not a countdown.
+        assertEquals("", state.rows.single().remainingText)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
     }
 
     @Test
@@ -71,17 +72,17 @@ class HomeStateTest {
     }
 
     @Test
-    fun `a bank from yesterday reads as the day's stake, not as what it held`() {
+    fun `a bank from yesterday reads as nothing, not as what it held`() {
         // The daily allowance without a daily table: the row survives midnight and stops
-        // counting, and the new day opens it at the stake every day opens with.
+        // counting, so the new day is locked and has to be opened by a hand like any other.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = listOf(bank("com.example.a", 30 * 60_000L, epochDay = today - 1)),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(AccessPolicy.OPENING_STAKE_MILLIS, state.rows.single().bankMillis)
-        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
+        assertEquals(0L, state.rows.single().bankMillis)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
     }
 
     @Test

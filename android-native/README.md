@@ -4,9 +4,11 @@ Pixel-art screen-time blocking. You choose the apps; opening one forces a hand o
 blackjack. Access is a per-app, per-day **time bank**: win a hand and the bank
 grows by the chip you staked; lose and it shrinks by the same. The bank only
 drains while the app is actually in front, so time away is never billed. Run it
-to zero and the gate comes up again, chips greyed. Nothing carries over — but
-every bank opens each local day with the 2:00 chip on it, so the table is never
-a wall.
+to zero and the gate comes up again, the app locked. Nothing carries over: an app
+added a moment ago and a bank left over from yesterday both read zero, and both
+open to the gate. What keeps that from being a wall is the table's own stake —
+the **2:00** chip is dealt for whatever the bank holds, including nothing, so the
+way back in is always a hand rather than a wait.
 
 Built with Jetpack Compose, Hilt, and Room. It implements the Pixel UI v3
 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
@@ -17,7 +19,7 @@ Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # unit tests (159; 109 in the pure domain layer)
+./gradlew testDebugUnitTest    # unit tests (160; 110 in the pure domain layer)
 ```
 
 Requires JDK 17 via `JAVA_HOME` and an Android SDK with platform 37. Gradle
@@ -32,12 +34,12 @@ foreground use, which is measured the same in every build. `minSdk 26`,
 
 | Event | Result |
 | --- | --- |
-| Start of day | bank 2:00, every app |
-| Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) — only while the bank covers it |
+| A target is added | bank 0 — locked, like any bank at the start of a day |
+| Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) — only while the bank covers it, except 2:00, which the table always deals |
 | Win | bank += stake, capped at the app's max (default 60:00) |
 | Loss | bank -= stake, floored at 0 — never a debt |
 | Push | inert re-deal |
-| Bank reaches 0 | gate up, chips greyed; removal refused for 12 h |
+| Bank reaches 0 | gate up, chips above 2:00 greyed; removal refused for 12 h |
 
 ## Architecture
 
@@ -45,7 +47,7 @@ foreground use, which is measured the same in every build. `minSdk 26`,
 app/src/main/java/com/example/sonder/
 ├── domain/            pure rules — no Android (fully unit-tested)
 │   ├── BlackjackRules.kt    deck, deal, dealer-stands-on-17, settle
-│   ├── AccessPolicy.kt      the time bank: chips, billing, the day's stake
+│   ├── AccessPolicy.kt      the time bank: chips, billing, the table's stake
 │   ├── AccessRules.kt       the one per-app rule: the bank's max size
 │   └── model/               Card, Hand, EnforcementState, snapshots
 ├── data/
