@@ -290,6 +290,11 @@ The stakes are named as chips — `2:00`, `5:00`, `10:00` and `ALL IN`, the whol
 chip here is minutes of the user's own time, never money. No coins, cash, poker tables or
 casino felt.
 
+The table opens with **no chip on it**. A bet is a wager the player has to place, so the
+chips start unselected and the deal control reads `PLEASE SELECT A CHIP` in `danger` until
+one is picked; it becomes `♠ DEAL HAND` the moment there is a bet to deal. A default chip
+would be the interface choosing a wager on the user's behalf.
+
 ## 10. Blocked screen
 
 The block screen should feel like the user has entered a tiny room.
@@ -303,25 +308,56 @@ Background:
 Foreground:
 - framed target card
 
-Example:
+It has **two faces**, and which one is drawn is the whole of what the screen is saying:
+the **table** while the bank holds time, the **wall** when it does not.
+
+Table face — the bank has time in it, so there is a bet to place and a hand to win:
 
 ```text
+   ▣ PLAYING
+
         YouTube
 
-       is blocked.
+   BANK 04:12 OF 10:00
 
-   Out of time. Stake
-    a chip and win a
-   hand to get back in.
+   [ 9♠ ] [ 7♥ ]      YOU 16
 
+  [2MIN][5MIN][10MIN][ALL IN]
   ┌──────────────────┐
-  │ PLAY BLACKJACK → │
+  │PLEASE SELECT A CHIP│   ← danger, disabled
   └──────────────────┘
 
   ┌──────────────────┐
   │  ✕  CLOSE APP    │
   └──────────────────┘
 ```
+
+Wall face — the bank is spent, so there is nothing to play for:
+
+```text
+   ▣ LOCKED
+
+        YouTube
+
+   OUT OF TIME — LOCKED FOR TODAY
+
+  ┌──────────────────────┐
+  │ ◷  04:12:33           │
+  │    UNTIL YOUR BANK    │
+  │    REFILLS            │
+  └──────────────────────┘
+
+  ┌──────────────────┐
+  │  ✕  CLOSE APP    │
+  └──────────────────┘
+```
+
+The wall carries **no chips at all**, not even greyed. A control that exists only to say
+"no" invites the tap that finds out; the absence of the table is the message, and the
+countdown says how long it lasts. The countdown is derived from the clock to the next local
+midnight, never from a stored deadline, so it cannot go stale across a process death,
+reboot, or timezone change — the same reason the refill itself is a read rather than an
+alarm.
 
 The environment is decoration; the framed content is the functional layer.
 
@@ -337,13 +373,21 @@ It sends Home and then a best-effort `killBackgroundProcesses`. On modern Androi
 does not kill a foreground app, so Home is the real effect; the kill is a nudge for an app
 that is already backgrounded.
 
-### The way out on a lost hand
+### The way out on a settled hand
 
-CLOSE is the way out of the block screen, and a *settled loss* keeps it. A loss is the moment
-the bank just shrank, and on a short screen the way out must not be the thing pushed off the
-fold — so the panel offers `CONTINUE` while the bank still holds time, with `PLAY AGAIN` beside
-it to bet the remaining bank back up to the ceiling, and `✕  CLOSE APP` still renders below
-both. A hand that left the bank empty offers only `PLAY AGAIN` and CLOSE.
+CLOSE is the way out of the block screen, and a *settled hand* keeps it. A settled hand is
+the moment the bank moved, and on a short screen the way out must not be the thing pushed
+off the fold — so `✕  CLOSE APP` still renders below everything.
+
+`CONTINUE` is the way in and is offered **only on a won hand**. It is keyed to the outcome
+rather than to the balance, because a push leaves the bank exactly as it was and a loss
+leaves time in it too: a `CONTINUE` offered whenever there was time in the bank would open
+the app on a hand nobody won.
+
+`PLAY AGAIN` is offered on every settled hand, won or lost, with the chips beside it — the
+chips say for themselves which bets the bank can still cover. A hand that takes the last of
+the bank leaves them all greyed and the deal control asking for a chip there is none to
+place.
 
 CLOSE is never replaced by the replay controls. It still renders in every state — live hand,
 settled hand, an empty bank — so the way out is never something the player has to earn,
@@ -426,9 +470,24 @@ Four canonical badges:
 `♠ PLAYING`
 `⌛ COOLDOWN`
 
-`♠ PLAYING` and `⌛ COOLDOWN` belong to the blackjack gate — the one screen where a hand is
-played and an empty bank is named against it. Home uses `✓ GRANTED` and `▣ LOCKED`: a gated app
-you have not opened reads `LOCKED`, never `PLAYING`.
+`♠ PLAYING` and `✓ GRANTED` belong to the gate's table face: `PLAYING` is a table with a
+hand yet to be won, and `GRANTED` is a hand that was won — the gate never reads `GRANTED`
+over a hand nobody won.
+
+Home uses the same two tones for a different question, and it is the bank it is reporting
+rather than permission: a funded row renders as `✓` with the time it holds (`✓ 29:00`), and
+a spent one as `▣ LOCKED` with no countdown. That distinction matters more now than it did,
+because Home's `✓` no longer means the app opens without a hand — the gate is on every open.
+Home shows what is in the bank; the table is what decides what it is worth.
+
+`▣ LOCKED` carries the gate's **wall** face and never the table's. It is the badge of an
+empty bank, which is a state with a hand in it nowhere — the countdown to the refill is the
+whole of what that screen offers. On the table it would be wrong: time in the bank is not a
+lock, however far from the app it still is.
+
+`GRANTED` on the gate is keyed to the **win** and not to the balance. A push leaves the bank
+untouched and a loss leaves time in it, so a balance-keyed badge would read `GRANTED` over
+the one outcome that must not open a door.
 
 Each has:
 - icon
@@ -608,6 +667,32 @@ but quantising a full-width slide to the same four frames lands them 90dp apart 
 as a stutter rather than as a slide. The duration is still the motion scale's 180ms; only
 the easing is continuous.
 
+### The loader
+
+Loading is a **chip stepping round a quarter turn at a time** — the app's own chip, drawn
+through the same `ChipIcon` the stakes are bet with, at the same palette. It is the mark the
+app is recognised by and the mark it bets with, so a loading screen showing a bar or a clock
+would be the one surface not speaking the table's language.
+
+The turn is **five hard 9° steps** — 0°, 9°, 18°, 27°, 36° — each held rather than eased
+into. A smoothly spinning chip is the one object in the interface that would move
+continuously, and §18's rule is not about duration: it is that this world's motion lands on
+frames. The angle is floored to a whole step and never interpolated, which is what makes the
+loop read as a stepping sprite rather than a slow rotation.
+
+**9°, not 90°, and this is not a preference.** The chip's rim carries eight inserts evenly
+spaced around it, so the drawn chip is bit-for-bit identical under a quarter turn — measured
+against the grid, a 90° rotation differs in **0** of its 576 cells. A quarter-turn loader
+therefore renders the same frame forever and looks frozen. The angle has to be a value
+*modulo* 45°, where five 9° steps give five genuinely different pictures; the wrap from 36°
+back to 0° differs in only 40 cells, so the loop closes more gently than it turns.
+
+The tile is marked as loading for screen readers: a decorative mark standing in for a
+screen that has not answered yet leaves TalkBack with nothing else to read.
+
+`PixelSkeletonList` is not a loader and is unchanged — it stands in for a list that has not
+arrived, where the shape of the missing thing is the information.
+
 ### Waiting states
 
 A list that is still reading shows the rows it is about to become — same frame, same icon
@@ -695,12 +780,21 @@ Do NOT use:
 - circular floating action buttons
 - smooth animated UI
 - emoji as icons
-- casino-chip imagery
 - casino green felt
 - fake 3D bevels everywhere
 - excessive particle effects
 - giant dashboard statistics
 - generic stock illustrations
+
+**On the chip.** This list used to ban casino-chip imagery outright, and the launcher icon
+was a cat for that reason — the mark was deliberately kept off the table. That is now
+reversed: the chip is the brand mark, and it is the launcher icon, the loader, and the art
+on every stake. The ban was aimed at a *casino read* — felt, coins, cash, a promise of
+money — and the chip it stopped was the one thing on the gate that was already the product's
+own. What survives the reversal is the reason the ban existed: a chip here is minutes of the
+user's own time, and nothing may ever suggest otherwise. Green felt stays banned, and §9's
+rule that a chip is never money is load-bearing for the mark rather than merely adjacent
+to it.
 
 ## 22. Design target
 

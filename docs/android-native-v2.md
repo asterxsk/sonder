@@ -25,23 +25,24 @@ unit tests cover them.
 
 | Input | Effect |
 | --- | --- |
-| Any read on a later local day | reads as 0 |
+| Any read on a later local day | reads as `maxMillis` — the refill |
+| A package with no row | same: spent nothing today, so it holds the allowance |
 | Win | `bank = min(bank + stake, maxMillis)` |
 | Loss | `bank = max(bank − stake, 0)` — never a debt |
-| Push | no change; the hand is re-dealt |
+| Push | no change; the hand is re-dealt, and it opens nothing |
 | Stake | 2:00 / 5:00 / 10:00, or ALL IN = the whole bank |
-| Bank > 0 | the app is granted; the bank drains only while it is in front |
-| Bank reaches 0 | the gate comes up, and removal is refused for 12 h |
+| Open with `bank > 0` | the table — a won hand is the way in |
+| Open with `bank == 0` | the wall, counting down to the refill |
 
 The bet is drawn on the bank: a chip the bank cannot cover is greyed, so a win is always
-paid out of time that was at risk and no hand can mint access out of nothing. A bank spent
-down to nothing is a table with no chip on it — which is why every local day opens each
-bank with the smallest chip, the one stake that is not won, so the way back in is a hand
-rather than a wall. The bank *is* access, so there is no separate grant to earn and no debt
-to serve.
+paid out of time that was at risk and no hand can mint access out of nothing. There is no
+seat and no free hand — a bank spent down to nothing is a wall, not a table played for
+nothing. Spending the bank is not what opens the app either: holding time gets you the
+table, and a hand has to be won. The bank *is* access, so there is no separate grant to
+earn and no debt to serve.
 
-Worked example: bank 5:00, `L` at a 5:00 chip → floored at 0 (a loss is never a debt), and
-the chips grey out until the next morning's 2:00 stake, which is then played for 2:00.
+Worked example: bank 5:00, open the app → the table (no chip selected), pick 5:00. `W` →
+bank 10:00 and the app opens. `L` → bank 0, so the next open is the wall until the refill.
 
 `maxMillis` is the only per-app rule besides the scope, so nothing else can stand between a
 won hand and the app.
@@ -56,8 +57,9 @@ The bank is one row per package in the Room `time_bank` table
 - The bank only moves while the target is in front: the coordinator refreshes
   `lastSeenMillis` every few seconds and drains by the elapsed gap, clamped to
   `MAX_BILL_MILLIS = 10_000L`. Time away is never billed
-- Every app starts each local day at 0; a bank whose `epochDay` is any other day
-  reads as 0. Nothing carries over
+- Every app starts each local day on its ceiling; a bank whose `epochDay` is any
+  other day reads as `maxMillis`. The refill is that read rather than a write, so
+  there is nothing to carry over and nothing to re-arm
 - `BootReceiver` only warms the bank cache after reboot — there is no alarm to
   re-arm, and no `SCHEDULE_EXACT_ALARM` permission is needed
 - The old `GrantExpiryScheduler`, `ExpiryReceiver` and `RuleDefaults` are gone.

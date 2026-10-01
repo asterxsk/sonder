@@ -57,13 +57,14 @@
     <p>Each limited app has a bank of time measured in milliseconds. The bank is the
     <em>only</em> thing that decides whether you get in:</p>
     <ul>
-      <li>Bank above zero → the app opens, no questions asked.</li>
-      <li>Bank at zero → the gate. The app is locked, and the way in is a won hand.</li>
+      <li>Bank above zero → the <strong>table</strong>. Every open needs a won hand.</li>
+      <li>Bank at zero → the <strong>wall</strong>. Locked, counting down to the refill.</li>
     </ul>
-    <p>A bank belongs to a local calendar day, and nothing carries over: yesterday's
-    leftover 30:00 is not today's access. An app added a minute ago has banked nothing
-    either. Both read <strong>0</strong>, and both open to the gate rather than to the app —
-    the bank is what access <em>is</em>, and nothing grants it but a hand that was won.</p>
+    <p>A bank belongs to a local calendar day, and the refill is a read rather than a timer:
+    a row stamped with yesterday simply reads as the maximum again, so every day opens with
+    a full bank. An app added a minute ago has spent nothing either, so it starts on the same
+    allowance. Neither is permission to enter — the bank is what you <em>bet</em>, and a won
+    hand is what access <em>is</em>.</p>
 
     <h2 id="outcomes">Hand outcomes</h2>
     <table>
@@ -78,19 +79,19 @@
     <strong>10:00</strong> chip, or <strong>ALL IN</strong> — the whole bank. A chip is
     <strong>backed by the bank</strong>: you can only bet what you hold, so the 5:00 chip
     stays greyed out until the bank covers it, and a win is always paid out of time that was
-    at risk. The smallest chip is the one exception — <strong>2:00</strong> is the table's own
-    stake, and the table deals it for whatever the bank holds, including nothing. It is the
-    seat at the table rather than time you own: it buys no access of its own, and only a hand
-    won with it puts anything in the bank. That is what keeps a locked app one hand away
-    instead of a wall.</p>
+    at risk. There is no exception and no free hand — a bank spent down to nothing plays
+    nothing, because a chip that could be dealt from zero would be re-bet until it won, and
+    the time it paid out would be minted rather than won.</p>
+    <p>The table opens with <strong>no chip selected</strong>. Pick one and the deal control
+    stops reading <em>please select a chip</em> and becomes a hand.</p>
 
     <div class="panel">
       <p class="panel-title">Worked example</p>
-      <p style="margin:0">Bank empty, the table deals the 2:00 chip and you win: bank 2:00. Bet
-      the 2:00 chip and win again: bank 4:00. Bet ALL IN on 4:00 and win: bank 8:00 — two more
-      all-in wins would read 16:00 and 32:00, and the ceiling stops it there, whatever the
-      app's maximum is set to. Lose the 4:00 instead and the bank is 0:00: the gate, every
-      chip above 2:00 greyed, and the table still there to be played for the smallest one.</p>
+      <p style="margin:0">Bank 10:00, open the app: the table, nothing selected. Pick the
+      2:00 chip and win: bank 12:00 and you are in. Bet ALL IN on 12:00 and win: bank 24:00 —
+      two more all-in wins would read 48:00 and 96:00, and the ceiling stops it there,
+      whatever the app's maximum is set to. Lose the 12:00 instead and the bank is 0:00: the
+      next open is the wall, and every chip is greyed because there is none to back them.</p>
     </div>
 
     <h2 id="billing">What the clock counts</h2>
@@ -110,14 +111,18 @@
     <table>
       <thead><tr><th>Rule</th><th>Value</th></tr></thead>
       <tbody>
-        <tr><td>Stake the table always deals</td><td>2:00 — the smallest chip, played for from an empty bank</td></tr>
+        <tr><td>Bank you start each day with</td><td>the app's maximum — the refill, at local midnight</td></tr>
         <tr><td>Maximum bank (per app, your setting)</td><td>default 60:00 — presets 30:00 / 1:00 / 2:00 / 3:00</td></tr>
         <tr><td>Billing step</td><td>≤ 10 s of foreground time, per charge</td></tr>
-        <tr><td>Removal of a limit after the bank hits zero</td><td>refused for 12 h</td></tr>
+        <tr><td>Removal of a limit after the bank hits zero</td><td>refused for 12 h, or until the refill</td></tr>
       </tbody>
     </table>
     <p>The maximum is a lid, not a floor: a win that would push the bank past it lands on
     it, and a loss is never clamped up to it.</p>
+    <p>The bank is the <strong>day's allowance</strong>, and the refill is a read rather
+    than an alarm: a row stamped with an earlier day simply reads as the maximum again, so
+    there is no timer to fire and nothing that can be missed by a reboot. An app added
+    today starts on that same allowance — it has spent nothing yet.</p>
     <p>Draining a bank to zero also <strong>locks the limit's removal for 12 hours</strong>.
     It is a padlock on the settings screen, not on the app: the gate behaves exactly as it
     always does, and winning any hand clears the lock immediately.</p>
@@ -128,38 +133,44 @@
       <li>Dealer stands on all 17s <em>including soft 17</em>.</li>
       <li>Blackjack on the deal (natural) = instant win, no play needed.</li>
       <li>HIT and STAND only — no double, split, or surrender. Deliberately austere.</li>
-      <li>After a resolved hand the panel keeps <strong>PLAY AGAIN</strong> beside
+      <li>After a settled hand the panel keeps <strong>PLAY AGAIN</strong> beside
       <strong>CONTINUE</strong>, so the bank you just built can be bet again — up to the
-      ceiling, or down to zero.</li>
+      ceiling, or down to zero. <strong>CONTINUE</strong> appears only on a <em>won</em>
+      hand: a push leaves the bank untouched and a loss leaves time in it, so a way in
+      offered on either would be a door opened by a hand nobody won.</li>
     </ul>
 
     <h2 id="state-machine">State machine</h2>
 <pre>   ┌──────────────┐   open target    ┌──────────────┐
-   │     GATE     │ ───────────────▶ │    TABLE     │
-   │   bank ≤ 0   │                  │ 2:00 always  │
-   │ every bigger │                  │   dealt; the │
-   │ chip greyed  │                  │  rest need a │
-   │              │                  │     bank     │
-   └──────────────┘                  └───────┬──────┘
-          ▲                                  │
+   │    LOCKED    │ ───────────────▶ │    TABLE     │
+   │   bank = 0   │                  │  no chip is  │
+   │  no chips at │                  │ pre-selected │
+   │     all      │                  │  and every   │
+   │              │                  │ bet needs a  │
+   └──────▲───────┘                  │     bank     │
+          │                          └───────┬──────┘
+          │                                  │
           │                        win ┌─────┴─────┐ lose
           │                            ▼           ▼
           │                     ┌────────────┐  bank −= stake
           │                     │  RESOLVED  │  floored at 0
-          │                     │ PLAY AGAIN │  ──▶ GATE
+          │                     │ PLAY AGAIN │  ──▶ LOCKED
           │                     └──────┬─────┘
           │                            │
-          │                      CONTINUE
+          │                     CONTINUE (a win only)
           │                            │
-   ┌──────┴───────┐        bank > 0 → the app just opens
+   ┌──────┴───────┐                    ▼
    │    IN APP    │ ◀──────────────────┘
    │ drained only │
    │  in front    │
    └──────┬───────┘
-          │ bank reaches 0, by use or by a loss
-          └──────▶ GATE again, removal locked for 12 h</pre>
-    <p>There is no lockout state and no debt state to leave: the machine is the bank, and
-    the 2:00 stake on the table is the way back into it from nothing.
+          │ leave the app, or the bank hits 0
+          └──────▶ TABLE again / LOCKED, removal locked for 12 h
+
+    midnight ──▶ every bank refills to its ceiling</pre>
+    <p>There is no lockout state and no debt state to leave: the machine is the bank, the
+    bank is the day's, and the way in is a won hand rather than a balance. Holding time gets
+    you the table; only a hand opens the app.</p>
     Source of truth: <code>domain/AccessPolicy.kt</code> +
     <code>domain/GateDecider.kt</code> + <code>domain/BlackjackRules.kt</code>.</p>
 

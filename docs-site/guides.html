@@ -61,29 +61,32 @@
       <thead><tr><th>Constant</th><th>Value</th></tr></thead>
       <tbody>
         <tr><td>Chips</td><td>2:00 / 5:00 / 10:00, or ALL IN — each one only while the bank covers it</td></tr>
-        <tr><td>The stake the table always deals</td><td>2:00 — the smallest chip, played for from an empty bank</td></tr>
+        <tr><td>Bank you start the day with</td><td>the app's maximum, refilled at local midnight</td></tr>
         <tr><td>Billing step</td><td>≤ 10 s of foreground time</td></tr>
         <tr><td>Maximum bank</td><td>your setting, default 60:00</td></tr>
-        <tr><td>Removal lock after a drained bank</td><td>12 h</td></tr>
+        <tr><td>Removal lock after a drained bank</td><td>12 h, or until the refill</td></tr>
       </tbody>
     </table>
-<pre data-copy="# on a newly added target app, which starts locked:
-# 1. open it → the gate, with the 2:00 chip lit and the bigger chips greyed
-# 2. bet the 2:00 chip and win → you're in, no second screen
+<pre data-copy="# on a newly added target app:
+# 1. open it → the table, no chip selected, DEAL reading PLEASE SELECT A CHIP
+# 2. pick a chip and win → you're in, no second screen
 # 3. sit in the app for a minute → Home shows the bank about a minute lighter
 # 4. leave for two minutes, come back → the bank is where you left it
-# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT locked
-# 6. reopen the target → the gate is back, and the 2:00 chip is still on the table"># on a newly added target app, which starts locked:
-# 1. open it → the gate, with the 2:00 chip lit and the bigger chips greyed
-# 2. bet the 2:00 chip and win → you're in, no second screen
+# 5. leave and reopen → the table is back; the won hand did not carry over
+# 6. bet ALL IN and lose → bank 0; reopen and it is the wall, with a countdown
+#    to the refill; Home reads LOCKED, and REMOVE LIMIT is locked"># on a newly added target app:
+# 1. open it → the table, no chip selected, DEAL reading PLEASE SELECT A CHIP
+# 2. pick a chip and win → you're in, no second screen
 # 3. sit in the app for a minute → Home shows the bank about a minute lighter
 # 4. leave for two minutes, come back → the bank is where you left it
-# 5. bet ALL IN and lose → bank 0, Home reads LOCKED, REMOVE LIMIT locked
-# 6. reopen the target → the gate is back, and the 2:00 chip is still on the table</pre>
+# 5. leave and reopen → the table is back; the won hand did not carry over
+# 6. bet ALL IN and lose → bank 0; reopen and it is the wall, with a countdown
+#    to the refill; Home reads LOCKED, and REMOVE LIMIT is locked</pre>
     <p>Watch the state badges on Home: <span class="badge granted">✓ GRANTED</span>
-    <span class="badge locked">▣ LOCKED</span>. The gate itself carries the other two:
-    <span class="badge playing">♠ PLAYING</span>
-    <span class="badge cooldown">⌛ OUT OF TIME</span>.</p>
+    <span class="badge locked">▣ LOCKED</span>. The gate carries the other three:
+    <span class="badge playing">♠ PLAYING</span> over a table you have not won,
+    <span class="badge granted">✓ GRANTED</span> over a hand you did, and
+    <span class="badge locked">▣ LOCKED</span> over the wall.</p>
 
     <h2 id="add-remove-targets">Add or remove targets</h2>
     <ol>

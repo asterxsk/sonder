@@ -34,26 +34,31 @@ The bank lives in `time_bank` (one row per package); the rules are in
 
 | Event | Result |
 | --- | --- |
-| Bank above zero | The app opens — no hand, no gate |
-| Bank at zero | The gate, and the app is locked |
-| Blackjack win | **Bank + the stake**, clamped to the app's maximum |
+| Bank above zero | The table — a won hand is the way in |
+| Bank at zero | The wall: **OUT OF TIME**, locked until the refill |
+| Blackjack win | **Bank + the stake**, clamped to the app's maximum — and the way in |
 | Blackjack loss | **Bank − the stake**, floored at zero — never a debt |
-| Push | Free replay — nothing changes |
-| Time in a banked app | Drained at the rate you use it, in steps of ≤ 10 s |
+| Push | Free replay — nothing changes, and it opens nothing |
+| Time in an app you are in | Drained at the rate you use it, in steps of ≤ 10 s |
 | Time away from it | Not billed; the bank waits, and nothing revokes it |
-| Bank drained to zero | Removal of that limit is refused for **12 h** (a win clears it) |
+| Leaving the app | The gate comes back — the next open needs a new hand |
+| Local midnight | Every bank is refilled to its ceiling |
+| A bank drained to zero | Removal of that limit is refused for **12 h**, or until the refill |
 
 Stakes are chips: **2:00**, **5:00**, **10:00**, or **ALL IN** (the whole bank).
 A chip is **backed by the bank** — one the bank cannot cover is greyed out, so
-you can only bet time you actually hold. So `bet 5:00, win` → 5:00 banked;
-`bet 5:00, lose` → back to 0:00; `ALL IN on 15:00, win` → 30:00, up to the
-ceiling you set (default **60:00**, presets 30:00 / 1:00 / 2:00 / 3:00). The one
-exception is the smallest chip: **2:00** is the table's own stake, and the table
-deals it for whatever the bank holds, including nothing. It is the seat, not a
-grant — it buys no access by itself, and only a hand won with it puts time in
-the bank. So a locked app is one hand away rather than a wall. An app you add
-arrives locked for the same reason every day opens locked: nothing carries past
-midnight, and the bank is the whole of what access is.
+you can only bet time you actually hold, and there is no free seat. So
+`bet 5:00, win` → 5:00 banked; `bet 5:00, lose` → back to 0:00;
+`ALL IN on 15:00, win` → 30:00, up to the ceiling you set (default **60:00**,
+presets 30:00 / 1:00 / 2:00 / 3:00). The table opens with no chip selected:
+pick one, and the deal control stops asking for it and becomes a hand.
+
+The bank is the **day's allowance**, refilled at local midnight without an alarm
+— a row stamped with an earlier day simply reads as the ceiling again. Spending
+it is what ends the day: once it is gone, the app shows the wall with a live
+countdown to the refill and nothing to play for. An app you add starts on that
+same allowance, and opening it raises the table, because a full bank is time to
+bet rather than permission to enter.
 
 Dealer stands on all 17s (including soft 17). Natural blackjack is an instant
 win. No wagers, wallet, ads, analytics, or account — the chips are minutes you
@@ -64,7 +69,7 @@ already won, never money.
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # unit tests (160; 110 of them the pure domain)
+./gradlew testDebugUnitTest    # unit tests (184; 127 of them the pure domain)
 ```
 
 Requires JDK 17 (`JAVA_HOME`) and an Android SDK with platform 37. Gradle

@@ -3,12 +3,14 @@
 Pixel-art screen-time blocking. You choose the apps; opening one forces a hand of
 blackjack. Access is a per-app, per-day **time bank**: win a hand and the bank
 grows by the chip you staked; lose and it shrinks by the same. The bank only
-drains while the app is actually in front, so time away is never billed. Run it
-to zero and the gate comes up again, the app locked. Nothing carries over: an app
-added a moment ago and a bank left over from yesterday both read zero, and both
-open to the gate. What keeps that from being a wall is the table's own stake —
-the **2:00** chip is dealt for whatever the bank holds, including nothing, so the
-way back in is always a hand rather than a wait.
+drains while the app is actually in front, so time away is never billed.
+
+The bank is the **day's allowance**, and the gate is on every open. With time in
+the bank it is the table — no chip is selected until you pick one, and a won hand
+is the only way past. With none it is the wall: **OUT OF TIME**, a countdown to
+the refill, and no table to play. The refill is a read rather than an alarm, so
+midnight simply means every bank holds its ceiling again, and an app added a
+moment ago starts on that same allowance because it has spent nothing yet.
 
 Built with Jetpack Compose, Hilt, and Room. It implements the Pixel UI v3
 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
@@ -19,7 +21,7 @@ Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # unit tests (160; 110 in the pure domain layer)
+./gradlew testDebugUnitTest    # unit tests (184; 127 in the pure domain layer)
 ```
 
 Requires JDK 17 via `JAVA_HOME` and an Android SDK with platform 37. Gradle
@@ -34,12 +36,14 @@ foreground use, which is measured the same in every build. `minSdk 26`,
 
 | Event | Result |
 | --- | --- |
-| A target is added | bank 0 — locked, like any bank at the start of a day |
-| Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) — only while the bank covers it, except 2:00, which the table always deals |
-| Win | bank += stake, capped at the app's max (default 60:00) |
+| A target is added | the day's allowance — nothing has been spent yet |
+| Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) — only while the bank covers it |
+| Win | bank += stake, capped at the app's max (default 60:00) — and the way in |
 | Loss | bank -= stake, floored at 0 — never a debt |
-| Push | inert re-deal |
-| Bank reaches 0 | gate up, chips above 2:00 greyed; removal refused for 12 h |
+| Push | inert re-deal, which opens nothing |
+| Opening the app | the gate: the table with time in the bank, the wall without it |
+| Bank reaches 0 | the wall, with a countdown to the refill; removal refused for 12 h |
+| Local midnight | every bank refilled to its ceiling |
 
 ## Architecture
 
@@ -47,7 +51,7 @@ foreground use, which is measured the same in every build. `minSdk 26`,
 app/src/main/java/com/example/sonder/
 ├── domain/            pure rules — no Android (fully unit-tested)
 │   ├── BlackjackRules.kt    deck, deal, dealer-stands-on-17, settle
-│   ├── AccessPolicy.kt      the time bank: chips, billing, the table's stake
+│   ├── AccessPolicy.kt      the time bank: chips, billing, the daily allowance
 │   ├── AccessRules.kt       the one per-app rule: the bank's max size
 │   └── model/               Card, Hand, EnforcementState, snapshots
 ├── data/
