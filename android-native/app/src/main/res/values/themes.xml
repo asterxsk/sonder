@@ -6,11 +6,19 @@
         <item name="android:navigationBarColor">#0B0906</item>
     </style>
 
+    <!--
+       The permission prompt: a dialog-shaped window over whatever the user was doing.
+
+       windowBackground is the app's own ground rather than transparent, and the platform dim
+       is off. The card paints that same ground opaquely (see PermissionPromptContent), and
+       the pixel world has no scrim tint, so the dim was a 70% black veil on a surface that
+       already covers it — all cost, no effect. Leaving the background transparent meant the
+       window had nothing to show in the frame between it opening and Compose drawing, which
+       is a hole onto the app behind it, taps included.
+    -->
     <style name="Theme.Sonder.Translucent">
         <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowBackground">#0B0906</item>
         <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
-        <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:backgroundDimAmount">0.7</item>
     </style>
 </resources>

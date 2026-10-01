@@ -71,8 +71,8 @@ object PermissionHandoff {
      * brings Sonder back the moment the grant lands.
      *
      * [beforeReturn] runs first, while the app is still in the background — the prompt
-     * dialog uses it to finish itself, so the user arrives on the wizard underneath
-     * rather than on the dialog they just satisfied.
+     * dialog uses it to re-audit, so it is already listing whatever is still outstanding
+     * by the time the user is brought forward, and is gone if that is nothing.
      *
      * Only the requested permission is watched, so a user who grants it and then keeps
      * changing other settings is not interrupted until that one lands.

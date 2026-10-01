@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.sonder.platform.permissions.PermissionHandoff
 import com.example.sonder.platform.permissions.SonderPermission
+import com.example.sonder.ui.permissions.copyFor
 import com.example.sonder.theme.MonoTypeScale
 import com.example.sonder.theme.PixelFont
 import com.example.sonder.theme.PixelPalette
@@ -330,27 +331,6 @@ private fun CompletionCard(onBegin: () -> Unit) {
     }
 }
 
-private data class StepCopy(val title: String, val body: String, val reassure: String)
-
-private fun copyFor(p: SonderPermission): StepCopy = when (p) {
-    SonderPermission.ACCESSIBILITY -> StepCopy(
-        title = "ACCESSIBILITY",
-        body = "Sonder needs to know which app you just opened — that's the whole trigger. It watches window changes, and reads view names to tell Reels, Shorts and Stories from the rest of an app.",
-        reassure = "View names are developer labels, not what's on screen. No screen content, no keystrokes. Ever.",
-    )
-    SonderPermission.OVERLAY -> StepCopy(
-        title = "DISPLAY OVER OTHER APPS",
-        body = "The block screen must appear the instant a limited app opens — before the table even loads.",
-        reassure = "One full-screen pixel frame, nothing else.",
-    )
-    SonderPermission.USAGE_ACCESS -> StepCopy(
-        title = "USAGE ACCESS",
-        body = "A second way to see which app is in front, for when accessibility is slow to wake up. The gate leans on it as a fallback.",
-        reassure = "Data stays on this device. Nothing is uploaded.",
-    )
-    SonderPermission.NOTIFICATIONS -> StepCopy(
-        title = "NOTIFICATIONS — OPTIONAL",
-        body = "Tells you when an app's bank runs dry — otherwise you'd only find out at the next gate.",
-        reassure = "Only enforcement alerts. No marketing, ever. Skip it and blocking still works.",
-    )
-}
+// The permission copy — the title, the paragraph, the privacy note and the one-line version
+// the on-open reminder shows — lives in ui/permissions/PermissionCopy.kt, because both
+// surfaces ask for the same grant and must not describe it in two different voices.
