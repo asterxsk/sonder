@@ -9,6 +9,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Rect
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -19,6 +22,9 @@ import com.example.sonder.BuildConfig
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.platform.enforcement.EnforcementCoordinator
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 /**
@@ -68,6 +74,16 @@ class SonderAccessibilityService : AccessibilityService() {
 
     /** Reused across probes: allocating a Rect per window per pass is per-pass garbage. */
     private val pipBounds = Rect()
+
+    /** The thread the platform delivered this service's windows and nodes on. */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * When a content-change event was last passed to the coordinator; see [onContentChanged]
+     * for why the stream is coalesced before it reaches the decision path. Touched only from
+     * the service's own callback thread.
+     */
+    private var lastContentEventAtMillis = 0L
 
     /**
      * Screen off = the blocker must go: it must never cover the keyguard, and there is
@@ -134,8 +150,31 @@ class SonderAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        when (event?.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> Unit
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                onContentChanged(event)
+                return
+            }
+            else -> return
+        }
         val pkg = event.packageName?.toString() ?: return
+        // A window event is only evidence while its window still exists. Events are delivered
+        // in bursts and can arrive seconds after the fact — measured on an emulator, a frame
+        // of the app the user had just left arrived 2.3s after Home with that app holding no
+        // windows at all — and a decision made on one decides for an app that is not on screen.
+        // For a gated app with an empty bank that is a gate raised over the launcher, torn down
+        // again by the next re-check: a flash over the screen the user was watching, from an
+        // event about a window that had already gone. The window list answers this in the same
+        // read the decision does anyway, and an event naming a window that no longer exists is
+        // not evidence about anything. A *departing* window still exists when its event
+        // arrives, which is what keeps the release offered to Home out of this check.
+        if (windows?.any { it.id == event.windowId } == false) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "STALE_EVENT_IGNORED(pkg=$pkg window=${event.windowId})")
+            }
+            return
+        }
         // The class name separates our own Activities (the detox app opening,
         // which must release the blocker) from our own overlay window (the
         // blocker itself, whose event must never dismiss it).
@@ -154,10 +193,95 @@ class SonderAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The window list, top-most first, answering "is the window that reported a release
-     * still the one in front" from metadata alone — no window content is read.
+     * The second event the blocker needs, and the one the first cannot stand in for: a
+     * scoped surface is reached *inside* an Activity.
+     *
+     * Instagram's Reels is a fragment of the main tab Activity and YouTube's Shorts is a
+     * fragment of its player, so switching the feed for the viewer resumes nothing and opens
+     * no window: the window-state event that names the app is never delivered again, and the
+     * whole transition is invisible to it. What the platform does deliver is that a window's
+     * *content* changed, which is that same transition seen from the tree. Without it a
+     * scoped target is only ever recognised by the coordinator's periodic re-check, and the
+     * re-check is settled while its own blocker is up — so the surface arriving while the
+     * user is already inside the app is exactly the case nothing would catch.
+     *
+     * Content-change events are a firehose: every window on the device emits them for every
+     * frame of every list that moves. Three filters stand in front of the coordinator so the
+     * decision path sees a trickle instead:
+     *
+     *  - the package must be an *enabled target*, answered from the warm cache, so every
+     *    other app on the device costs one map lookup;
+     *  - the package must be the one whose window is in front. A background app's list
+     *    updating is not the user going anywhere, and deciding for it would act on a surface
+     *    that is not on screen — raising the blocker over the app they are actually using;
+     *  - what is left is coalesced to one event per [CONTENT_EVENT_MIN_INTERVAL_MILLIS]:
+     *    far faster than a person can open a surface, and slow enough that a scrolling feed
+     *    costs a couple of probes a second instead of one per frame.
+     *
+     * The class name is deliberately not forwarded. On a content-change event it is the
+     * *View* class that changed (`android.widget.FrameLayout`), and the coordinator reads the
+     * class name as the Activity's, to tell this app's own Activities apart — a view name
+     * handed to it there is evidence about nothing.
      */
-    private fun isBehindAnotherWindow(windowId: Int): Boolean {
+    private fun onContentChanged(event: AccessibilityEvent) {
+        val pkg = event.packageName?.toString() ?: return
+        if (!coordinator.isEnabledTarget(pkg)) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastContentEventAtMillis < CONTENT_EVENT_MIN_INTERVAL_MILLIS) return
+        // Checked before the stamp is written, so a target updating in the background does
+        // not spend the interval the app in front would have used.
+        if (activePackage() != pkg) return
+        lastContentEventAtMillis = now
+        coordinator.onForeground(pkg = pkg, className = null, windowId = event.windowId)
+    }
+
+    /**
+     * Runs [block] where the platform's window list is valid to read, and answers [fallback]
+     * if that does not happen in time.
+     *
+     * `AccessibilityService.windows`, `AccessibilityWindowInfo.root` and every
+     * `AccessibilityNodeInfo` are owned by the thread the event was delivered on — the
+     * service's own main thread here. The readers below are called from the enforcement
+     * coordinator's single-threaded dispatcher, which is a different thread, and reading
+     * window content from one is outside the contract: the window list can come back empty
+     * and a root that plainly exists can come back null. Measured on a Pixel emulator, that
+     * is exactly what happened — YouTube's Shorts tree was there to be read and the probe
+     * said it was not, and the gate went up and came down twice a second over a floating
+     * video, because the same unreliable answer was deciding both.
+     *
+     * So the read is posted to the main thread and the caller waits for it. The wait is
+     * bounded and the caller is a background dispatcher, never the main thread — the service
+     * hands the coordinator its callbacks through `scope.launch`, so nothing on the main
+     * thread is ever waiting on the thread this is waiting from. [fallback] is the answer for
+     * a main thread too busy to reply within [PROBE_TIMEOUT_MILLIS], which is the direction
+     * each caller already chose for an unreadable window.
+     */
+    private fun <T> onServiceThread(fallback: T, block: () -> T): T {
+        if (Looper.myLooper() == Looper.getMainLooper()) return block()
+
+        val latch = CountDownLatch(1)
+        var answer = fallback
+        if (!mainHandler.post {
+                try {
+                    answer = block()
+                } catch (_: Throwable) {
+                    // A detached node or a service torn down mid-walk: keep the fallback.
+                } finally {
+                    latch.countDown()
+                }
+            }
+        ) {
+            // Looper already quitting; no reader will run.
+            return fallback
+        }
+        // The latch is the only guarantee that `answer` is visible to this thread.
+        return if (latch.await(PROBE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) answer else fallback
+    }
+
+    private fun isBehindAnotherWindow(windowId: Int): Boolean =
+        onServiceThread(fallback = false) { readIsBehindAnotherWindow(windowId) }
+
+    private fun readIsBehindAnotherWindow(windowId: Int): Boolean {
         val listed = try {
             windows
         } catch (_: Throwable) {
@@ -191,7 +315,10 @@ class SonderAccessibilityService : AccessibilityService() {
      * A window whose root cannot be read is also null: the list gives metadata even when the
      * tree is unavailable, and a window with no readable root cannot name its package.
      */
-    private fun activePackage(): String? = runCatching {
+    private fun activePackage(): String? =
+        onServiceThread(fallback = null) { readActivePackage() }
+
+    private fun readActivePackage(): String? = runCatching {
         val focused = windows?.firstOrNull { it.isActive } ?: return@runCatching null
         if (focused.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@runCatching null
         if (focused.type == AccessibilityWindowInfo.TYPE_SYSTEM) return@runCatching null
@@ -201,6 +328,9 @@ class SonderAccessibilityService : AccessibilityService() {
     /**
      * Whether the active window carries any of [markers] in its node tree — see
      * [ActiveWindowContent], which is the contract this implements.
+     *
+     * Runs on the service's own thread; see [onServiceThread] for why every reader below is
+     * marshalled there rather than answering where the caller happens to be.
      *
      * Read from the window list rather than from the active root. While the blocker covers a
      * scoped target the *active* window can be the blocker's own — it is not focusable, but
@@ -248,7 +378,11 @@ class SonderAccessibilityService : AccessibilityService() {
      */
     private fun showsMarkers(packageName: String, markers: List<String>): Boolean {
         if (markers.isEmpty()) return false
-        return runCatching {
+        return onServiceThread(fallback = false) { readMarkers(packageName, markers) }
+    }
+
+    private fun readMarkers(packageName: String, markers: List<String>): Boolean =
+        runCatching {
             // The app's own windows, so a stale tree left over from a window the user has
             // already left cannot answer about the wrong app.
             val listed = windows ?: return@runCatching false
@@ -256,32 +390,53 @@ class SonderAccessibilityService : AccessibilityService() {
             val coveredByUs = listed.any {
                 it.root?.packageName?.toString() == this.packageName
             }
-            // The app's *focused* window is asked first: an app can hold more than one
-            // window at a time — a round trip out to Recents and back is enough to leave the
-            // task with a second one — and the list's order is not a promise that the first
-            // window of the package is the one with the screen. The focused window is the one
-            // taking input, so it is the one whose tree the user is looking at.
+            // Every window of the app is asked, the focused one first.
             //
-            // The top-most window is still asked when that answers no, and it is what keeps
-            // this from narrowing what the probe can find: an app that puts a sheet, a
-            // picture-in-picture video or its own overlay in front of its content holds focus
-            // in a window the surface is not in, and asking only that one would report "not
-            // the surface" about an app plainly showing one.
-            val candidates = listOfNotNull(
-                listed.firstOrNull {
-                    it.isActive && it.root?.packageName?.toString() == packageName
-                },
-                listed.firstOrNull { it.root?.packageName?.toString() == packageName },
-            ).distinct()
+            // Not just the first window of the package: an app can hold more than one at a
+            // time — a round trip out to Recents and back is enough to leave the task with a
+            // second one — and the list's order is not a promise that the first of them is
+            // the one with the screen. Nor is the surface guaranteed to share a window with
+            // the rest of the app: a sheet, a picture-in-picture video or the app's own
+            // overlay sits in a window of its own, and asking a single window reports "not
+            // the surface" about an app plainly showing one. The focused window is asked
+            // first because it is the one taking input, so it is the one whose tree the user
+            // is looking at.
+            //
+            // The count is small — an app on screen holds one window, sometimes two — so the
+            // cost of asking all of them is a walk of the trees already in hand, not a new
+            // query.
+            val candidates = listed
+                .filter { it.root?.packageName?.toString() == packageName }
+                // Stable, so windows the platform did not rank keep the list's own order.
+                .sortedByDescending { it.isActive }
 
             var unreadable = 0
+            val report = WalkReport()
             val found = candidates.any { window ->
                 val root = window.root
                 if (root == null) {
                     unreadable++
                     return@any false
                 }
-                walkForMarker(root, packageName, markers, coveredByUs)
+                // The invisibility relaxation is offered only to the window that holds input.
+                // It exists because our blocker makes the *live* surface report itself
+                // invisible; a marker sitting in a window the app has behind the one on screen
+                // is a leftover, not a surface, and counting it would keep the blocker up over
+                // a screen the user has already left.
+                walkForMarker(
+                    root = root,
+                    packageName = packageName,
+                    markers = markers,
+                    coveredByUs = coveredByUs && window.isActive,
+                    report = report,
+                )
+            }
+            if (found) {
+                // Forget the miss, so arriving at a different markerless screen later is
+                // reported again rather than deduplicated against a stale one.
+                lastMiss.remove(packageName)
+            } else if (BuildConfig.DEBUG) {
+                logMiss(packageName, report.describe(candidates.size))
             }
             // Every window of the app came back with no tree. That is either a window the
             // app is swapping out from under the walk, or the service having lost the
@@ -296,6 +451,58 @@ class SonderAccessibilityService : AccessibilityService() {
             }
             found
         }.getOrDefault(false)
+
+    /**
+     * The last miss reported per package, so [logMiss] can stay quiet about a screen that has
+     * not changed.
+     *
+     * A scoped app that is *not* on its surface is re-probed on every re-check pass — that is
+     * the point of the pass — so an unguarded miss line is several per second for as long as
+     * the user reads their feed, which buries the one transition worth seeing. Keyed by
+     * package and cleared the moment the surface is found, so the line appears once when the
+     * app settles on a screen with no marker in it, and again if that screen later changes to
+     * a different one.
+     */
+    private val lastMiss = ConcurrentHashMap<String, String>()
+
+    /** Reports a miss once per distinct tree, rather than once per pass. */
+    private fun logMiss(packageName: String, detail: String) {
+        if (lastMiss.put(packageName, detail) == detail) return
+        Log.d(TAG, "SURFACE_PROBE_MISS($detail)")
+    }
+
+    /**
+     * What a miss looked like, for the debug line [showsMarkers] prints when a scoped target
+     * does not fire.
+     *
+     * A probe that goes quiet has three causes that are indistinguishable from outside: the
+     * app held no window the service could read, the tree was read but the markers no longer
+     * name anything in it, or the walk ran out of its node budget before reaching them. Kept
+     * as one small object rather than three out-parameters so the walk signature stays a
+     * question and this stays a note.
+     */
+    private class WalkReport {
+        var visited = 0
+        var capped = false
+
+        /** Ids that matched a marker regardless of why they were rejected; the interesting miss. */
+        val matches = mutableListOf<String>()
+
+        /** The first ids seen at all, so a catalogue mismatch is visible in one line. */
+        val names = mutableListOf<String>()
+
+        fun describe(windows: Int): String = buildString {
+            append("pkg-windows=").append(windows)
+            append(" visited=").append(visited)
+            if (capped) append(" CAPPED")
+            append(" ids=").append(names.joinToString(","))
+            if (matches.isNotEmpty()) append(" matched-but-hidden=").append(matches.joinToString(","))
+        }
+
+        companion object {
+            /** How many ids of each kind are worth carrying into a log line. */
+            const val SAMPLE = 14
+        }
     }
 
     /**
@@ -307,6 +514,7 @@ class SonderAccessibilityService : AccessibilityService() {
         packageName: String,
         markers: List<String>,
         coveredByUs: Boolean,
+        report: WalkReport,
     ): Boolean {
         val pending = ArrayDeque<AccessibilityNodeInfo>()
         pending.addLast(root)
@@ -314,19 +522,26 @@ class SonderAccessibilityService : AccessibilityService() {
         while (pending.isNotEmpty() && visited < MAX_NODES_VISITED) {
             val node = pending.removeFirst()
             visited++
+            report.visited++
             val id = node.viewIdResourceName
-            if (
-                id != null &&
-                (node.isVisibleToUser || coveredByUs) &&
-                markers.any { id.contains(it, ignoreCase = true) }
-            ) {
+            val matches = id != null && markers.any { id.contains(it, ignoreCase = true) }
+            if (matches && BuildConfig.DEBUG && report.names.size < WalkReport.SAMPLE) {
+                // Positional in the walk, not tree depth: what matters is whether the marker
+                // was reached well inside the budget or right at its edge.
+                report.matches += "$id(visible=${node.isVisibleToUser} at=$visited)"
+            }
+            if (id != null && matches && (node.isVisibleToUser || coveredByUs)) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "SHORTS_SURFACE(pkg=$packageName id=$id)")
                 return true
+            }
+            if (BuildConfig.DEBUG && id != null && report.names.size < WalkReport.SAMPLE) {
+                report.names += id.substringAfterLast('/')
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { pending.addLast(it) }
             }
         }
+        if (pending.isNotEmpty()) report.capped = true
         return false
     }
 
@@ -388,7 +603,10 @@ class SonderAccessibilityService : AccessibilityService() {
      * because the window-type check alone would answer about the *system's* PiP container
      * rather than about the app inside it.
      */
-    private fun hasPipWindow(packageName: String): Boolean = runCatching {
+    private fun hasPipWindow(packageName: String): Boolean =
+        onServiceThread(fallback = false) { readPipWindow(packageName) }
+
+    private fun readPipWindow(packageName: String): Boolean = runCatching {
         val listed = windows ?: return@runCatching false
         val metrics = resources.displayMetrics
         val maxWidth = metrics.widthPixels * PIP_MAX_SCREEN_FRACTION
@@ -445,6 +663,14 @@ class SonderAccessibilityService : AccessibilityService() {
         const val EVENT_DEBOUNCE_MILLIS = 50L
 
         /**
+         * How often one content-change event may reach the coordinator; see
+         * [onContentChanged]. A quarter of a second: short enough that a surface is caught
+         * while the user is still arriving at it, long enough that a feed in motion costs a
+         * few probes a second rather than one per frame.
+         */
+        const val CONTENT_EVENT_MIN_INTERVAL_MILLIS = 250L
+
+        /**
          * How many nodes one scoped-surface probe may visit.
          *
          * The walk runs on the coordinator's serialized dispatcher and can run once per
@@ -456,6 +682,17 @@ class SonderAccessibilityService : AccessibilityService() {
          * the cost of a miss is an ungated feed, and that is the direction to fail in.
          */
         const val MAX_NODES_VISITED = 400
+
+        /**
+         * How long a background caller waits for a window read to come back from the service
+         * thread; see [onServiceThread].
+         *
+         * Generous next to the work it is waiting on — a bounded walk of a tree already in
+         * hand, which measures in single-digit milliseconds — and short next to the 500 ms
+         * re-check interval, so a main thread that misses the deadline delays one pass rather
+         * than wedging the loop.
+         */
+        const val PROBE_TIMEOUT_MILLIS = 150L
 
         /**
          * How much of the screen a window may cover and still count as picture-in-picture.

@@ -118,6 +118,18 @@ class GateOverlayHost @Inject constructor(
 
     fun showGate(pkg: String, label: String) {
         mainHandler.post {
+            // The one guard that has to live here rather than in the caller, because this is
+            // where the ordering is decided. The caller's own screen check is behind it: the
+            // raising is posted, so a screen-off that lands after the caller looked but before
+            // this runnable runs would have its dismissal posted first and then overtaken by
+            // the window composed below — a blocker left over the keyguard, which nothing on
+            // screen classifies as release-worthy enough to take down. Asked inside the post,
+            // it is answered on the same main thread the screen-off broadcast is delivered on,
+            // so it cannot be overtaken. See [EnforcementCoordinator.screenIsInUse].
+            if (!screenIsAwake()) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "blocker not shown for $pkg: screen is not in use")
+                return@post
+            }
             val request = ShowRequest(pkg, label)
 
             // ensureOverlay, not showOverlay: the app is already covered by this exact
@@ -214,6 +226,20 @@ class GateOverlayHost @Inject constructor(
             Log.e(TAG, "blocker add failed for $pkg", t)
             teardownOwner()
         }
+    }
+
+    /**
+     * Whether the screen is on and past the keyguard, so the blocker has something to cover.
+     *
+     * Deliberately not gated on the accessibility service being alive: this is asked from the
+     * window host, which outlives neither, and a service torn down mid-post is the same case
+     * as a screen-off — nothing to cover, and nothing with a reason to take a window down.
+     */
+    private fun screenIsAwake(): Boolean {
+        val power = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val keyguard =
+            context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        return power.isInteractive && !keyguard.isKeyguardLocked
     }
 
     /** Release the blocker the moment access is earned. One watcher per live window. */

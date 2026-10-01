@@ -11,6 +11,9 @@ local.properties
 *.jks
 *.keystore
 captures/
+# Device screenshots and layout dumps pulled off an emulator while testing a
+# screen. Answers about one run, not about the repo.
+/.probe/
 
 # CWD-local tooling & caches (never commit)
 /tools/

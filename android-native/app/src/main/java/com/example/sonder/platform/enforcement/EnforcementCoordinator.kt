@@ -7,6 +7,7 @@ import android.util.Log
 import com.example.sonder.BuildConfig
 import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.BlockScope
+import com.example.sonder.domain.FloatingHold
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.domain.ForegroundWatch
 import com.example.sonder.domain.GateDecision
@@ -78,6 +79,17 @@ class EnforcementCoordinator @Inject constructor(
 
     /** The periodic foreground re-check; alive for as long as the service is. */
     private var watchJob: Job? = null
+
+    /**
+     * Whether [pkg] is an enabled target right now, from the warm cache.
+     *
+     * Exists for callers that have to filter an event stream *before* it reaches
+     * [onForeground] — the content-change firehose is delivered for every window on the
+     * device, so the one question worth asking of each event is whether its package is one
+     * the user scoped. Non-suspending because it is answered from the cache the foreground
+     * path already reads.
+     */
+    fun isEnabledTarget(pkg: String): Boolean = repository.enabledTarget(pkg) != null
 
     /**
      * Window-list evidence, supplied by the service while it is connected.
@@ -180,6 +192,11 @@ class EnforcementCoordinator @Inject constructor(
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0
+        // A fresh connection is a fresh start, like a screen-on or a service stop. Anything
+        // still held here describes a window the previous connection was covering, and this
+        // one has raised nothing: a stale hold would refuse a launcher release for a full run
+        // of confirming passes, which reads as the blocker sticking over Home.
+        floatingHold = FloatingHold.NONE
         startWatching()
         startCloseRequests()
     }
@@ -250,8 +267,30 @@ class EnforcementCoordinator @Inject constructor(
         // in this class.
         if (screenIsInUse() && isCurrent(mine)) {
             val floating = pipTargetToCover(now)
+            // Asked again, and not because the answer might have changed in one assignment:
+            // that probe parks this pass in `onServiceThread`'s latch, waiting on the very
+            // thread the screen-off broadcast and service teardown are delivered on, so a
+            // pass can come back from it into a screen that has gone off and a watch that has
+            // been retired. Acting on that answer is what leaves the gate sitting over the
+            // keyguard — the one thing [onScreenOff] exists to prevent. The guard is not the
+            // only one: [cover] and [raiseGate] ask again before they raise anything.
+            if (!isCurrent(mine) || !screenIsInUse()) return
+            // One pass is not evidence about a float — see [FloatingHold] — so the answer is
+            // aged through the rule rather than acted on directly. A float found now is
+            // covered whatever the rule says, because covering is the safe direction.
+            floatingHold = FloatingHold.afterPass(floatingHold, foundNow = floating)
             if (floating != null) {
-                coverFloating(floating)
+                coverFloating(floating, mine)
+                return
+            }
+            // A miss is not a release. This pass is the only one that runs every
+            // [WATCH_INTERVAL_MILLIS], and while a hold is alive the float owns the screen:
+            // the resolution below would read the launcher, call it HOME, and dismiss the
+            // very blocker the hold was put up to keep — which is the strobe, arriving by
+            // the one path that never consulted the hold. The pass falls through again on
+            // its own once [FloatingHold] has run out of confirming passes.
+            if (!FloatingHold.releaseAllowed(pkg = null, floating = floating, hold = floatingHold)) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "release refused: a gated app is still floating")
                 return
             }
         }
@@ -467,20 +506,46 @@ class EnforcementCoordinator @Inject constructor(
     }
 
     /**
+     * The float the blocker was raised over and the run of passes since one found it. Aged
+     * by [FloatingHold], which is where the reasoning lives.
+     *
+     * One value rather than a package beside a counter: [onScreenOff] and [onServiceStopped]
+     * clear it from the accessibility service's own thread while a pass on the dispatcher is
+     * ageing it, and two fields cannot be swapped between threads as one fact — a reader that
+     * saw the new package with the old run of misses, or a clear that landed between the two
+     * writes, would end the next hold early or keep a dropped one alive.
+     */
+    @Volatile private var floatingHold: FloatingHold.Hold = FloatingHold.NONE
+
+    /**
      * Pause the float and put the blocker over it.
      *
      * Both halves matter and neither is redundant: the pause stops the audio the opaque
      * window cannot, and the window stops the picture. The blocker is raised for the floating
      * app rather than for whatever is in front, because it is the floating app the user is
      * watching — the panel then offers the hand that would earn its time back.
+     *
+     * [mine] is the watch this cover belongs to, and it is asked one last time here because
+     * the caller's own check is now behind it: the raising goes through
+     * [GateOverlayHost.showGate], which only posts to the main looper, so a screen-off that
+     * lands in between would otherwise post its dismissal first and be overtaken by the
+     * window this call creates — a blocker left composed over the keyguard, with nothing on
+     * screen classified as release-worthy to take it down.
      */
-    private fun coverFloating(pkg: String) {
+    private fun coverFloating(pkg: String, mine: Int) {
+        if (!isCurrent(mine) || !screenIsInUse()) return
         mediaPauser?.pauseMedia()
         val label = repository.enabledTarget(pkg)?.label?.takeIf { it.isNotBlank() }
             ?: pkg.substringAfterLast('.').uppercase()
         overlayHost.showGate(pkg, label)
         watchedPackage = pkg
         watchedDecision = GateDecision.GATE
+        // The counter belongs to the position this pass was watching, and that position has
+        // just ended: Home is where the float came from, so the run of away-passes that got
+        // the user here is normally already at [ForegroundWatch.CONFIRMING_PASSES]. Left
+        // standing it would let the first pass that misses the float release the blocker
+        // outright, which is the flash this cover was raised to end.
+        awayPasses = 0
         if (BuildConfig.DEBUG) Log.d(TAG, "PIP_COVERED(pkg=$pkg)")
     }
 
@@ -616,7 +681,14 @@ class EnforcementCoordinator @Inject constructor(
                     // playing on over the launcher. The pass that follows would raise the
                     // blocker again, and the two answers together are a flash loop; so the
                     // release is refused here for the same reason the pass refuses it.
-                    if (pipTargetToCover(System.currentTimeMillis()) != null) return@launch
+                    if (!FloatingHold.releaseAllowed(
+                            pkg = null,
+                            floating = pipTargetToCover(System.currentTimeMillis()),
+                            hold = floatingHold,
+                        )
+                    ) {
+                        return@launch
+                    }
                     // Recents and Home deliver their window events in bursts, and the
                     // launcher's own event can land *after* the blocked app's. Releasing
                     // on that one event is what uncovered an app the user was looking at.
@@ -670,7 +742,12 @@ class EnforcementCoordinator @Inject constructor(
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "cache still warming; holding the blocker rather than releasing $pkg")
                     }
-                } else if (pipTargetToCover(now) != null) {
+                } else if (!FloatingHold.releaseAllowed(
+                        pkg = null,
+                        floating = pipTargetToCover(now),
+                        hold = floatingHold,
+                    )
+                ) {
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "release refused: a gated app is still floating")
                     }
@@ -682,7 +759,22 @@ class EnforcementCoordinator @Inject constructor(
                 // Billing before the release, so the time this event was raised for is
                 // charged to the session that is about to run rather than to the one after.
                 billForeground(pkg, now)
-                overlayHost.dismiss(reason = "granted: $pkg")
+                // Granted time is this app's, not the screen's. A float belonging to some
+                // *other* drained app is the same refusal the PASS branch makes: releasing
+                // on this decision would take the blocker off the app the user is watching
+                // and the next pass would put it back — the strobe again, from the one
+                // dismissal that never asked about a float. [pkg]'s own float is the case
+                // where releasing is the whole point, and the hold goes down with it.
+                val floating = pipTargetToCover(now)
+                val hold = floatingHold
+                if (!FloatingHold.releaseAllowed(pkg = pkg, floating = floating, hold = hold)) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "release refused: ${floating ?: hold.coveredFor} is still floating")
+                    }
+                } else {
+                    floatingHold = FloatingHold.NONE
+                    overlayHost.dismiss(reason = "granted: $pkg")
+                }
             }
 
             GateDecision.GATE -> {
@@ -713,6 +805,9 @@ class EnforcementCoordinator @Inject constructor(
      */
     fun onScreenOff() {
         stopWatching()
+        // Nothing is on screen to hold a blocker over, and the watch that ages the hold out
+        // is the thing being stopped: left set, it would outlive the float it was holding.
+        floatingHold = FloatingHold.NONE
         overlayHost.dismiss(reason = "screen off")
     }
 
@@ -734,6 +829,7 @@ class EnforcementCoordinator @Inject constructor(
         pipWindows = null
         watchedPackage = null
         watchedDecision = null
+        floatingHold = FloatingHold.NONE
         awayPasses = 0
         overlayHost.dismiss(reason = "service stopped")
     }
