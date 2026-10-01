@@ -1,5 +1,6 @@
 package com.example.sonder.ui.screens.targetpicker
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.db.TargetDao
@@ -91,17 +92,32 @@ class TargetPickerViewModel @Inject constructor(
         val toAdd = selected.value
         viewModelScope.launch {
             val now = System.currentTimeMillis()
-            toAdd.forEach { packageName ->
-                // A row materialised by the settings screen before the app was ever
-                // enabled carries only the package id, so the launcher label wins; the
-                // stored label is the fallback for a package the enumeration has lost.
-                val label = source.labelOf(packageName)
-                    ?: targetDao.get(packageName)?.label
-                    ?: packageName
-                targetDao.insertIfAbsent(newTarget(packageName, label, now))
-                targetDao.enable(packageName, label)
+            // runCatching around the writes, and the pop still happens either way. A throw
+            // out of a bare `launch` reaches the scope's uncaught handler and takes the whole
+            // process down — and this process hosts the accessibility service the app cannot
+            // run without, so a failed write here costs the user their grant and a trip
+            // through Settings to get it back. The screen it would strand is the one the
+            // user is trying to leave, so leaving is the better answer than crashing.
+            // [TargetsListSource.load] carries the same guard for the same reason.
+            runCatching {
+                toAdd.forEach { packageName ->
+                    // A row materialised by the settings screen before the app was ever
+                    // enabled carries only the package id, so the launcher label wins; the
+                    // stored label is the fallback for a package the enumeration has lost.
+                    val label = source.labelOf(packageName)
+                        ?: targetDao.get(packageName)?.label
+                        ?: packageName
+                    targetDao.insertIfAbsent(newTarget(packageName, label, now))
+                    targetDao.enable(packageName, label)
+                }
+            }.onFailure { failure ->
+                Log.w(TAG, "targets could not be committed; leaving anyway", failure)
             }
             onCommitted()
         }
+    }
+
+    private companion object {
+        const val TAG = "SonderTargetPicker"
     }
 }

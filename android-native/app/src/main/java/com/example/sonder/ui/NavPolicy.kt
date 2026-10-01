@@ -36,6 +36,22 @@ object NavPolicy {
         else -> listOf(Main, tab.key)
     }
 
+    /**
+     * The stack that results from pushing a detail destination.
+     *
+     * A push onto a destination already on top is a no-op. Without this a double tap on a
+     * row's arrow, or on ADD, appends the same key twice — two `AppSettings` or two
+     * `TargetPicker` entries, where the second is invisible and the first CANCEL only
+     * reveals it. That is a screen the user has to dismiss twice, and it is what
+     * `leavePicker` in the host was manually papering over by checking the top before
+     * popping. The check belongs here, where the stack shape is decided.
+     *
+     * Only the *top* is compared, so the stack stays a path rather than a set: pressing
+     * deeper into the same destination from a different one is still a push.
+     */
+    fun push(backStack: List<NavKey>, key: NavKey): List<NavKey> =
+        if (backStack.lastOrNull() == key) backStack else backStack + key
+
     /** Destinations that belong to the TARGETS flow but are not the tab itself. */
     private fun NavKey?.isTargetsDetail(): Boolean = this is AppSettings || this is TargetPicker
 

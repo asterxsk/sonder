@@ -12,10 +12,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
@@ -78,11 +83,21 @@ fun SonderRoot(onboardingComplete: Boolean?) {
             // never empty the stack — an empty back stack renders nothing and looks
             // like a freeze. System back, the dock, and Home's LIMIT APPS action all
             // funnel through here.
+            //
+            // The rewrite is one snapshot, not a clear followed by an add. `NavDisplay`
+            // reads this list and requires it to be non-empty, and it can be recomposed
+            // between two separate writes to a SnapshotStateList: the window in which the
+            // stack is empty is a window in which the whole scene throws
+            // "NavDisplay backstack cannot be empty". Two taps close together were enough
+            // to land in it. A mutable snapshot applies both writes as one change, so no
+            // reader can observe the intermediate state at all.
             val applyBackStack: (List<NavKey>) -> Unit = remember(backStack) {
                 { next: List<NavKey> ->
                     if (next != backStack.toList()) {
-                        backStack.clear()
-                        backStack.addAll(next)
+                        Snapshot.withMutableSnapshot {
+                            backStack.clear()
+                            backStack.addAll(next)
+                        }
                     }
                 }
             }
@@ -95,9 +110,24 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                 if (backStack.lastOrNull() is TargetPicker) applyBackStack(NavPolicy.back(backStack))
             }
 
+            // The dock fires on every tap, including taps that land inside the 180ms a screen
+            // slide takes. Nothing is debounced in PixelDock itself, because a real second
+            // tap arriving after the slide is a real second tap — the guard belongs here,
+            // where a second rewrite of the stack mid-transition is what has to be refused.
+            // Only the dock is gated: Back, CLOSE and the picker's own exits are deliberate
+            // single actions and are never the double-tap this is for.
+            var lastDockNavAtMillis by remember { mutableLongStateOf(0L) }
+            val selectTab: (PixelTab) -> Unit = { tab ->
+                val now = System.currentTimeMillis()
+                if (now - lastDockNavAtMillis >= PixelMotion.StateMillis) {
+                    lastDockNavAtMillis = now
+                    applyBackStack(NavPolicy.select(backStack, tab))
+                }
+            }
+
             PixelAppScaffold(
                 selectedTab = NavPolicy.tabOf(backStack),
-                onSelectTab = { tab -> applyBackStack(NavPolicy.select(backStack, tab)) },
+                onSelectTab = selectTab,
             ) { contentPadding ->
                 // The insets arrive as a fresh PaddingValues on every pass of this lambda,
                 // so keying anything on them would rebuild it every time. A state instead
@@ -109,6 +139,15 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                 NavDisplay(
                     backStack = backStack,
                     modifier = Modifier.fillMaxSize(),
+                    // Per-destination ViewModel stores, which Nav3 does not install by
+                    // default. Without this decorator every `hiltViewModel()` call in a
+                    // destination is scoped to the Activity, so a ViewModel outlives the
+                    // screen that made it and is never cleared: `AppSettingsScreen` keys its
+                    // ViewModel by package name, which means one permanent ViewModel — and
+                    // its whole app-detail read — is retained for every app the user ever
+                    // opens settings for. Scoping the store to the entry is what gives the
+                    // destination a lifecycle to clear against.
+                    entryDecorators = listOf(rememberViewModelStoreNavEntryDecorator()),
                     onBack = {
                         // null is the policy's way of saying there is nowhere left to go.
                         // Applying an unchanged stack instead swallowed the press, and Back
@@ -143,9 +182,9 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                             entry<Main> {
                                 HomeScreen(
                                     contentPadding = padding.value,
-                                    onSelectTab = { tab ->
-                                        applyBackStack(NavPolicy.select(backStack, tab))
-                                    },
+                                    // The same guarded entry point the dock uses, so Home's
+                                    // LIMIT APPS action cannot double-fire either.
+                                    onSelectTab = selectTab,
                                 )
                             }
                             entry<Targets> {
@@ -153,11 +192,13 @@ fun SonderRoot(onboardingComplete: Boolean?) {
                                     contentPadding = padding.value,
                                     // The detail rides on top of Targets, so Back and the dock
                                     // both land on the list rather than dropping to Home.
+                                    // Through NavPolicy.push, so a double tap cannot stack the
+                                    // same destination twice.
                                     onOpenAppSettings = { packageName ->
-                                        applyBackStack(backStack.toList() + AppSettings(packageName))
+                                        applyBackStack(NavPolicy.push(backStack, AppSettings(packageName)))
                                     },
                                     onAddApps = {
-                                        applyBackStack(backStack.toList() + TargetPicker)
+                                        applyBackStack(NavPolicy.push(backStack, TargetPicker))
                                     },
                                 )
                             }
