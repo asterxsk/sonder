@@ -1,8 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive-icon monochrome layer, drawn when the user turns on themed icons. The
-     launcher flattens this to one colour, so it must not depend on a second tone or a
-     border: it is the same 19 rects as the foreground, with the eye cells still absent.
-     Geometry and scale must stay identical to ic_launcher_foreground.xml. -->
+<!-- Adaptive-icon monochrome layer: the same chip, in one colour, for themed icons.
+
+     GEOMETRY AND SCALE MUST STAY IDENTICAL TO ic_launcher_foreground.xml. The two
+     layers are the adaptive icon's foreground and its themed twin, and a mask that
+     changes shape between them is a launcher that redraws the icon when a theme is
+     applied. Only the colours differ, and only because a monochrome layer states the
+     shape and lets the system tint it.
+
+     The inserts and the accent ring are dropped rather than drawn as holes: at the size
+     a themed icon renders, an 8-spoke break on a 24-unit grid fills in and the chip
+     reads as a blob. The rim and the field keep the silhouette, which is what the tint
+     is there to carry.
+
+     The plate is absent on purpose. This layer is composited over the background's own
+     colour, and a plate here would be a second background. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -16,6 +27,52 @@
         <path
             android:fillColor="#FFFFFF"
             android:fillType="nonZero"
-            android:pathData="M2,0h1v1h-1zM9,0h1v1h-1zM2,1h2v1h-2zM8,1h2v1h-2zM2,2h3v1h-3zM7,2h3v1h-3zM2,3h8v1h-8zM1,4h10v1h-10zM0,5h3v1h-3zM4,5h4v1h-4zM9,5h3v1h-3zM0,6h3v1h-3zM4,6h4v1h-4zM9,6h3v1h-3zM0,7h12v1h-12zM1,8h10v1h-10zM2,9h8v1h-8zM3,10h6v1h-6zM4,11h4v1h-4z" />
+            android:pathData="M9,0h1v1h-1zM14,0h1v1h-1zM7,1h1v1h-1zM8,1h1v1h-1zM9,1h1v1h-1zM14,1h1v1h-1zM15,1h1v1h-1z
+            M16,1h1v1h-1zM5,2h1v1h-1zM6,2h1v1h-1zM7,2h1v1h-1zM8,2h1v1h-1zM9,2h1v1h-1zM14,2h1v1h-1z
+            M15,2h1v1h-1zM16,2h1v1h-1zM17,2h1v1h-1zM18,2h1v1h-1zM6,3h1v1h-1zM7,3h1v1h-1zM8,3h1v1h-1z
+            M9,3h1v1h-1zM10,3h1v1h-1zM13,3h1v1h-1zM14,3h1v1h-1zM15,3h1v1h-1zM16,3h1v1h-1z
+            M17,3h1v1h-1zM7,4h1v1h-1zM8,4h1v1h-1zM15,4h1v1h-1zM16,4h1v1h-1zM2,5h1v1h-1zM21,5h1v1h-1z
+            M2,6h1v1h-1zM3,6h1v1h-1zM20,6h1v1h-1zM21,6h1v1h-1zM1,7h1v1h-1zM2,7h1v1h-1zM3,7h1v1h-1z
+            M4,7h1v1h-1zM19,7h1v1h-1zM20,7h1v1h-1zM21,7h1v1h-1zM22,7h1v1h-1zM1,8h1v1h-1zM2,8h1v1h-1z
+            M3,8h1v1h-1zM4,8h1v1h-1zM19,8h1v1h-1zM20,8h1v1h-1zM21,8h1v1h-1zM22,8h1v1h-1zM0,9h1v1h-1z
+            M1,9h1v1h-1zM2,9h1v1h-1zM3,9h1v1h-1zM20,9h1v1h-1zM21,9h1v1h-1zM22,9h1v1h-1zM23,9h1v1h-1z
+            M3,10h1v1h-1zM20,10h1v1h-1zM3,13h1v1h-1zM20,13h1v1h-1zM0,14h1v1h-1zM1,14h1v1h-1z
+            M2,14h1v1h-1zM3,14h1v1h-1zM20,14h1v1h-1zM21,14h1v1h-1zM22,14h1v1h-1zM23,14h1v1h-1z
+            M1,15h1v1h-1zM2,15h1v1h-1zM3,15h1v1h-1zM4,15h1v1h-1zM19,15h1v1h-1zM20,15h1v1h-1z
+            M21,15h1v1h-1zM22,15h1v1h-1zM1,16h1v1h-1zM2,16h1v1h-1zM3,16h1v1h-1zM4,16h1v1h-1z
+            M19,16h1v1h-1zM20,16h1v1h-1zM21,16h1v1h-1zM22,16h1v1h-1zM2,17h1v1h-1zM3,17h1v1h-1z
+            M20,17h1v1h-1zM21,17h1v1h-1zM2,18h1v1h-1zM21,18h1v1h-1zM7,19h1v1h-1zM8,19h1v1h-1z
+            M15,19h1v1h-1zM16,19h1v1h-1zM6,20h1v1h-1zM7,20h1v1h-1zM8,20h1v1h-1zM9,20h1v1h-1z
+            M10,20h1v1h-1zM13,20h1v1h-1zM14,20h1v1h-1zM15,20h1v1h-1zM16,20h1v1h-1zM17,20h1v1h-1z
+            M5,21h1v1h-1zM6,21h1v1h-1zM7,21h1v1h-1zM8,21h1v1h-1zM9,21h1v1h-1zM14,21h1v1h-1z
+            M15,21h1v1h-1zM16,21h1v1h-1zM17,21h1v1h-1zM18,21h1v1h-1zM7,22h1v1h-1zM8,22h1v1h-1z
+            M9,22h1v1h-1zM14,22h1v1h-1zM15,22h1v1h-1zM16,22h1v1h-1zM9,23h1v1h-1zM14,23h1v1h-1z
+            M9,5h1v1h-1zM10,5h1v1h-1zM11,5h1v1h-1zM12,5h1v1h-1zM13,5h1v1h-1zM14,5h1v1h-1z
+            M7,6h1v1h-1zM8,6h1v1h-1zM9,6h1v1h-1zM10,6h1v1h-1zM11,6h1v1h-1zM12,6h1v1h-1zM13,6h1v1h-1z
+            M14,6h1v1h-1zM15,6h1v1h-1zM16,6h1v1h-1zM6,7h1v1h-1zM7,7h1v1h-1zM8,7h1v1h-1zM9,7h1v1h-1z
+            M10,7h1v1h-1zM11,7h1v1h-1zM12,7h1v1h-1zM13,7h1v1h-1zM14,7h1v1h-1zM15,7h1v1h-1z
+            M16,7h1v1h-1zM17,7h1v1h-1zM6,8h1v1h-1zM7,8h1v1h-1zM8,8h1v1h-1zM9,8h1v1h-1zM10,8h1v1h-1z
+            M11,8h1v1h-1zM12,8h1v1h-1zM13,8h1v1h-1zM14,8h1v1h-1zM15,8h1v1h-1zM16,8h1v1h-1z
+            M17,8h1v1h-1zM5,9h1v1h-1zM6,9h1v1h-1zM7,9h1v1h-1zM8,9h1v1h-1zM9,9h1v1h-1zM10,9h1v1h-1z
+            M11,9h1v1h-1zM12,9h1v1h-1zM13,9h1v1h-1zM14,9h1v1h-1zM15,9h1v1h-1zM16,9h1v1h-1z
+            M17,9h1v1h-1zM18,9h1v1h-1zM5,10h1v1h-1zM6,10h1v1h-1zM7,10h1v1h-1zM8,10h1v1h-1z
+            M9,10h1v1h-1zM10,10h1v1h-1zM11,10h1v1h-1zM12,10h1v1h-1zM13,10h1v1h-1zM14,10h1v1h-1z
+            M15,10h1v1h-1zM16,10h1v1h-1zM17,10h1v1h-1zM18,10h1v1h-1zM5,11h1v1h-1zM6,11h1v1h-1z
+            M7,11h1v1h-1zM8,11h1v1h-1zM9,11h1v1h-1zM10,11h1v1h-1zM11,11h1v1h-1zM12,11h1v1h-1z
+            M13,11h1v1h-1zM14,11h1v1h-1zM15,11h1v1h-1zM16,11h1v1h-1zM17,11h1v1h-1zM18,11h1v1h-1z
+            M5,12h1v1h-1zM6,12h1v1h-1zM7,12h1v1h-1zM8,12h1v1h-1zM9,12h1v1h-1zM10,12h1v1h-1z
+            M11,12h1v1h-1zM12,12h1v1h-1zM13,12h1v1h-1zM14,12h1v1h-1zM15,12h1v1h-1zM16,12h1v1h-1z
+            M17,12h1v1h-1zM18,12h1v1h-1zM5,13h1v1h-1zM6,13h1v1h-1zM7,13h1v1h-1zM8,13h1v1h-1z
+            M9,13h1v1h-1zM10,13h1v1h-1zM11,13h1v1h-1zM12,13h1v1h-1zM13,13h1v1h-1zM14,13h1v1h-1z
+            M15,13h1v1h-1zM16,13h1v1h-1zM17,13h1v1h-1zM18,13h1v1h-1zM5,14h1v1h-1zM6,14h1v1h-1z
+            M7,14h1v1h-1zM8,14h1v1h-1zM9,14h1v1h-1zM10,14h1v1h-1zM11,14h1v1h-1zM12,14h1v1h-1z
+            M13,14h1v1h-1zM14,14h1v1h-1zM15,14h1v1h-1zM16,14h1v1h-1zM17,14h1v1h-1zM18,14h1v1h-1z
+            M6,15h1v1h-1zM7,15h1v1h-1zM8,15h1v1h-1zM9,15h1v1h-1zM10,15h1v1h-1zM11,15h1v1h-1z
+            M12,15h1v1h-1zM13,15h1v1h-1zM14,15h1v1h-1zM15,15h1v1h-1zM16,15h1v1h-1zM17,15h1v1h-1z
+            M6,16h1v1h-1zM7,16h1v1h-1zM8,16h1v1h-1zM9,16h1v1h-1zM10,16h1v1h-1zM11,16h1v1h-1z
+            M12,16h1v1h-1zM13,16h1v1h-1zM14,16h1v1h-1zM15,16h1v1h-1zM16,16h1v1h-1zM17,16h1v1h-1z
+            M7,17h1v1h-1zM8,17h1v1h-1zM9,17h1v1h-1zM10,17h1v1h-1zM11,17h1v1h-1zM12,17h1v1h-1z
+            M13,17h1v1h-1zM14,17h1v1h-1zM15,17h1v1h-1zM16,17h1v1h-1zM9,18h1v1h-1zM10,18h1v1h-1z
+            M11,18h1v1h-1zM12,18h1v1h-1zM13,18h1v1h-1zM14,18h1v1h-1z" />
     </group>
 </vector>
