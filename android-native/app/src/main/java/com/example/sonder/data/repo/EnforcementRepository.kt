@@ -135,7 +135,9 @@ class EnforcementRepository @Inject constructor(
      */
     fun cachedRemaining(pkg: String, nowMillis: Long = System.currentTimeMillis()): Long {
         val row = _banks.value[pkg]
-        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
+        // The ceiling travels with the read: a row from an earlier day reads as the day's
+        // allowance, and the allowance is the app's own maximum.
+        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis, cachedMaxMillis(pkg))
     }
 
     /**
@@ -145,8 +147,21 @@ class EnforcementRepository @Inject constructor(
      * settings screen asks about it on every recomposition, and a package with no row is not
      * locked.
      */
-    fun cachedRemovalLockedUntil(pkg: String): Long =
-        AccessPolicy.removalLockedUntil(_banks.value[pkg]?.emptySinceMillis ?: 0L)
+    fun cachedRemovalLockedUntil(
+        pkg: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Long {
+        val stamp = _banks.value[pkg]?.emptySinceMillis ?: 0L
+        // A stamp from an earlier local day is spent: the refill has already answered the
+        // afternoon that drained the bank, so the lock it would still be serving is over.
+        // Reported as 0 rather than as a past timestamp so a caller formatting it cannot
+        // render a lock that is not there.
+        return if (AccessPolicy.isRemovalLocked(stamp, nowMillis)) {
+            AccessPolicy.removalLockedUntil(stamp)
+        } else {
+            0L
+        }
+    }
 
     /**
      * The bank ceiling in force for the package: its stored value, else the default.
@@ -251,14 +266,19 @@ class EnforcementRepository @Inject constructor(
         nowMillis: Long = System.currentTimeMillis(),
     ): Long {
         val row = timeBankDao.get(packageName)
-        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
+        return AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis, cachedMaxMillis(packageName))
     }
 
     /** The bank as it stands, re-emitted whenever the row changes or the day rolls over. */
     fun observeRemaining(packageName: String): Flow<Long> =
         timeBankDao.observeAll().map { rows ->
             val row = rows.find { it.packageName == packageName }
-            AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, System.currentTimeMillis())
+            AccessPolicy.bankFor(
+                storedMillis = row?.remainingMillis,
+                epochDay = row?.epochDay,
+                nowMillis = System.currentTimeMillis(),
+                maxMillis = cachedMaxMillis(packageName),
+            )
         }
 
     /** Remaining removal lock in millis, or 0 when removal is allowed. */
@@ -275,7 +295,12 @@ class EnforcementRepository @Inject constructor(
             val row = banks.find { it.packageName == packageName }
             AccessPolicy.stateFor(
                 enabled = target?.enabled ?: false,
-                bankMillis = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, now),
+                bankMillis = AccessPolicy.bankFor(
+                    storedMillis = row?.remainingMillis,
+                    epochDay = row?.epochDay,
+                    nowMillis = now,
+                    maxMillis = cachedMaxMillis(packageName),
+                ),
             )
         }
 
@@ -298,17 +323,25 @@ class EnforcementRepository @Inject constructor(
     ): Long = database.withTransaction {
         val row = timeBankDao.get(packageName)
         val today = epochDay(nowMillis)
-        val bankBefore = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis)
+        val maxMillis = rulesFor(packageName).maxMillis
+        val bankBefore = AccessPolicy.bankFor(row?.remainingMillis, row?.epochDay, nowMillis, maxMillis)
+        // A push moves nothing, so it is refused outright rather than settled for a stake:
+        // clamping it would read "the bank could not cover the bet" as "the bet was smaller",
+        // and the ledger would record a hand that was never played. A push happens on the
+        // table, where the bet is already committed and the bank held it — a call that
+        // arrives with no bank behind it is not a hand this store can book.
+        if (outcome == HandOutcome.PUSH) return@withTransaction bankBefore
         // Clamped to what the bank covers rather than trusted: the bank is what backs a bet,
         // and a stake drawn on time that does not exist would be paid out of nothing on a
-        // win. The one stake a bank of nothing still covers is the smallest chip, the table's
-        // own — so a hand played from a locked app settles for that and no more.
-        val stake = stakeMillis.coerceIn(0L, bankBefore.coerceAtLeast(AccessPolicy.TABLE_STAKE_MILLIS))
+        // win. Folding the clamp into the same call as the settlement is what makes the two
+        // agree — [AccessPolicy.canStake] is the rule, and a stake the bank holds settles for
+        // exactly itself.
+        val stake = stakeMillis.coerceIn(0L, bankBefore)
         val bankAfter = AccessPolicy.onHandResult(
             outcome = outcome,
             bankMillis = bankBefore,
             stakeMillis = stake,
-            maxMillis = rulesFor(packageName).maxMillis,
+            maxMillis = maxMillis,
         )
 
         // The removal lock is stamped when the bank is left empty and cleared the moment it
@@ -373,9 +406,14 @@ class EnforcementRepository @Inject constructor(
     ): Long = database.withTransaction {
         val row = timeBankDao.get(packageName) ?: return@withTransaction 0L
         val today = epochDay(nowMillis)
-        // A row from an earlier day is spent by definition, and carries no elapsed worth
+        // A row from an earlier day is the new day's allowance, and carries no elapsed worth
         // billing: the day rolled over while the app was not in front.
-        val bankBefore = AccessPolicy.bankAt(row.remainingMillis, row.epochDay, nowMillis)
+        val bankBefore = AccessPolicy.bankAt(
+            remainingMillis = row.remainingMillis,
+            epochDay = row.epochDay,
+            nowMillis = nowMillis,
+            maxMillis = rulesFor(packageName).maxMillis,
+        )
         val elapsed = if (row.epochDay == today) nowMillis - row.lastSeenMillis else 0L
         val bankAfter = AccessPolicy.bill(bankBefore, elapsed)
 

@@ -5,11 +5,17 @@ enum class GateDecision {
     /** The package is not an enabled target — release any blocker. */
     PASS,
 
-    /** The bank holds time — let the app run, and bill the foreground time against it. */
+    /**
+     * The user has won their way in for this visit — let the app run, and bill the
+     * foreground time against the bank.
+     */
     GRANTED,
 
-    /** Enabled target, empty bank — raise the blocker (blackjack table). */
+    /** The bank holds time but the user has not won their way in — raise the table. */
     GATE,
+
+    /** The bank is spent — raise the wall. There is no table, and nothing to play for. */
+    LOCKED,
 }
 
 /**
@@ -28,12 +34,17 @@ object GateDecider {
      * @param scopedSurfacePresent whether that surface is the one on screen. Answered by the
      *   caller because recognising it means reading a window's node tree, which this core
      *   cannot do; ignored entirely for [BlockScope.WHOLE_APP].
+     * @param entered whether the user has already won their way into this app for this
+     *   visit. Answered by the caller because it is session state — a won hand, held until
+     *   the user leaves the app — and this core holds nothing. Spending the bank is not
+     *   what lets anyone in; a hand is.
      */
     fun decide(
         targetEnabled: Boolean,
         bankMillis: Long,
         blockScope: BlockScope = BlockScope.WHOLE_APP,
         scopedSurfacePresent: Boolean = true,
+        entered: Boolean = false,
     ): GateDecision {
         if (!targetEnabled) return GateDecision.PASS
 
@@ -45,6 +56,13 @@ object GateDecider {
         // screen the target was never about.
         if (blockScope == BlockScope.SHORTS_ONLY && !scopedSurfacePresent) return GateDecision.PASS
 
-        return if (bankMillis > 0L) GateDecision.GRANTED else GateDecision.GATE
+        // The bank is read before the entry: a grant is only ever held over time that still
+        // exists, so a bank that empties mid-use drops to the wall on the next pass rather
+        // than waiting for the user to leave and come back.
+        return when {
+            bankMillis <= 0L -> GateDecision.LOCKED
+            entered -> GateDecision.GRANTED
+            else -> GateDecision.GATE
+        }
     }
 }

@@ -134,6 +134,22 @@ class EnforcementCoordinator @Inject constructor(
     @Volatile private var watchedPackage: String? = null
     @Volatile private var watchedDecision: GateDecision? = null
 
+    /**
+     * The package the user has won their way into, or null while nobody has.
+     *
+     * A won hand grants access *once*, and the app it was won for is the app it belongs to —
+     * so this is a package rather than a flag, and it is cleared the moment the user leaves
+     * that app. Without it the gate would re-raise over an app the user had just won, and
+     * with it held too long the next app opened could inherit a win nobody played for.
+     *
+     * Volatile for the same reason as the pair above: written from the service's own
+     * main-thread callbacks and read on the re-check's dispatcher.
+     */
+    @Volatile private var enteredPackage: String? = null
+
+    /** Whether [pkg] is the app currently holding a won hand. */
+    private fun hasEntered(pkg: String): Boolean = enteredPackage == pkg
+
     /** Consecutive re-check passes that resolved away from every app. */
     @Volatile private var awayPasses = 0
 
@@ -214,11 +230,32 @@ class EnforcementCoordinator @Inject constructor(
     private fun startCloseRequests() {
         if (closeJob?.isActive == true) return
         closeJob = scope.launch {
-            controller.closeRequested.collect { pkg ->
-                // Blocker first, in case the app ignores Home: the user must not be left
-                // staring at a wall over an app they asked to leave.
-                overlayHost.dismiss(reason = "closed by user: $pkg")
-                appCloser?.closePackage(pkg)
+            launch {
+                controller.closeRequested.collect { pkg ->
+                    // Blocker first, in case the app ignores Home: the user must not be left
+                    // staring at a wall over an app they asked to leave.
+                    overlayHost.dismiss(reason = "closed by user: $pkg")
+                    appCloser?.closePackage(pkg)
+                }
+            }
+            // A won hand is the only thing that opens a gated app, so this is the only place
+            // the entered marker is set. It is announced by the controller rather than
+            // inferred from the bank, because the bank cannot tell a hand that was just won
+            // from one won ten minutes ago — and only the former is a way in.
+            launch {
+                controller.unlocked.collect { pkg ->
+                    enteredPackage = pkg
+                    // The decision is recorded as already made, in the same breath as the
+                    // marker. The host takes its own overlay down for this emission on its
+                    // own scope, so the window between the window going away and this
+                    // collector running is a window in which a re-check pass would see a
+                    // gate that is down, re-decide from the bank, and put the table straight
+                    // back up over an app the player had just won. Writing both here closes
+                    // it: the pass finds a GRANTED already settled and bills against it.
+                    watchedPackage = pkg
+                    watchedDecision = GateDecision.GRANTED
+                    if (BuildConfig.DEBUG) Log.d(TAG, "ENTERED(pkg=$pkg)")
+                }
             }
         }
     }
@@ -325,7 +362,16 @@ class EnforcementCoordinator @Inject constructor(
             // still while the user never left, and every minute in the app would be free.
             // The re-check is the only thing that can see they are still there.
             ForegroundWatch.Action.IGNORE ->
-                if (surface == ForegroundSurface.APP && watchedDecision == GateDecision.GRANTED) {
+                // What was last decided has to still hold before its grant is billed
+                // against. It does not hold once the user has left the app: the won hand
+                // went with them, and this is the pass that notices. Without the check the
+                // user could walk out of a gated app, use everything else on the phone, and
+                // come back to a blocker that never went up — the last decision still
+                // reading GRANTED for an app they are no longer in.
+                if (surface == ForegroundSurface.APP &&
+                    watchedDecision == GateDecision.GRANTED &&
+                    stillSettled(observed)
+                ) {
                     billForeground(observed, now)
                 }
 
@@ -340,6 +386,7 @@ class EnforcementCoordinator @Inject constructor(
             ForegroundWatch.Action.RELEASE ->
                 if (releaseIsCorroborated(observed)) {
                     overlayHost.dismiss(reason = "foreground watch: $observed")
+                    blockReleased(observed, reason = "foreground watch")
                 } else if (BuildConfig.DEBUG) {
                     Log.d(TAG, "RELEASE_REFUSED(observed=$observed active=${activeWindow()})")
                 }
@@ -500,8 +547,14 @@ class EnforcementCoordinator @Inject constructor(
     private fun pipTargetToCover(nowMillis: Long): String? {
         if (!repository.isCacheReady()) return null
         val probe = pipWindows ?: return null
+        // A float is covered whenever its app is one the user has not won their way into.
+        // That was `bank <= 0` before the gate became a per-visit thing, and the two were the
+        // same question then: an app with time in the bank was an app the user was in. They
+        // are not the same now — time in the bank buys nothing until a hand is won — so the
+        // question asked is the one the gate asks, or a target with a bank could play on in a
+        // floating window over everything else.
         return repository.enabledPackages().firstOrNull { pkg ->
-            repository.cachedRemaining(pkg, nowMillis) <= 0L && probe.hasPipWindow(pkg)
+            !hasEntered(pkg) && probe.hasPipWindow(pkg)
         }
     }
 
@@ -567,11 +620,23 @@ class EnforcementCoordinator @Inject constructor(
     /** One line per applied state, so a logcat trace shows which event won a transition. */
     private fun blockState(decision: GateDecision, pkg: String, reason: String) {
         if (!BuildConfig.DEBUG) return
-        Log.d(TAG, "BLOCK_STATE_CHANGED(locked=${decision == GateDecision.GATE} pkg=$pkg decision=$decision $reason)")
+        Log.d(
+            TAG,
+            "BLOCK_STATE_CHANGED(locked=${decision == GateDecision.GATE} pkg=$pkg " +
+                "decision=$decision $reason)",
+        )
     }
 
-    /** A release that was applied rather than refused; the blocker is down for it. */
+    /**
+     * A release that was applied rather than refused; the blocker is down for it.
+     *
+     * Reaching here means no gated app is being covered, so no gated app is being used —
+     * which is exactly the condition a won hand stops applying under. The marker is dropped
+     * here rather than on the next `GATE`, so a user who wins their way in, leaves, and comes
+     * back faces the table again instead of walking through a door left open behind them.
+     */
     private fun blockReleased(pkg: String, reason: String) {
+        enteredPackage = null
         if (BuildConfig.DEBUG) Log.d(TAG, "BLOCK_STATE_CHANGED(locked=false pkg=$pkg $reason)")
     }
 
@@ -647,6 +712,14 @@ class EnforcementCoordinator @Inject constructor(
         GateDecision.GRANTED -> repository.cachedRemaining(pkg) > 0L
 
         GateDecision.GATE -> overlayHost.shownForPackage == pkg
+
+        // The wall is settled only while the bank is still spent. It has a countdown on it
+        // that promises the refill, and midnight can arrive while the user is still staring
+        // at it — a wall left settled across the refill would sit there past the moment it
+        // announced, so the pass that sees time in the bank again re-decides and takes it
+        // down.
+        GateDecision.LOCKED ->
+            repository.cachedRemaining(pkg) <= 0L && overlayHost.shownForPackage == pkg
 
         null -> false
     }
@@ -726,6 +799,7 @@ class EnforcementCoordinator @Inject constructor(
             bankMillis = repository.cachedRemaining(pkg, now),
             blockScope = scope,
             scopedSurfacePresent = scopedSurface,
+            entered = hasEntered(pkg),
         )
 
         val label = target?.label?.takeIf { it.isNotBlank() }
@@ -753,6 +827,7 @@ class EnforcementCoordinator @Inject constructor(
                     }
                 } else {
                     overlayHost.dismiss(reason = "not a target: $pkg")
+                    blockReleased(pkg, reason = "not a target")
                 }
 
             GateDecision.GRANTED -> {
@@ -777,12 +852,13 @@ class EnforcementCoordinator @Inject constructor(
                 }
             }
 
-            GateDecision.GATE -> {
-                // A clip behind the blocker does not stop because the picture was covered:
-                // on a short-form surface it keeps advancing, so the reel the user was
-                // watching as good as plays itself out behind the wall. Scoped to the
-                // catalogue rather than to every gate, so opening a whole-app target does
-                // not kill music the user chose to keep playing.
+            // The bank is spent: there is nothing to stake and nothing to play for, so the
+            // panel is the wall. The pause is the same as the table's and for the same
+            // reason — a clip behind an opaque window keeps advancing, and a wall that lets
+            // the reel play on is not a wall.
+            GateDecision.GATE,
+            GateDecision.LOCKED,
+            -> {
                 if (shortFormSurfacePresent(pkg)) mediaPauser?.pauseMedia()
                 overlayHost.showGate(pkg, label)
             }
@@ -808,6 +884,10 @@ class EnforcementCoordinator @Inject constructor(
         // Nothing is on screen to hold a blocker over, and the watch that ages the hold out
         // is the thing being stopped: left set, it would outlive the float it was holding.
         floatingHold = FloatingHold.NONE
+        // The blocker is going down, so the use it was standing for is over. A screen that
+        // goes off and comes back is the same app but not the same visit, and the won hand
+        // belonged to the visit.
+        enteredPackage = null
         overlayHost.dismiss(reason = "screen off")
     }
 
@@ -829,6 +909,7 @@ class EnforcementCoordinator @Inject constructor(
         pipWindows = null
         watchedPackage = null
         watchedDecision = null
+        enteredPackage = null
         floatingHold = FloatingHold.NONE
         awayPasses = 0
         overlayHost.dismiss(reason = "service stopped")

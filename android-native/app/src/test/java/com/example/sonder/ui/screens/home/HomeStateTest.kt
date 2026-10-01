@@ -41,19 +41,20 @@ class HomeStateTest {
     }
 
     @Test
-    fun `an enabled target that has never played is locked`() {
-        // A target added a moment ago has been granted nothing. No row is no access, so the
-        // app reads LOCKED and opening it raises the table rather than letting it through.
+    fun `an enabled target that has never played starts on the day's allowance`() {
+        // A target added a moment ago has spent nothing today, and the allowance is the
+        // day's rather than the hand's — so it opens with a full bank instead of waiting for
+        // tomorrow. What it does not have is a won hand, so opening it still raises the
+        // table; the row reads the allowance, not permission.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = emptyList(),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(0L, state.rows.single().bankMillis)
-        // No timer to show: a locked row carries the state, not a countdown.
-        assertEquals("", state.rows.single().remainingText)
-        assertEquals(EnforcementState.IDLE, state.rows.single().state)
+        assertEquals(AccessPolicy.DEFAULT_MAX_MILLIS, state.rows.single().bankMillis)
+        assertEquals("60:00", state.rows.single().remainingText)
+        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
     }
 
     @Test
@@ -72,17 +73,17 @@ class HomeStateTest {
     }
 
     @Test
-    fun `a bank from yesterday reads as nothing, not as what it held`() {
-        // The daily allowance without a daily table: the row survives midnight and stops
-        // counting, so the new day is locked and has to be opened by a hand like any other.
+    fun `a bank from yesterday reads as the new day's allowance`() {
+        // The daily allowance without a daily table and without an alarm: the row survives
+        // midnight, stops counting, and the new day holds the ceiling again.
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = listOf(bank("com.example.a", 30 * 60_000L, epochDay = today - 1)),
             nowMillis = t0,
             zoneId = utc,
         )
-        assertEquals(0L, state.rows.single().bankMillis)
-        assertEquals(EnforcementState.IDLE, state.rows.single().state)
+        assertEquals(AccessPolicy.DEFAULT_MAX_MILLIS, state.rows.single().bankMillis)
+        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
     }
 
     @Test

@@ -8,22 +8,24 @@ import java.time.ZoneId
 /**
  * Pure bank policy — the timing model locked in with the user:
  *
- * - Access is a **bank** of unspent time per app, starting at zero. A target added just now
- *   has no time at all, so it is locked from the moment it is added: the bank is what access
- *   *is*, and nothing grants access but a hand that was won.
- * - The player stakes a chip (2:00 / 5:00 / 10:00, or the whole bank) before the hand.
- *   Win → `bank += stake`. Lose → `bank -= stake`, floored at 0. Push → nothing.
- * - **A bet is backed by the bank**: a stake the bank cannot cover cannot be played, so a
- *   win is always paid out of something that was at risk ([canStake]). The one exception is
- *   the smallest chip, which the table always deals with ([TABLE_STAKE_MILLIS]).
+ * - Access is a **bank** of unspent time per app, and the bank is a **daily allowance**:
+ *   it holds [AccessRules.maxMillis] until it has been spent, and every local midnight it
+ *   is one again. A target added mid-day starts on that allowance rather than on nothing,
+ *   because the allowance is a property of the day rather than of the hand that won it.
+ * - **A bet is a chip, and chips come out of the bank.** The player stakes 2:00 / 5:00 /
+ *   10:00, or the whole bank, before the hand. Win → `bank += stake`. Lose → `bank -= stake`,
+ *   floored at 0. Push → nothing. A stake the bank cannot cover cannot be played
+ *   ([canStake]): there is no seat, no free hand and nothing minted out of nothing.
+ * - **The gate is on every open of a gated app.** With time in the bank it is the table,
+ *   and a won hand is the way in; with none it is a wall. Winning does not spend the bank —
+ *   using the app does.
  * - The bank is capped at the app's own maximum ([AccessRules.maxMillis], default 1:00).
  * - **The clock only runs while the app is in front.** Elapsed foreground time is billed at
- *   [MAX_BILL_MILLIS] a step; time away is never billed and never revoked. This is what
- *   replaced the old absolute `endAtMillis` grant, which ran down while the user was
- *   elsewhere and was destroyed outright by a long enough absence.
- * - The bank belongs to a **local day**. A read on a later day reads 0: yesterday's
- *   leftovers are not today's access, and the day opens locked like any other empty bank.
- * - The bank reaching zero **locks removal of the target** for [REMOVAL_LOCK_MILLIS].
+ *   [MAX_BILL_MILLIS] a step; time away is never billed and never revoked.
+ * - The bank belongs to a **local day**: a row stamped with an earlier day has been spent by
+ *   definition and reads as the full allowance again ([bankAt]).
+ * - The bank reaching zero **locks removal of the target** for [REMOVAL_LOCK_MILLIS], for as
+ *   long as that day lasts.
  *
  * All timers are absolute epoch millis so process death/reboot never corrupts state.
  */
@@ -56,30 +58,15 @@ object AccessPolicy {
     val CHIPS: List<Long> = listOf(2 * 60_000L, 5 * 60_000L, 10 * 60_000L)
 
     /**
-     * The smallest chip: the stake the table deals for whatever the bank holds, including
-     * nothing.
-     *
-     * It is not a grant, and deliberately not spendable — it is the seat at the table. An
-     * added target, and every bank at the start of a day, reads zero and is locked; this is
-     * the chip that lets a hand be played from that zero so the way in is always one hand
-     * away. Everything won with it is access, so access still only ever arrives by winning.
-     *
-     * It is the only stake that is not backed by the bank, and it is the smallest one for
-     * exactly that reason: whatever a hand is won for cannot be more than the least the
-     * table deals.
-     */
-    val TABLE_STAKE_MILLIS: Long = CHIPS.first()
-
-    /**
      * Whether [stakeMillis] can be played from [bankMillis].
      *
-     * The bank backs the bet, with one exception: [TABLE_STAKE_MILLIS] is always playable,
-     * because it is what the table deals from an empty bank — see its own note. Every larger
-     * chip needs the bank to cover it, so no hand can mint more time than the smallest chip
-     * out of nothing.
+     * The bank backs the bet, without exception. A chip the bank cannot cover is not a bet:
+     * a hand played from an empty bank could otherwise be re-bet until it won, at no cost
+     * but a deal, and that is time minted rather than won. So an empty bank plays nothing,
+     * and the way to time is to still have some.
      */
     fun canStake(bankMillis: Long, stakeMillis: Long): Boolean =
-        stakeMillis > 0L && (bankMillis >= stakeMillis || stakeMillis <= TABLE_STAKE_MILLIS)
+        stakeMillis > 0L && bankMillis >= stakeMillis
 
     /**
      * The bank a settled hand leaves behind.
@@ -114,40 +101,65 @@ object AccessPolicy {
         (remainingMillis - elapsedMillis.coerceIn(0L, MAX_BILL_MILLIS)).coerceAtLeast(0L)
 
     /**
-     * Unspent access in a stored bank. A row from another local day reads as 0.
+     * Unspent access in a stored bank. A row from another local day reads as the allowance.
      *
-     * The day check is what makes the bank a daily allowance without a second table:
-     * yesterday's leftovers are not today's access. A day opens locked, exactly like an empty
-     * bank, and the way out of both is a hand played for [TABLE_STAKE_MILLIS].
+     * The day check is what makes the bank a daily allowance without a second table and
+     * without an alarm: the refill is this predicate rather than a write. A row stamped with
+     * an earlier day is spent by definition — there is nothing in it to carry over — and
+     * [maxMillis] is what the new day holds.
      */
-    fun bankAt(remainingMillis: Long, epochDay: Long, nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long =
-        if (epochDay == epochDayOf(nowMillis, zoneId)) remainingMillis.coerceAtLeast(0L) else 0L
+    fun bankAt(
+        remainingMillis: Long,
+        epochDay: Long,
+        nowMillis: Long,
+        maxMillis: Long = DEFAULT_MAX_MILLIS,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Long = if (epochDay == epochDayOf(nowMillis, zoneId)) {
+        remainingMillis.coerceAtLeast(0L)
+    } else {
+        maxMillis.coerceAtLeast(0L)
+    }
 
     /**
-     * [bankAt] for a package that has no stored row at all.
+     * [bankAt] for a package that may have no stored row at all.
      *
-     * A package that has never played has no row, and reads 0 for the same reason a stale row
-     * does: it has been granted nothing. A target added a moment ago is therefore locked from
-     * the moment it is added, and opens to the table rather than to the app.
+     * A package with no row is one that has spent nothing today, so it reads the day's full
+     * allowance for the same reason a stale row does. That is what makes a target added a
+     * moment ago usable rather than locked until tomorrow: the bank is the day's, and the
+     * day started at midnight, not when the user picked the app.
      */
     fun bankFor(
         storedMillis: Long?,
         epochDay: Long?,
         nowMillis: Long,
+        maxMillis: Long = DEFAULT_MAX_MILLIS,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): Long = if (storedMillis == null || epochDay == null) {
-        0L
+        maxMillis.coerceAtLeast(0L)
     } else {
-        bankAt(storedMillis, epochDay, nowMillis, zoneId)
+        bankAt(storedMillis, epochDay, nowMillis, maxMillis, zoneId)
     }
 
     /** Epoch millis at which the removal lock for a bank emptied at [emptySinceMillis] ends. */
     fun removalLockedUntil(emptySinceMillis: Long): Long =
         if (emptySinceMillis <= 0L) 0L else emptySinceMillis + REMOVAL_LOCK_MILLIS
 
-    /** True while a target's removal is refused because its bank was drained recently. */
-    fun isRemovalLocked(emptySinceMillis: Long, nowMillis: Long): Boolean =
-        emptySinceMillis > 0L && nowMillis < removalLockedUntil(emptySinceMillis)
+    /**
+     * True while a target's removal is refused because its bank was drained recently.
+     *
+     * The lock belongs to the day the bank was drained on. Come midnight the allowance is
+     * back, and a lock that outlived it would be punishing a user for an afternoon that the
+     * refill has already answered — so a stamp from an earlier local day is spent rather
+     * than served.
+     */
+    fun isRemovalLocked(
+        emptySinceMillis: Long,
+        nowMillis: Long,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Boolean =
+        emptySinceMillis > 0L &&
+            epochDayOf(emptySinceMillis, zoneId) == epochDayOf(nowMillis, zoneId) &&
+            nowMillis < removalLockedUntil(emptySinceMillis)
 
     /** Epoch millis of the next local midnight after [nowMillis]. */
     fun nextLocalMidnight(nowMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long =

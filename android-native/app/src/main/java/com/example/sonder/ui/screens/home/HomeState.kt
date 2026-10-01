@@ -2,6 +2,7 @@ package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.domain.AccessPolicy
+import com.example.sonder.domain.AccessRules
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.TimeBankSnapshot
 import java.time.ZoneId
@@ -70,10 +71,10 @@ data class HomeState(
  * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here — so
  * countdown text is deterministic in tests.
  *
- * A bank from an earlier day reads as 0, which is what makes the allowance daily without a
- * table of its own: yesterday's leftovers are not today's access. A target that has never
- * played reads the same way, so the row for an app added a moment ago says LOCKED — the
- * table, not the app, is what that target opens to.
+ * A bank from an earlier day reads as the day's allowance, which is what makes the allowance
+ * daily without a table or an alarm: the refill is this read. A target that has never played
+ * reads the same way, so an app added a moment ago shows the time it has today rather than
+ * nothing until tomorrow.
  */
 internal fun mapHomeState(
     targets: List<TargetEntity>,
@@ -91,6 +92,7 @@ internal fun mapHomeState(
                 storedMillis = bank?.remainingMillis,
                 epochDay = bank?.epochDay,
                 nowMillis = nowMillis,
+                maxMillis = AccessRules(maxMillis = target.maxMillis).clamped().maxMillis,
                 zoneId = zoneId,
             )
             val state = AccessPolicy.stateFor(enabled = true, bankMillis = remaining)

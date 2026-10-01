@@ -4,9 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The per-event decision core. Three inputs, three answers: not a target passes, a target with
- * time in its bank runs, a target with nothing gets the table. The scope cases are the ones
- * with the subtlety in them — a scoped target is only a target while its own surface is up.
+ * The per-event decision core. Four answers: not a target passes, a won hand runs, a target
+ * with time in its bank but no hand won gets the table, and a target with an empty bank gets
+ * the wall. The scope cases are the ones with the subtlety in them — a scoped target is only
+ * a target while its own surface is up — and the entry cases carry the rule the gate exists
+ * for, which is that holding time is not the same as being let in.
  */
 class GateDeciderTest {
 
@@ -21,30 +23,50 @@ class GateDeciderTest {
     }
 
     @Test
-    fun `a target with an empty bank is gated`() {
-        assertEquals(GateDecision.GATE, decide(targetEnabled = true, bankMillis = 0L))
+    fun `a target with an empty bank gets the wall`() {
+        assertEquals(GateDecision.LOCKED, decide(targetEnabled = true, bankMillis = 0L))
     }
 
     @Test
-    fun `a target with any time at all is granted`() {
-        assertEquals(GateDecision.GRANTED, decide(targetEnabled = true, bankMillis = 1L))
+    fun `a target with time in its bank but no hand won gets the table`() {
+        // The rule the gate is for: holding time is not being let in. This is the case that
+        // used to read GRANTED, and it is why an app with a bank still shows blackjack.
+        assertEquals(GateDecision.GATE, decide(targetEnabled = true, bankMillis = 1L))
     }
 
     @Test
-    fun `a target with a full bank is granted`() {
+    fun `a target the user has won their way into runs`() {
+        assertEquals(GateDecision.GRANTED, decide(targetEnabled = true, bankMillis = 1L, entered = true))
+    }
+
+    @Test
+    fun `a target with a full bank still gets the table until a hand is won`() {
         assertEquals(
-            GateDecision.GRANTED,
+            GateDecision.GATE,
             decide(targetEnabled = true, bankMillis = AccessPolicy.DEFAULT_MAX_MILLIS),
         )
     }
 
     /**
-     * The bank is read before the decision, so a stale negative — a debt row from a build that
-     * had one, a bank written before a clamp existed — must still gate rather than pass.
+     * The bank is read before the entry, so a bank that has emptied under a live grant drops
+     * to the wall on the next pass rather than waiting for the user to leave and come back.
      */
     @Test
-    fun `a negative bank is gated`() {
-        assertEquals(GateDecision.GATE, decide(targetEnabled = true, bankMillis = -1L))
+    fun `an entered target whose bank has emptied gets the wall`() {
+        assertEquals(GateDecision.LOCKED, decide(targetEnabled = true, bankMillis = 0L, entered = true))
+    }
+
+    /**
+     * A stale negative — a debt row from a build that had one, a bank written before a clamp
+     * existed — must lock rather than pass or offer a table there is nothing to back.
+     */
+    @Test
+    fun `a negative bank is locked`() {
+        assertEquals(GateDecision.LOCKED, decide(targetEnabled = true, bankMillis = -1L))
+        assertEquals(
+            GateDecision.LOCKED,
+            decide(targetEnabled = true, bankMillis = -1L, entered = true),
+        )
     }
 
     // --- scope -----------------------------------------------------------------
@@ -64,9 +86,9 @@ class GateDeciderTest {
     }
 
     @Test
-    fun `a shorts-scoped target gates on its short-form surface`() {
+    fun `a shorts-scoped target walls on its short-form surface`() {
         assertEquals(
-            GateDecision.GATE,
+            GateDecision.LOCKED,
             decide(
                 targetEnabled = true,
                 bankMillis = 0L,
@@ -93,9 +115,9 @@ class GateDeciderTest {
     }
 
     @Test
-    fun `a shorts-scoped target with time still runs on its surface`() {
+    fun `a shorts-scoped target with time gets the table on its surface`() {
         assertEquals(
-            GateDecision.GRANTED,
+            GateDecision.GATE,
             decide(
                 targetEnabled = true,
                 bankMillis = 30 * 60_000L,
@@ -106,11 +128,25 @@ class GateDeciderTest {
     }
 
     @Test
+    fun `a shorts-scoped target the user won into runs on its surface`() {
+        assertEquals(
+            GateDecision.GRANTED,
+            decide(
+                targetEnabled = true,
+                bankMillis = 30 * 60_000L,
+                blockScope = BlockScope.SHORTS_ONLY,
+                scopedSurfacePresent = true,
+                entered = true,
+            ),
+        )
+    }
+
+    @Test
     fun `a whole-app target ignores the surface probe`() {
         // scopedSurfacePresent is meaningless for WHOLE_APP, and the default is what every
         // caller without a probe gets: passing false there must not become a free pass.
         assertEquals(
-            GateDecision.GATE,
+            GateDecision.LOCKED,
             decide(targetEnabled = true, bankMillis = 0L, scopedSurfacePresent = false),
         )
     }
@@ -133,10 +169,12 @@ class GateDeciderTest {
         bankMillis: Long,
         blockScope: BlockScope = BlockScope.WHOLE_APP,
         scopedSurfacePresent: Boolean = true,
+        entered: Boolean = false,
     ): GateDecision = GateDecider.decide(
         targetEnabled = targetEnabled,
         bankMillis = bankMillis,
         blockScope = blockScope,
         scopedSurfacePresent = scopedSurfacePresent,
+        entered = entered,
     )
 }

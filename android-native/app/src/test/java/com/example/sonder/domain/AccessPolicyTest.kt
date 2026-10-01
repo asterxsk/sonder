@@ -19,6 +19,10 @@ class AccessPolicyTest {
     private val utc = ZoneId.of("UTC")
     private val noon = 1_700_000_000_000L
 
+    /** The first millisecond of [epochDay] in UTC, so the day-boundary cases are exact. */
+    private fun localMidnight(epochDay: Long): Long =
+        java.time.LocalDate.ofEpochDay(epochDay).atStartOfDay(utc).toInstant().toEpochMilli()
+
     // --- hands -----------------------------------------------------------------
 
     @Test
@@ -122,29 +126,24 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `the table's stake is dealt from an empty bank`() {
-        // The seat, not a grant: the smallest chip is the one bet an empty bank is played
-        // for, so a locked app is always one hand from being open. Every chip above it still
-        // needs the bank, which is what keeps a losing run from minting time.
-        assertTrue(
-            AccessPolicy.canStake(bankMillis = 0L, stakeMillis = AccessPolicy.TABLE_STAKE_MILLIS),
-        )
-        assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = AccessPolicy.CHIPS[1]))
-        // Nothing is not a bet: ALL IN over an empty bank is refused with the chips.
+    fun `no chip is playable from an empty bank`() {
+        // There is no seat and no free hand. An empty bank plays nothing at all: a hand that
+        // could be dealt from zero would be re-bet until it won, at no cost but a deal, and
+        // the time it paid out would be minted rather than won. That was the reported bug.
+        AccessPolicy.CHIPS.forEach { chip ->
+            assertTrue(
+                "a $chip chip must not be playable from an empty bank",
+                !AccessPolicy.canStake(bankMillis = 0L, stakeMillis = chip),
+            )
+        }
+        // Nothing is not a bet either.
         assertTrue(!AccessPolicy.canStake(bankMillis = 0L, stakeMillis = 0L))
+        assertTrue(!AccessPolicy.canStake(bankMillis = 60_000L, stakeMillis = 0L))
     }
 
     @Test
     fun `the chips are two, five and ten minutes`() {
         assertEquals(listOf(2 * 60_000L, 5 * 60_000L, 10 * 60_000L), AccessPolicy.CHIPS)
-    }
-
-    @Test
-    fun `the table's stake is the smallest chip`() {
-        // Small, because it is the one stake that is not backed by the bank — the time a hand
-        // won with it pays out is time the table put up, so it is the least a hand can be for.
-        assertEquals(2 * 60_000L, AccessPolicy.TABLE_STAKE_MILLIS)
-        assertEquals(AccessPolicy.CHIPS.first(), AccessPolicy.TABLE_STAKE_MILLIS)
     }
 
     // --- billing ---------------------------------------------------------------
@@ -201,44 +200,48 @@ class AccessPolicyTest {
     }
 
     @Test
-    fun `a bank from an earlier day reads as nothing`() {
-        // What the deleted daily_usage table used to do: yesterday's leftovers are not today's
-        // access. The day opens locked like any other empty bank, and the way in is a hand.
+    fun `a bank from an earlier day reads as the day's allowance`() {
+        // The refill, and there is no alarm behind it: a row stamped with an earlier day is
+        // spent by definition, and the new day holds the ceiling again.
         assertEquals(
-            0L,
+            30 * 60_000L,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) - 1,
                 nowMillis = noon,
+                maxMillis = 30 * 60_000L,
                 zoneId = utc,
             ),
         )
     }
 
     @Test
-    fun `a bank from a later day reads as nothing`() {
+    fun `a bank from a later day reads as the day's allowance`() {
         // A clock set back a day is the same problem in the other direction.
         assertEquals(
-            0L,
+            30 * 60_000L,
             AccessPolicy.bankAt(
                 remainingMillis = 12 * 60_000L,
                 epochDay = AccessPolicy.epochDayOf(noon, utc) + 1,
                 nowMillis = noon,
+                maxMillis = 30 * 60_000L,
                 zoneId = utc,
             ),
         )
     }
 
     @Test
-    fun `a target with no row reads as nothing and so is locked`() {
-        // A target added a moment ago has been granted nothing: no row is no access, and the
-        // app opens to the table rather than to the app.
+    fun `a target with no row reads the day's allowance`() {
+        // A target added a moment ago has spent nothing today, and the allowance is the
+        // day's rather than the hand's — so it opens with a full bank rather than waiting
+        // for tomorrow. Spending it is what makes it run out.
         assertEquals(
-            0L,
+            30 * 60_000L,
             AccessPolicy.bankFor(
                 storedMillis = null,
                 epochDay = null,
                 nowMillis = noon,
+                maxMillis = 30 * 60_000L,
                 zoneId = utc,
             ),
         )
@@ -253,18 +256,39 @@ class AccessPolicyTest {
                 storedMillis = 12 * 60_000L,
                 epochDay = today,
                 nowMillis = noon,
+                maxMillis = 30 * 60_000L,
                 zoneId = utc,
             ),
         )
         assertEquals(
-            0L,
+            30 * 60_000L,
             AccessPolicy.bankFor(
                 storedMillis = 12 * 60_000L,
                 epochDay = today - 1,
                 nowMillis = noon,
+                maxMillis = 30 * 60_000L,
                 zoneId = utc,
             ),
         )
+    }
+
+    @Test
+    fun `a bank left over from today is not refilled by a later read`() {
+        // The other half of the refill: reading twice on the same day must not hand the
+        // allowance back. A predicate that refilled on any read would be an infinite bank.
+        val today = AccessPolicy.epochDayOf(noon, utc)
+        repeat(3) {
+            assertEquals(
+                12 * 60_000L,
+                AccessPolicy.bankAt(
+                    remainingMillis = 12 * 60_000L,
+                    epochDay = today,
+                    nowMillis = noon,
+                    maxMillis = 30 * 60_000L,
+                    zoneId = utc,
+                ),
+            )
+        }
     }
 
     @Test
@@ -304,9 +328,23 @@ class AccessPolicyTest {
 
     @Test
     fun `the lock is exclusive at exactly twelve hours`() {
-        val ends = noon + AccessPolicy.REMOVAL_LOCK_MILLIS
-        assertFalse(AccessPolicy.isRemovalLocked(emptySinceMillis = noon, nowMillis = ends))
-        assertTrue(AccessPolicy.isRemovalLocked(emptySinceMillis = noon, nowMillis = ends - 1))
+        // Drained an hour into the day, so the twelve hours run out well inside it and the
+        // day boundary below cannot be what ends this lock.
+        val drained = localMidnight(AccessPolicy.epochDayOf(noon, utc)) + 60 * 60_000L
+        val ends = drained + AccessPolicy.REMOVAL_LOCK_MILLIS
+        assertTrue(AccessPolicy.isRemovalLocked(drained, ends - 1, utc))
+        assertFalse(AccessPolicy.isRemovalLocked(drained, ends, utc))
+    }
+
+    @Test
+    fun `a lock does not outlive the day the bank was drained on`() {
+        // Drained late, so the twelve hours would run past midnight. The refill answers that
+        // afternoon, so the lock goes with the day rather than holding removal shut for
+        // hours of a day the user has a full bank in.
+        val nextDay = localMidnight(AccessPolicy.epochDayOf(noon, utc) + 1)
+        val drained = nextDay - 60_000L
+        assertTrue(AccessPolicy.isRemovalLocked(drained, drained + 1L, utc))
+        assertFalse(AccessPolicy.isRemovalLocked(drained, nextDay, utc))
     }
 
     @Test
