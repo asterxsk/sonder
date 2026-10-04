@@ -3,6 +3,7 @@ package com.example.sonder.ui.screens.home
 import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.domain.AccessPolicy
 import com.example.sonder.domain.AccessRules
+import com.example.sonder.domain.AccessSession
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.TimeBankSnapshot
 import java.time.ZoneId
@@ -71,16 +72,15 @@ data class HomeState(
  * Pure Home mapper. Time arrives as [nowMillis] — never read from the clock in here — so
  * countdown text is deterministic in tests.
  *
- * A bank from an earlier day reads as the day's allowance, which is what makes the allowance
- * daily without a table or an alarm: the refill is this read. A target that has never played
- * reads the same way, so an app added a moment ago shows the time it has today rather than
- * nothing until tomorrow.
+ * The bank is wagerable time, not permission to enter. Only the live won session reads as
+ * granted; every other enabled target stays locked even when its bank has time available.
  */
 internal fun mapHomeState(
     targets: List<TargetEntity>,
     banks: List<TimeBankSnapshot>,
     nowMillis: Long,
     zoneId: ZoneId = ZoneId.systemDefault(),
+    accessSessions: Map<String, AccessSession> = emptyMap(),
 ): HomeState {
     val bankByPackage = banks.associateBy { it.packageName }
 
@@ -95,13 +95,18 @@ internal fun mapHomeState(
                 maxMillis = AccessRules(maxMillis = target.maxMillis).clamped().maxMillis,
                 zoneId = zoneId,
             )
-            val state = AccessPolicy.stateFor(enabled = true, bankMillis = remaining)
+            val grantedMillis = accessSessions[target.packageName]
+                ?.takeIf { it.isAvailableFor(target.packageName, nowMillis) }
+                ?.remainingMillis
+                ?.coerceAtMost(remaining)
+                ?: 0L
+            val state = AccessPolicy.stateFor(enabled = true, bankMillis = grantedMillis)
             HomeRow(
                 packageName = target.packageName,
                 label = target.label,
                 state = state,
                 bankMillis = remaining,
-                remainingText = if (remaining > 0L) formatRemaining(remaining) else "",
+                remainingText = if (grantedMillis > 0L) formatRemaining(grantedMillis) else "",
             )
         }
         .sortedWith(compareBy<HomeRow>({ urgency(it) }, { it.bankMillis }, { it.label }, { it.packageName }))

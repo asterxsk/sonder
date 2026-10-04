@@ -23,11 +23,6 @@ import com.example.sonder.ui.gate.TableState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /**
  * The blocker: a single `TYPE_APPLICATION_OVERLAY` window owned by the
@@ -63,9 +58,6 @@ class GateOverlayHost @Inject constructor(
     private val windowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-    /** Drives recomposition for the overlay only; cancelled with the overlay. */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
     /** The single blocker window, kept for the life of the service. */
     private var root: View? = null
 
@@ -73,7 +65,6 @@ class GateOverlayHost @Inject constructor(
     private var composedFor: ShowRequest? = null
 
     private var lifecycleOwner: OverlayLifecycleOwner? = null
-    private var unlockWatcher: Job? = null
 
     /**
      * What a window was composed for. A gate whose package or label differs has to be
@@ -183,7 +174,6 @@ class GateOverlayHost @Inject constructor(
             windowManager.updateViewLayout(view, layoutParams())
             composedFor = request
             shownForPackage = pkg
-            watchUnlock(pkg)
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "OVERLAY_REPOINTED(pkg=$pkg)")
             }
@@ -212,7 +202,6 @@ class GateOverlayHost @Inject constructor(
             teardownOwner()
             return
         }
-        watchUnlock(request.pkg)
 
         try {
             windowManager.addView(view, layoutParams())
@@ -240,16 +229,6 @@ class GateOverlayHost @Inject constructor(
         val keyguard =
             context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
         return power.isInteractive && !keyguard.isKeyguardLocked
-    }
-
-    /** Release the blocker the moment access is earned. One watcher per live window. */
-    private fun watchUnlock(pkg: String) {
-        unlockWatcher?.cancel()
-        unlockWatcher = scope.launch {
-            controller.unlocked.collect { unlockedPkg ->
-                if (unlockedPkg == pkg) dismiss(reason = "access granted")
-            }
-        }
     }
 
     private fun contentFor(request: ShowRequest): @Composable () -> Unit = {
@@ -332,8 +311,6 @@ class GateOverlayHost @Inject constructor(
     }
 
     private fun teardownOwner() {
-        unlockWatcher?.cancel()
-        unlockWatcher = null
         lifecycleOwner?.destroy()
         lifecycleOwner = null
     }

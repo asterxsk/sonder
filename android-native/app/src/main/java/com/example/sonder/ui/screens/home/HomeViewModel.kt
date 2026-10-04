@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sonder.data.db.TargetDao
 import com.example.sonder.data.db.TimeBankDao
+import com.example.sonder.data.repo.AccessSessionStore
 import com.example.sonder.domain.model.TimeBankSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 class HomeViewModel @Inject constructor(
     targetDao: TargetDao,
     timeBankDao: TimeBankDao,
+    accessSessions: AccessSessionStore,
 ) : ViewModel() {
 
     /** One tick per second. Cold, so it only runs while [state] has a subscriber. */
@@ -41,8 +43,9 @@ class HomeViewModel @Inject constructor(
         combine(
             targetDao.observeAll(),
             timeBankDao.observeAll(),
+            accessSessions.sessions,
             clock,
-        ) { targets, banks, nowMillis ->
+        ) { targets, banks, accessSessions, nowMillis ->
             mapHomeState(
                 targets = targets,
                 banks = banks.map {
@@ -55,6 +58,7 @@ class HomeViewModel @Inject constructor(
                     )
                 },
                 nowMillis = nowMillis,
+                accessSessions = accessSessions,
             )
         }.stateIn(
             viewModelScope,

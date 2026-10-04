@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.PowerManager
 import android.util.Log
 import com.example.sonder.BuildConfig
+import com.example.sonder.data.repo.AccessEntry
+import com.example.sonder.data.repo.AccessSessionStore
 import com.example.sonder.data.repo.EnforcementRepository
 import com.example.sonder.domain.BlockScope
 import com.example.sonder.domain.FloatingHold
@@ -70,6 +72,7 @@ class EnforcementCoordinator @Inject constructor(
     private val overlayHost: GateOverlayHost,
     private val foregroundResolver: ForegroundResolver,
     private val controller: GateController,
+    private val accessSessions: AccessSessionStore,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
     private val ownPackage: String = context.packageName
@@ -135,20 +138,27 @@ class EnforcementCoordinator @Inject constructor(
     @Volatile private var watchedDecision: GateDecision? = null
 
     /**
-     * The package the user has won their way into, or null while nobody has.
+     * Whether [pkg] still holds a won session, resuming it without billing time spent away.
      *
-     * A won hand grants access *once*, and the app it was won for is the app it belongs to —
-     * so this is a package rather than a flag, and it is cleared the moment the user leaves
-     * that app. Without it the gate would re-raise over an app the user had just won, and
-     * with it held too long the next app opened could inherit a win nobody played for.
-     *
-     * Volatile for the same reason as the pair above: written from the service's own
-     * main-thread callbacks and read on the re-check's dispatcher.
+     * The screen guard is what stops an event that was already in flight when the screen went
+     * off from re-entering a session that [onScreenOff] has just parked: without it, the
+     * coroutine would resume the session on the way out and leave it running over the keyguard.
      */
-    @Volatile private var enteredPackage: String? = null
-
-    /** Whether [pkg] is the app currently holding a won hand. */
-    private fun hasEntered(pkg: String): Boolean = enteredPackage == pkg
+    private suspend fun hasEntered(pkg: String, nowMillis: Long): Boolean {
+        if (!screenIsInUse()) return false
+        return when (accessSessions.enter(pkg, nowMillis)) {
+            AccessEntry.DENIED -> false
+            AccessEntry.ACTIVE -> true
+            AccessEntry.RESUMED -> {
+                // Back inside the grace: the clock restarts here, so the time that was spent
+                // away is not billed when the next drain measures from this stamp.
+                repository.beginUsage(pkg, nowMillis)
+                billedPackage = pkg
+                billedAtMillis = nowMillis
+                true
+            }
+        }
+    }
 
     /** Consecutive re-check passes that resolved away from every app. */
     @Volatile private var awayPasses = 0
@@ -243,18 +253,28 @@ class EnforcementCoordinator @Inject constructor(
             // inferred from the bank, because the bank cannot tell a hand that was just won
             // from one won ten minutes ago — and only the former is a way in.
             launch {
-                controller.unlocked.collect { pkg ->
-                    enteredPackage = pkg
-                    // The decision is recorded as already made, in the same breath as the
-                    // marker. The host takes its own overlay down for this emission on its
-                    // own scope, so the window between the window going away and this
-                    // collector running is a window in which a re-check pass would see a
-                    // gate that is down, re-decide from the bank, and put the table straight
-                    // back up over an app the player had just won. Writing both here closes
-                    // it: the pass finds a GRANTED already settled and bills against it.
+                controller.unlocked.collect { grant ->
+                    val now = System.currentTimeMillis()
+                    val pkg = grant.packageName
+                    accessSessions.grant(pkg, grant.durationMillis)
+                    // The won window starts now, not at the hand that produced it: the table
+                    // was on screen between the settlement and the tap, and none of that is
+                    // time the user spent in the app. Restamping the bank makes the drain
+                    // measure from this moment, so a win is never charged for the result
+                    // screen it was read on.
+                    repository.beginUsage(pkg, now)
+                    billedPackage = pkg
+                    billedAtMillis = now
+                    // The decision is recorded as already made, and the blocker is taken down
+                    // from here rather than by the host watching the same event: one collector
+                    // owns the ordering, so a re-check pass can never see a gate that is down
+                    // and re-decide from the bank before the grant is on the books.
                     watchedPackage = pkg
                     watchedDecision = GateDecision.GRANTED
-                    if (BuildConfig.DEBUG) Log.d(TAG, "ENTERED(pkg=$pkg)")
+                    overlayHost.dismiss(reason = "access granted: $pkg")
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "ENTERED(pkg=$pkg duration=${grant.durationMillis})")
+                    }
                 }
             }
         }
@@ -351,7 +371,7 @@ class EnforcementCoordinator @Inject constructor(
 
         val step = ForegroundWatch.actionFor(
             surface = surface,
-            settled = observed == watchedPackage && stillSettled(observed),
+            settled = observed == watchedPackage && stillSettled(observed, now),
             awayPasses = awayPasses,
         )
         awayPasses = step.awayPasses
@@ -370,7 +390,7 @@ class EnforcementCoordinator @Inject constructor(
                 // reading GRANTED for an app they are no longer in.
                 if (surface == ForegroundSurface.APP &&
                     watchedDecision == GateDecision.GRANTED &&
-                    stillSettled(observed)
+                    stillSettled(observed, now)
                 ) {
                     billForeground(observed, now)
                 }
@@ -435,13 +455,40 @@ class EnforcementCoordinator @Inject constructor(
      * simply charged in slightly larger steps. Writing on every window event would be a Room
      * round trip per event on the serialized decision dispatcher.
      */
-    private suspend fun billForeground(pkg: String, nowMillis: Long) {
-        if (pkg == billedPackage && nowMillis - billedAtMillis < BILL_MIN_INTERVAL_MILLIS) {
+    private suspend fun billForeground(
+        pkg: String,
+        nowMillis: Long,
+        force: Boolean = false,
+    ) {
+        if (!force && pkg == billedPackage && nowMillis - billedAtMillis < BILL_MIN_INTERVAL_MILLIS) {
             return
         }
         billedPackage = pkg
         billedAtMillis = nowMillis
-        repository.billUsage(pkg, nowMillis)
+        // The session is what authorises use, so it is also the ceiling on the drain: the
+        // final tick can never take more of the bank than the won window had left.
+        val before = repository.cachedRemaining(pkg, nowMillis)
+        val after = repository.billUsage(
+            packageName = pkg,
+            nowMillis = nowMillis,
+            maxChargeMillis = accessSessions.remainingMillis(pkg),
+        )
+        accessSessions.consume(pkg, (before - after).coerceAtLeast(0L))
+        if (after <= 0L) accessSessions.clear(pkg)
+    }
+
+    /**
+     * Park every won session that is currently running, charging each its final interval.
+     *
+     * Called when the user leaves the gate for something that is not one more target: the
+     * window each session covers is over, and the grace clock starts from here.
+     */
+    private suspend fun pauseAccess(nowMillis: Long, unlessPackage: String? = null) {
+        val active = accessSessions.sessions.value.values
+            .filter { it.awaySinceMillis == null && it.packageName != unlessPackage }
+        if (active.isEmpty()) return
+        accessSessions.leaveActive(nowMillis, except = unlessPackage)
+        active.forEach { billForeground(it.packageName, nowMillis, force = true) }
     }
 
     /**
@@ -554,7 +601,7 @@ class EnforcementCoordinator @Inject constructor(
         // question asked is the one the gate asks, or a target with a bank could play on in a
         // floating window over everything else.
         return repository.enabledPackages().firstOrNull { pkg ->
-            !hasEntered(pkg) && probe.hasPipWindow(pkg)
+            !accessSessions.isAvailableFor(pkg, nowMillis) && probe.hasPipWindow(pkg)
         }
     }
 
@@ -627,16 +674,9 @@ class EnforcementCoordinator @Inject constructor(
         )
     }
 
-    /**
-     * A release that was applied rather than refused; the blocker is down for it.
-     *
-     * Reaching here means no gated app is being covered, so no gated app is being used —
-     * which is exactly the condition a won hand stops applying under. The marker is dropped
-     * here rather than on the next `GATE`, so a user who wins their way in, leaves, and comes
-     * back faces the table again instead of walking through a door left open behind them.
-     */
-    private fun blockReleased(pkg: String, reason: String) {
-        enteredPackage = null
+    /** A release starts the return grace after charging the final foreground interval. */
+    private suspend fun blockReleased(pkg: String, reason: String) {
+        pauseAccess(System.currentTimeMillis())
         if (BuildConfig.DEBUG) Log.d(TAG, "BLOCK_STATE_CHANGED(locked=false pkg=$pkg $reason)")
     }
 
@@ -706,10 +746,11 @@ class EnforcementCoordinator @Inject constructor(
      * the surface" answer and logs it twice a second. Leaving the app is what brings a scoped
      * blocker down, and that arrives as a window event.
      */
-    private fun stillSettled(pkg: String): Boolean = when (watchedDecision) {
+    private suspend fun stillSettled(pkg: String, nowMillis: Long): Boolean = when (watchedDecision) {
         GateDecision.PASS -> false
 
-        GateDecision.GRANTED -> repository.cachedRemaining(pkg) > 0L
+        GateDecision.GRANTED ->
+            repository.cachedRemaining(pkg, nowMillis) > 0L && hasEntered(pkg, nowMillis)
 
         GateDecision.GATE -> overlayHost.shownForPackage == pkg
 
@@ -790,6 +831,7 @@ class EnforcementCoordinator @Inject constructor(
         className: String?,
     ): GateDecision {
         val now = System.currentTimeMillis()
+        pauseAccess(now, unlessPackage = pkg)
 
         val target = repository.enabledTarget(pkg)
         val scope = repository.cachedBlockScope(pkg)
@@ -799,7 +841,7 @@ class EnforcementCoordinator @Inject constructor(
             bankMillis = repository.cachedRemaining(pkg, now),
             blockScope = scope,
             scopedSurfacePresent = scopedSurface,
-            entered = hasEntered(pkg),
+            entered = hasEntered(pkg, now),
         )
 
         val label = target?.label?.takeIf { it.isNotBlank() }
@@ -884,10 +926,14 @@ class EnforcementCoordinator @Inject constructor(
         // Nothing is on screen to hold a blocker over, and the watch that ages the hold out
         // is the thing being stopped: left set, it would outlive the float it was holding.
         floatingHold = FloatingHold.NONE
-        // The blocker is going down, so the use it was standing for is over. A screen that
-        // goes off and comes back is the same app but not the same visit, and the won hand
-        // belonged to the visit.
-        enteredPackage = null
+        val now = System.currentTimeMillis()
+        // Parked before the billing is queued, so a window event already in flight cannot find
+        // the session still running; [hasEntered] refuses to resume it while the screen is off.
+        val running = accessSessions.sessions.value.values.filter { it.awaySinceMillis == null }
+        accessSessions.leaveActive(now)
+        running.forEach { session ->
+            scope.launch { billForeground(session.packageName, now, force = true) }
+        }
         overlayHost.dismiss(reason = "screen off")
     }
 
@@ -909,7 +955,7 @@ class EnforcementCoordinator @Inject constructor(
         pipWindows = null
         watchedPackage = null
         watchedDecision = null
-        enteredPackage = null
+        accessSessions.clear()
         floatingHold = FloatingHold.NONE
         awayPasses = 0
         overlayHost.dismiss(reason = "service stopped")

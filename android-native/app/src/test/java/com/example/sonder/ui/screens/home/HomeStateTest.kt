@@ -2,6 +2,7 @@ package com.example.sonder.ui.screens.home
 
 import com.example.sonder.data.db.TargetEntity
 import com.example.sonder.domain.AccessPolicy
+import com.example.sonder.domain.AccessSession
 import com.example.sonder.domain.model.EnforcementState
 import com.example.sonder.domain.model.TimeBankSnapshot
 import java.time.ZoneId
@@ -41,11 +42,7 @@ class HomeStateTest {
     }
 
     @Test
-    fun `an enabled target that has never played starts on the day's allowance`() {
-        // A target added a moment ago has spent nothing today, and the allowance is the
-        // day's rather than the hand's — so it opens with a full bank instead of waiting for
-        // tomorrow. What it does not have is a won hand, so opening it still raises the
-        // table; the row reads the allowance, not permission.
+    fun `an enabled target that has never played starts locked`() {
         val state = mapHomeState(
             targets = listOf(target("com.example.a")),
             banks = emptyList(),
@@ -53,23 +50,46 @@ class HomeStateTest {
             zoneId = utc,
         )
         assertEquals(AccessPolicy.DEFAULT_MAX_MILLIS, state.rows.single().bankMillis)
-        assertEquals("60:00", state.rows.single().remainingText)
-        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
+        assertEquals("", state.rows.single().remainingText)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
+        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
     }
 
     @Test
-    fun `an enabled target with a bank is the active row`() {
+    fun `a won session is the active row and shows only its usable time`() {
         val state = mapHomeState(
             targets = listOf(target("com.example.a", label = "App")),
             banks = listOf(bank("com.example.a", 29 * 60_000L)),
             nowMillis = t0,
             zoneId = utc,
+            accessSessions = mapOf("com.example.a" to AccessSession("com.example.a", 5 * 60_000L)),
         )
         val row = (state.summary as HomeSummary.Active).row
         assertEquals("com.example.a", row.packageName)
         assertEquals(29 * 60_000L, row.bankMillis)
-        assertEquals("29:00", row.remainingText)
+        assertEquals("05:00", row.remainingText)
         assertEquals(EnforcementState.GRANTED, row.state)
+    }
+
+    @Test
+    fun `a session sixty seconds away is locked without spending its bank`() {
+        val state = mapHomeState(
+            targets = listOf(target("com.example.a")),
+            banks = listOf(bank("com.example.a", 4 * 60_000L + 30_000L)),
+            nowMillis = t0 + 60_000L,
+            zoneId = utc,
+            accessSessions = mapOf(
+                "com.example.a" to AccessSession(
+                    packageName = "com.example.a",
+                    remainingMillis = 4 * 60_000L + 30_000L,
+                    awaySinceMillis = t0,
+                ),
+            ),
+        )
+
+        assertEquals(HomeSummary.Idle(enabledCount = 1), state.summary)
+        assertEquals(4 * 60_000L + 30_000L, state.rows.single().bankMillis)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
     }
 
     @Test
@@ -83,11 +103,11 @@ class HomeStateTest {
             zoneId = utc,
         )
         assertEquals(AccessPolicy.DEFAULT_MAX_MILLIS, state.rows.single().bankMillis)
-        assertEquals(EnforcementState.GRANTED, state.rows.single().state)
+        assertEquals(EnforcementState.IDLE, state.rows.single().state)
     }
 
     @Test
-    fun `the panel names the bank that is about to run out`() {
+    fun `the panel names the active access session`() {
         val state = mapHomeState(
             targets = listOf(target("com.example.a"), target("com.example.b")),
             banks = listOf(
@@ -96,9 +116,9 @@ class HomeStateTest {
             ),
             nowMillis = t0,
             zoneId = utc,
+            accessSessions = mapOf("com.example.b" to AccessSession("com.example.b", 2 * 60_000L)),
         )
         assertEquals("com.example.b", (state.summary as HomeSummary.Active).row.packageName)
-        // ...and the list agrees: the smaller bank is the one that matters first.
         assertEquals("com.example.b", state.rows.first().packageName)
     }
 
@@ -123,6 +143,7 @@ class HomeStateTest {
             ),
             nowMillis = t0,
             zoneId = utc,
+            accessSessions = mapOf("com.example.z" to AccessSession("com.example.z", 60_000L)),
         )
         assertEquals("com.example.z", state.rows.first().packageName)
     }

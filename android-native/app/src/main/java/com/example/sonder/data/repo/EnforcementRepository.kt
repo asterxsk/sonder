@@ -387,6 +387,29 @@ class EnforcementRepository @Inject constructor(
         bankAfter
     }
 
+    suspend fun beginUsage(
+        packageName: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ) {
+        database.withTransaction {
+            val row = timeBankDao.get(packageName) ?: return@withTransaction
+            val remaining = AccessPolicy.bankAt(
+                remainingMillis = row.remainingMillis,
+                epochDay = row.epochDay,
+                nowMillis = nowMillis,
+                maxMillis = rulesFor(packageName).maxMillis,
+            )
+            val resumed = row.copy(
+                remainingMillis = remaining,
+                epochDay = epochDay(nowMillis),
+                lastSeenMillis = nowMillis,
+                emptySinceMillis = if (remaining > 0L) 0L else row.emptySinceMillis,
+            )
+            timeBankDao.upsert(resumed)
+            rememberBank(resumed)
+        }
+    }
+
     /**
      * Bill the foreground time since the package was last seen and return the bank left.
      *
@@ -403,6 +426,7 @@ class EnforcementRepository @Inject constructor(
     suspend fun billUsage(
         packageName: String,
         nowMillis: Long = System.currentTimeMillis(),
+        maxChargeMillis: Long = Long.MAX_VALUE,
     ): Long = database.withTransaction {
         val row = timeBankDao.get(packageName) ?: return@withTransaction 0L
         val today = epochDay(nowMillis)
@@ -415,7 +439,10 @@ class EnforcementRepository @Inject constructor(
             maxMillis = rulesFor(packageName).maxMillis,
         )
         val elapsed = if (row.epochDay == today) nowMillis - row.lastSeenMillis else 0L
-        val bankAfter = AccessPolicy.bill(bankBefore, elapsed)
+        // A won session is what authorises use, so it is also what bounds the drain: the
+        // bank is never charged more than the session still had left to spend.
+        val chargeable = elapsed.coerceIn(0L, maxChargeMillis.coerceAtLeast(0L))
+        val bankAfter = AccessPolicy.bill(bankBefore, chargeable)
 
         val emptied = bankAfter == 0L && bankBefore > 0L
         val emptySince = when {

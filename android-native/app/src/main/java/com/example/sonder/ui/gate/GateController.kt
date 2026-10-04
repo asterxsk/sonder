@@ -40,6 +40,7 @@ data class TableState(
     val message: String = "",
     val showResult: Boolean = false,
     val lastOutcome: HandOutcome? = null,
+    val lastStakeMillis: Long = 0L,
     /** The bank the last settled hand left behind; the result line reads it, not the live one. */
     val lastBankAfterMillis: Long = 0L,
 ) {
@@ -78,6 +79,11 @@ data class TableState(
     val stakePlayable: Boolean get() = AccessPolicy.canStake(bankMillis, stakeMillis)
 }
 
+data class AccessGrant(
+    val packageName: String,
+    val durationMillis: Long,
+)
+
 /**
  * The blackjack gate's state machine, owned by the process (not an Activity) so
  * the blocker can live in a service-hosted overlay window. Previously this logic
@@ -98,9 +104,9 @@ class GateController @Inject constructor(
     private val _state = MutableStateFlow(TableState())
     val state: StateFlow<TableState> = _state
 
-    /** Emits the package when the user earns access and dismisses the blocker. */
-    private val _unlocked = MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val unlocked: SharedFlow<String> = _unlocked
+    /** Emits the package and won usage window when the blocker may be dismissed. */
+    private val _unlocked = MutableSharedFlow<AccessGrant>(extraBufferCapacity = 4)
+    val unlocked: SharedFlow<AccessGrant> = _unlocked
 
     /**
      * Emits the package when the user asks to leave the blocked app entirely.
@@ -220,6 +226,7 @@ class GateController @Inject constructor(
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
+            lastStakeMillis = 0L,
             message = "HIT OR STAND?",
         )
     }
@@ -273,6 +280,7 @@ class GateController @Inject constructor(
             dealerFull = null,
             showResult = false,
             lastOutcome = null,
+            lastStakeMillis = 0L,
             message = "",
         )
         scope.launch { refreshBank() }
@@ -280,12 +288,14 @@ class GateController @Inject constructor(
 
     /** User earned access: release the gate and reset the table for next time. */
     fun releaseAccess() {
-        val pkg = _state.value.targetPackage
-        if (pkg.isEmpty()) return
+        val current = _state.value
+        val pkg = current.targetPackage
+        if (pkg.isEmpty() || !current.justWon || current.lastStakeMillis <= 0L) return
+        val grant = AccessGrant(pkg, current.lastStakeMillis)
         _state.value = TableState(targetPackage = pkg)
         deck = emptyList()
         dealt = null
-        _unlocked.tryEmit(pkg)
+        _unlocked.tryEmit(grant)
     }
 
     /**
@@ -374,6 +384,7 @@ class GateController @Inject constructor(
                 _state.value = _state.value.copy(
                     showResult = true,
                     lastOutcome = outcome,
+                    lastStakeMillis = stake,
                     lastBankAfterMillis = bankAfter,
                 )
                 // Re-reads the bank the hand just moved, and re-points an ALL IN bet at it.
