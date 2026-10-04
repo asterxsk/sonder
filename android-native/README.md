@@ -9,8 +9,14 @@ The bank is the **day's allowance**, and the gate is on every open. With time in
 the bank it is the table — no chip is selected until you pick one, and a won hand
 is the only way past. With none it is the wall: **OUT OF TIME**, a countdown to
 the refill, and no table to play. The refill is a read rather than an alarm, so
-midnight simply means every bank holds its ceiling again, and an app added a
-moment ago starts on that same allowance because it has spent nothing yet.
+midnight simply means every bank holds its ceiling again.
+
+The bank is what you may *wager*; **the window** is what a win buys. A won hand
+turns the staked chip into usable time in an in-memory session, and using the app
+spends the bank down as it goes. Leaving parks the window for 60 seconds — return
+inside that minute and it resumes with the time away unbilled; stay away longer
+and the window is gone, so a new target (a bank but no window) opens on the
+table, never straight into the app.
 
 Built with Jetpack Compose, Hilt, and Room. It implements the Pixel UI v3
 design system in [`../docs/design/design_v3.md`](../docs/design/design_v3.md).
@@ -21,7 +27,7 @@ Enforcement deep-dive: [`../docs/android-native-v2.md`](../docs/android-native-v
 ```bash
 cd android-native
 ./gradlew assembleDebug        # debug APK
-./gradlew testDebugUnitTest    # unit tests (184; 127 in the pure domain layer)
+./gradlew testDebugUnitTest    # unit tests (193; 131 in the pure domain layer)
 ```
 
 Requires JDK 17 via `JAVA_HOME` and an Android SDK with platform 37. Gradle
@@ -36,12 +42,15 @@ foreground use, which is measured the same in every build. `minSdk 26`,
 
 | Event | Result |
 | --- | --- |
-| A target is added | the day's allowance — nothing has been spent yet |
+| A target is added | gated at once — a bank to bet from, but no window, so the first open is the table |
 | Stake a chip | 2:00 / 5:00 / 10:00, or ALL IN (the whole bank) — only while the bank covers it |
-| Win | bank += stake, capped at the app's max (default 60:00) — and the way in |
+| Win | the staked chip becomes usable time — the only thing that opens an app |
 | Loss | bank -= stake, floored at 0 — never a debt |
 | Push | inert re-deal, which opens nothing |
 | Opening the app | the gate: the table with time in the bank, the wall without it |
+| Using an unlocked app | the bank drains in steps of ≤ 10 s, and only while the app is in front |
+| Leaving the app | the window parks for 60 s; the time away is not charged |
+| Away longer than 60 s | the window is spent — the next open raises the table again |
 | Bank reaches 0 | the wall, with a countdown to the refill; removal refused for 12 h |
 | Local midnight | every bank refilled to its ceiling |
 
@@ -52,11 +61,13 @@ app/src/main/java/com/example/sonder/
 ├── domain/            pure rules — no Android (fully unit-tested)
 │   ├── BlackjackRules.kt    deck, deal, dealer-stands-on-17, settle
 │   ├── AccessPolicy.kt      the time bank: chips, billing, the daily allowance
+│   ├── AccessSession.kt     the won window: usable time, 60 s absence grace
 │   ├── AccessRules.kt       the one per-app rule: the bank's max size
 │   └── model/               Card, Hand, EnforcementState, snapshots
 ├── data/
 │   ├── db/            Room: targets, time_bank, hands
 │   ├── repo/          EnforcementRepository (single mutation point)
+│   │                  + AccessSessionStore (the live, package-keyed windows)
 │   └── settings/      DataStore (onboarding flag)
 ├── platform/
 │   ├── accessibility/ foreground detection + surface classification
