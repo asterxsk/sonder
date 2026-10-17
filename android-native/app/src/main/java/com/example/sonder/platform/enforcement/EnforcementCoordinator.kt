@@ -308,6 +308,17 @@ class EnforcementCoordinator @Inject constructor(
                     // and re-decide from the bank before the grant is on the books.
                     watchedPackage = pkg
                     watchedDecision = GateDecision.GRANTED
+                    // The hold goes with the blocker when it is *this* app's float the blocker
+                    // was over: the user has just paid for that float, so the rule keeping the
+                    // blocker on it has nothing left to hold. It has to be cleared here rather
+                    // than left to age, because the pass cannot age it — the probe no longer
+                    // reports a float of an app the user is inside, so a *blind* pass is all
+                    // that arrives for it, [FloatingHold.Answer.Unknown] holds the counter by
+                    // design, and a blind probe is the ordinary state while a Short plays. The
+                    // pass would then return at the hold check below on every pass, and the app
+                    // the user just won time in would never be billed again. A hold over some
+                    // *other* app's float is deliberately untouched: that float is still unpaid.
+                    if (floatingHold.coveredFor == pkg) floatingHold = FloatingHold.NONE
                     overlayHost.dismiss(reason = "access granted: $pkg")
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "ENTERED(pkg=$pkg duration=${grant.durationMillis})")

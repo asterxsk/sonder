@@ -21,9 +21,13 @@ package com.example.sonder.domain
  * that way — a run needs a *readable* pass to advance at all, so a probe that goes blind and
  * stays blind keeps the blocker up for as long as the blindness lasts. That is the intended
  * trade and not a trap: it is the direction that costs a delayed correction rather than an
- * uncovered float, and a hold is cleared outright, without any pass at all, by a screen-off,
- * a service stop, a fresh connection and a satisfied grant — which between them cover the
- * states a stalled probe could otherwise outlive.
+ * uncovered float, and the states a stalled probe could otherwise outlive are the ones the
+ * coordinator clears the hold for outright, without any pass at all: a screen-off, a service
+ * stop and a fresh connection. A fourth is a satisfied grant, which clears it only when the
+ * granted app is the one the hold is over — the user has paid for that float, so nothing is
+ * left for the rule to hold, and it must be cleared rather than aged because a *paid* float
+ * is deliberately not reported and so nothing readable is coming to age it. A grant for a
+ * different app leaves the hold standing, because that float is still unpaid.
  *
  *
  * **Absence is an answer, and an unreadable window list is not one.** The probe has three
@@ -76,7 +80,7 @@ object FloatingHold {
      * A hold is [coveredFor] naming the app whose float the blocker is over, and [misses]
      * counting the re-check passes that have answered [Answer.None] since the last one that
      * found it. The empty value is a released hold, and is the state a screen-off, a service
-     * stop and a satisfied grant all leave behind.
+     * stop and a grant for the app it covers all leave behind.
      */
     data class Hold(val coveredFor: String? = null, val misses: Int = 0) {
         /** Whether this hold is still keeping a blocker up. */
