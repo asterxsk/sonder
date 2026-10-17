@@ -26,6 +26,7 @@ import com.example.sonder.platform.notifications.Notifications
 import com.example.sonder.platform.overlay.GateOverlayHost
 import com.example.sonder.ui.gate.GateController
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -164,6 +165,28 @@ class EnforcementCoordinator @Inject constructor(
     @Volatile private var awayPasses = 0
 
     /**
+     * Whether the away-run currently under way has already had its release applied.
+     *
+     * [ForegroundWatch] deliberately keeps answering [ForegroundWatch.Action.RELEASE] for as
+     * long as the user stays away — its own test pins that, and rightly: the count must keep
+     * its footing rather than asking for two more passes each time. But "keep releasing" is a
+     * statement about the *decision*, and the coordinator applies it as an action, so left
+     * unqualified it re-ran the whole release on every pass: a window-list read marshalled
+     * through the 150 ms latch, an overlay dismissal, a `pauseAccess`, a `blockReleased`, and
+     * a log line — twice a second, forever, over a phone sitting on the launcher with nothing
+     * to release. Traced on the device as the ~550 ms `foreground watch` state emission that
+     * outnumbered the actual `OVERLAY_REMOVED`s by six to one.
+     *
+     * So the action is applied once per run and then latched here. The latch is cleared
+     * wherever the run ends or starts over — a surface that is not HOME/OWN, a fresh
+     * connection, screen-off, service stop — because each of those is a *new* run whose
+     * release, if it comes, is a new one to apply. A refused release is deliberately not
+     * latched: the refusal is the corroboration check saying "not yet", and the pass that
+     * finally agrees is the one that must apply it.
+     */
+    @Volatile private var awayReleaseApplied = false
+
+    /**
      * Bumped whenever the watch starts or stops. A pass already in flight — parked in a
      * suspend lookup — re-reads it before acting and abandons, so a blocker can never be
      * raised after screen-off or after the service was unbound. `stopWatching` cancelling
@@ -218,6 +241,7 @@ class EnforcementCoordinator @Inject constructor(
         watchedPackage = null
         watchedDecision = null
         awayPasses = 0
+        awayReleaseApplied = false
         // A fresh connection is a fresh start, like a screen-on or a service stop. Anything
         // still held here describes a window the previous connection was covering, and this
         // one has raised nothing: a stale hold would refuse a launcher release for a full run
@@ -318,7 +342,9 @@ class EnforcementCoordinator @Inject constructor(
                     // pass would then return at the hold check below on every pass, and the app
                     // the user just won time in would never be billed again. A hold over some
                     // *other* app's float is deliberately untouched: that float is still unpaid.
-                    if (floatingHold.coveredFor == pkg) floatingHold = FloatingHold.NONE
+                    if (clearHoldIfCovering(pkg)) {
+                        if (BuildConfig.DEBUG) Log.d(TAG, "hold released with the grant for $pkg")
+                    }
                     overlayHost.dismiss(reason = "access granted: $pkg")
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "ENTERED(pkg=$pkg duration=${grant.durationMillis})")
@@ -391,8 +417,13 @@ class EnforcementCoordinator @Inject constructor(
             // whether this float is the one the blocker is already over. The hold is the
             // episode: it stands for as long as the float does and is cleared outright by the
             // things that end one. See [coverFloating] for why the overlay window is not.
-            val alreadyHeld = floatingHold.coveredFor == probe.pkg
-            floatingHold = FloatingHold.afterPass(floatingHold, answer)
+            //
+            // The ageing is one atomic step and reports both the hold it read and the one it
+            // left, so `alreadyHeld` and the value the release rule runs on are guaranteed to
+            // be the ones this pass actually applied — a clear landing between a separate read
+            // and write could otherwise hand either of them a third value put there since.
+            val (heldBefore, heldAfter) = ageHold(answer)
+            val alreadyHeld = heldBefore.coveredFor == probe.pkg
             if (!probe.read && probe.pkg == null) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "float probe unreadable; holding the blocker")
             }
@@ -406,7 +437,7 @@ class EnforcementCoordinator @Inject constructor(
             // very blocker the hold was put up to keep — which is the strobe, arriving by
             // the one path that never consulted the hold. The pass falls through again on
             // its own once [FloatingHold] has run out of confirming passes.
-            if (!FloatingHold.releaseAllowed(pkg = null, floating = probe.pkg, hold = floatingHold)) {
+            if (!FloatingHold.releaseAllowed(pkg = null, floating = probe.pkg, hold = heldAfter)) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "release refused: a gated app is still floating")
                 return
             }
@@ -435,6 +466,11 @@ class EnforcementCoordinator @Inject constructor(
             awayPasses = awayPasses,
         )
         awayPasses = step.awayPasses
+        // A zero count is the run ending, and the counter says so exactly: HOME/OWN always
+        // leave at least one, APP and TRANSIENT always leave zero. Clearing here rather than
+        // inside the branches is what makes the two fields keep step — a latch outliving its
+        // counter would suppress the release of the *next* run. See [awayReleaseApplied].
+        if (step.awayPasses == 0) awayReleaseApplied = false
 
         when (step.action) {
             // A granted app the user is sitting inside emits no further window events, so
@@ -463,8 +499,15 @@ class EnforcementCoordinator @Inject constructor(
             // uncovered. The event path already refuses a release the window list
             // disagrees with (see [releaseIsTrailing]); a pass has no event to check, so
             // it asks the same list directly.
+            //
+            // Applied once per away-run — see [awayReleaseApplied]. This action stays true
+            // for as long as the user is away, so without the latch every one of these passes
+            // would repeat the whole release over a phone with nothing left to release.
             ForegroundWatch.Action.RELEASE ->
-                if (releaseIsCorroborated(observed)) {
+                if (awayReleaseApplied) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "RELEASE_ALREADY_APPLIED(observed=$observed)")
+                } else if (releaseIsCorroborated(observed)) {
+                    awayReleaseApplied = true
                     overlayHost.dismiss(reason = "foreground watch: $observed")
                     blockReleased(observed, reason = "foreground watch")
                 } else if (BuildConfig.DEBUG) {
@@ -677,14 +720,30 @@ class EnforcementCoordinator @Inject constructor(
         // paid for, and covering it would be the gate reneging on the hand it just paid out. So
         // a paid float is deliberately not reported — and, because nothing readable was found,
         // the pass ages the hold out and the blocker comes off, exactly as before.
+        //
+        // One batched ask for the whole list, not one call per target: the probe reads the
+        // window list and its roots on the service's own thread behind a post-and-await, so a
+        // per-target call is a per-target hop on the coordinator's dispatcher — N bounded waits
+        // every 500 ms, forever. See [PipWindows.pipWindowsAmong].
+        val answers = probe.pipWindowsAmong(targets)
         var read = false
         var blind = false
         var found: String? = null
+        // The hold's own float is chosen first, and only then the first unpaid one. The blocker
+        // is a single window: covering a second float means taking it off the first, and the
+        // pass that did that would re-cover the first on the next pass, and the one after — the
+        // two floats would take turns owning the blocker, which is the strobe by another route.
+        // Staying on the float already held is what keeps one of the two covered and paused
+        // rather than both flashing.
+        val preferred = floatingHold.coveredFor
         targets.forEach { pkg ->
-            when (val answer = probe.pipWindowFor(pkg)) {
+            when (val answer = answers[pkg] ?: FloatingHold.Answer.Unknown) {
                 is FloatingHold.Answer.Found -> {
                     read = true
-                    if (found == null && !userIsInside(pkg)) {
+                    // A float the user is inside is one they paid for, so it is never reported —
+                    // see the note above. Among the rest, the preferred one is taken when it
+                    // appears and otherwise the first found wins.
+                    if (!userIsInside(pkg) && (pkg == preferred || found == null)) {
                         found = answer.packageName
                     }
                 }
@@ -759,8 +818,61 @@ class EnforcementCoordinator @Inject constructor(
      * ageing it, and two fields cannot be swapped between threads as one fact — a reader that
      * saw the new package with the old run of misses, or a clear that landed between the two
      * writes, would end the next hold early or keep a dropped one alive.
+     *
+     * **Held in an [AtomicReference] rather than behind `@Volatile`, and the difference is the
+     * ageing, not the field.** `@Volatile` gives visibility, which is all a plain read or a
+     * plain clear needs, but the pass does not merely read and write: it reads, runs
+     * [FloatingHold.afterPass], and writes the result back. Between those two steps a clear can
+     * land from the service thread, and the write that follows puts the *pre-clear* hold back —
+     * a dropped hold resurrected, and one that would go on resurrecting every pass, because the
+     * pass keeps reading the value it is itself restoring. The update is a compare-and-set loop
+     * instead, so a clear that lands during it is either seen by the retry or wins the write
+     * outright; it can never be overwritten by a value read before it.
      */
-    @Volatile private var floatingHold: FloatingHold.Hold = FloatingHold.NONE
+    private val holdRef = AtomicReference(FloatingHold.NONE)
+    private var floatingHold: FloatingHold.Hold
+        get() = holdRef.get()
+        set(value) {
+            holdRef.set(value)
+        }
+
+    /**
+     * Age the hold by one pass, and report both the hold the pass read and the one it left.
+     *
+     * The compare-and-set loop is the whole point: the ageing is a read-modify-write, and a
+     * clear from the service thread landing between the two would otherwise be overwritten by
+     * the value read before it — a dropped hold resurrected, and resurrected again on every
+     * pass, because the pass keeps reading back what it is restoring. Retrying on a lost race
+     * means a clear is either seen (and the retry ages the empty hold, which is a no-op) or
+     * wins outright.
+     *
+     * Both values are returned because the two questions asked of them are different and the
+     * answer to each must be the one the rule actually ran on: `before` is what tells the cover
+     * whether this float is the one already held, and `after` is what decides the release. A
+     * caller re-reading the field for either could get a third value a clear put there since.
+     */
+    private fun ageHold(answer: FloatingHold.Answer): Pair<FloatingHold.Hold, FloatingHold.Hold> {
+        while (true) {
+            val seen = holdRef.get()
+            val aged = FloatingHold.afterPass(seen, answer)
+            if (holdRef.compareAndSet(seen, aged)) return seen to aged
+        }
+    }
+
+    /**
+     * Clear the hold if it is over [pkg], and report whether it was.
+     *
+     * The conditional clear has the same read-modify-write shape as the ageing, and the same
+     * lost-update hazard: the test and the write have to be one step, or a hold that arrived
+     * between them is dropped by a clear that was meant for another app's float.
+     */
+    private fun clearHoldIfCovering(pkg: String): Boolean {
+        while (true) {
+            val seen = holdRef.get()
+            if (seen.coveredFor != pkg) return false
+            if (holdRef.compareAndSet(seen, FloatingHold.NONE)) return true
+        }
+    }
 
     /**
      * Pause the float and put the blocker over it.
@@ -817,8 +929,11 @@ class EnforcementCoordinator @Inject constructor(
         // just ended: Home is where the float came from, so the run of away-passes that got
         // the user here is normally already at [ForegroundWatch.CONFIRMING_PASSES]. Left
         // standing it would let the first pass that misses the float release the blocker
-        // outright, which is the flash this cover was raised to end.
+        // outright, which is the flash this cover was raised to end. The release latch goes
+        // with it, for the same reason: the run that is ending may already have released, and
+        // the next one's release is a new one to apply.
         awayPasses = 0
+        awayReleaseApplied = false
         if (BuildConfig.DEBUG) Log.d(TAG, "PIP_COVERED(pkg=$pkg)")
     }
 
@@ -980,6 +1095,11 @@ class EnforcementCoordinator @Inject constructor(
                     // launcher's own event can land *after* the blocked app's. Releasing
                     // on that one event is what uncovered an app the user was looking at.
                     if (releaseIsTrailing(pkg, windowId)) return@launch
+                    // This is the same away-run the re-check releases for, so it is latched
+                    // the same way: the blocker is down now, and the passes that follow would
+                    // otherwise each dismiss it again for a run that has already been applied.
+                    // See [awayReleaseApplied].
+                    awayReleaseApplied = true
                     overlayHost.dismiss(reason = "surface=$surface pkg=$pkg")
                     blockReleased(pkg, reason = "surface=$surface")
                     return@launch
@@ -1099,6 +1219,13 @@ class EnforcementCoordinator @Inject constructor(
         // Nothing is on screen to hold a blocker over, and the watch that ages the hold out
         // is the thing being stopped: left set, it would outlive the float it was holding.
         floatingHold = FloatingHold.NONE
+        // The away-run is over too, and it is the dismissal right below that ends it: the
+        // screen-off takes the blocker down itself, so the run that was under way has nothing
+        // left to release. Cleared here rather than left to the next pass, because the next
+        // pass is a whole screen-on away — and a latch still set from before the screen went
+        // off would swallow the first release after it came back.
+        awayPasses = 0
+        awayReleaseApplied = false
         val now = System.currentTimeMillis()
         // Parked before the billing is queued, so a window event already in flight cannot find
         // the session still running; [hasEntered] refuses to resume it while the screen is off.
@@ -1131,6 +1258,7 @@ class EnforcementCoordinator @Inject constructor(
         accessSessions.clear()
         floatingHold = FloatingHold.NONE
         awayPasses = 0
+        awayReleaseApplied = false
         overlayHost.dismiss(reason = "service stopped")
     }
 

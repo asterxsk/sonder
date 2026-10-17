@@ -158,7 +158,7 @@ class SonderAccessibilityService : AccessibilityService() {
             content = ActiveWindowContent(::showsMarkers),
             appCloser = AppCloser(::closePackage),
             mediaPauser = MediaPauser(::pauseMedia),
-            pipWindows = PipWindows(::pipWindowFor),
+            pipWindows = PipWindows(::pipWindowsAmong),
         )
         AccessibilityGate.onServiceConnected(this)
     }
@@ -675,9 +675,9 @@ class SonderAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * What [packageName] is doing in the window list — see [PipWindows], which is the contract
-     * this implements, including why an unreadable list answers [FloatingHold.Answer.Unknown]
-     * rather than "nothing there".
+     * What each of [packageNames] is doing in the window list — see [PipWindows], which is the
+     * contract this implements, including why an unreadable list answers
+     * [FloatingHold.Answer.Unknown] rather than "nothing there".
      *
      * Both dimensions are tested rather than the area: a PiP window is a small rectangle, and
      * a full-screen window with a big letterboxed video inside it is not one. The threshold is
@@ -687,60 +687,70 @@ class SonderAccessibilityService : AccessibilityService() {
      * The window's own package is read from its root, the same way [activePackage] reads it,
      * because the window-type check alone would answer about the *system's* PiP container
      * rather than about the app inside it. That read happens last, and only for windows the
-     * bounds test has already kept: see [readPipWindow].
+     * bounds test has already kept: see [readPipWindows].
+     *
+     * All of it happens in **one** hop, and that is the reason this takes a list. The window
+     * list is read once for the whole question, and each of the few small candidates resolves
+     * its root once for every package asked about — so the whole reachable set costs a single
+     * post-and-await rather than one per target per pass. Asking one at a time would put the
+     * coordinator's dispatcher behind an N-deep queue of [PROBE_TIMEOUT_MILLIS]-bounded waits,
+     * on the 500 ms pass, forever, whether or not anything is floating.
      */
-    private fun pipWindowFor(packageName: String): FloatingHold.Answer =
-        onServiceThread(fallback = FloatingHold.Answer.Unknown) { readPipWindow(packageName) }
+    private fun pipWindowsAmong(packageNames: List<String>): Map<String, FloatingHold.Answer> =
+        onServiceThread(fallback = packageNames.associateWith { FloatingHold.Answer.Unknown }) {
+            readPipWindows(packageNames)
+        }
 
-    private fun readPipWindow(packageName: String): FloatingHold.Answer = runCatching {
-        val listed = windows ?: return@runCatching FloatingHold.Answer.Unknown
-        val metrics = resources.displayMetrics
-        val maxWidth = metrics.widthPixels * PIP_MAX_SCREEN_FRACTION
-        val maxHeight = metrics.heightPixels * PIP_MAX_SCREEN_FRACTION
-        val candidates = listed.filter { window ->
-            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@filter false
-            window.getBoundsInScreen(pipBounds)
-            pipBounds.width() in 1..maxWidth.toInt() && pipBounds.height() in 1..maxHeight.toInt()
-        }
-        // The app's own window is read from its root, the same way [activePackage] reads it,
-        // and only for a window that has already measured as small. That ordering is the whole
-        // point: asking every window for its root is a binder round-trip per window, and doing
-        // it before the bounds test spends the probe's budget on windows that cannot be a float.
-        // The filter above touches no root at all; only these few do.
-        var blind = false
-        candidates.forEach { window ->
-            when (val rootPackage = window.root?.packageName?.toString()) {
-                packageName -> return@runCatching FloatingHold.Answer.Found(packageName)
-                // A small application window whose root will not resolve. It is *not* a "no":
-                // this app cannot be ruled out as its owner, and on this device the small
-                // window that answers like this is the picture-in-picture surface itself. Read
-                // as "no" it cleared the hold three passes running and the blocker came off the
-                // float it was covering — the flash this whole rule exists to prevent.
-                null -> blind = true
-                else -> Unit
+    private fun readPipWindows(packageNames: List<String>): Map<String, FloatingHold.Answer> =
+        runCatching<Map<String, FloatingHold.Answer>> {
+            // A question with nothing asked answers nothing, rather than reading the empty list
+            // as "the window list could not be read".
+            if (packageNames.isEmpty()) return@runCatching emptyMap()
+            val unknowns = packageNames.associateWith { FloatingHold.Answer.Unknown }
+            val listed = windows ?: return@runCatching unknowns
+            val metrics = resources.displayMetrics
+            val maxWidth = metrics.widthPixels * PIP_MAX_SCREEN_FRACTION
+            val maxHeight = metrics.heightPixels * PIP_MAX_SCREEN_FRACTION
+            val candidates = listed.filter { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@filter false
+                window.getBoundsInScreen(pipBounds)
+                pipBounds.width() in 1..maxWidth.toInt() && pipBounds.height() in 1..maxHeight.toInt()
             }
-        }
-        if (blind) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "PIP_PROBE_BLIND(pkg=$packageName candidates=${candidates.size})")
-            FloatingHold.Answer.Unknown
-        } else {
+            // The app's own window is read from its root, the same way [activePackage] reads it,
+            // and only for a window that has already measured as small. That ordering is the
+            // whole point: asking every window for its root is a binder round-trip per window,
+            // and doing it before the bounds test spends the probe's budget on windows that
+            // cannot be a float. The filter above touches no root at all; only these few do.
+            //
+            // The root is resolved **once per candidate** into a local, and that one read is
+            // what answers every package: the alternative is re-reading it per package, which
+            // is the per-target hop this signature exists to remove. What the reads then *mean*
+            // is [PipWindows.resolve], which is where the reasoning lives.
+            val roots: List<String?> = candidates.map { it.root?.packageName?.toString() }
+            val answers = PipWindows.resolve(packageNames, roots)
             if (BuildConfig.DEBUG) {
+                if (roots.any { it == null }) {
+                    Log.d(TAG, "PIP_PROBE_BLIND(pkgs=${packageNames.size} candidates=${candidates.size})")
+                }
                 // Bounded diagnostic: only when a small application window exists but none of
-                // them is this app. That is the one answer whose cause cannot be inferred.
+                // them is one of the packages asked about. That is the one answer whose cause
+                // cannot be inferred.
                 val appWindows = listed.count { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-                if (candidates.isNotEmpty()) {
-                    Log.d(TAG, "PIP_PROBE_NONE(pkg=$packageName apps=$appWindows small=${candidates.size} screen=${metrics.widthPixels}x${metrics.heightPixels} limit=${maxWidth.toInt()}x${maxHeight.toInt()})")
+                val foundAny = answers.values.any { it is FloatingHold.Answer.Found }
+                if (candidates.isNotEmpty() && !foundAny) {
+                    Log.d(TAG, "PIP_PROBE_NONE(pkgs=${packageNames.size} apps=$appWindows small=${candidates.size} screen=${metrics.widthPixels}x${metrics.heightPixels} limit=${maxWidth.toInt()}x${maxHeight.toInt()})")
                 }
             }
-            FloatingHold.Answer.None
+            answers
+        }.getOrElse { t ->
+            // A disconnected service or a detached node. `windows` reads empty rather than
+            // throwing when the service has gone, so this is the rarer case, and it is the one
+            // the answer must not guess about.
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "PIP_PROBE_FAILED(pkgs=${packageNames.size} ${t.javaClass.simpleName})")
+            }
+            packageNames.associateWith { FloatingHold.Answer.Unknown }
         }
-    }.getOrElse { t ->
-        // A disconnected service or a detached node. `windows` reads empty rather than throwing
-        // when the service has gone, so this is the rarer case, and it is the one the answer
-        // must not guess about.
-        if (BuildConfig.DEBUG) Log.d(TAG, "PIP_PROBE_FAILED(pkg=$packageName ${t.javaClass.simpleName})")
-        FloatingHold.Answer.Unknown
-    }
 
     override fun onInterrupt() = Unit
 
