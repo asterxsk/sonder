@@ -14,6 +14,15 @@ captures/
 # Device screenshots and layout dumps pulled off an emulator while testing a
 # screen. Answers about one run, not about the repo.
 /.probe/
+# Session working files: device screenshots, logcat captures, DB copies pulled
+# off the phone, and half-written finding notes. Same class as captures/, and
+# the reason this rule exists rather than a per-file one — one of these is a
+# Room database holding the user's target list and another is a full logcat, so
+# a stray `git add -A` publishes what the app promises stays on the device.
+# The rule is anchored at the root and at android-native/ because the .tmp-*
+# files have been created in both.
+/.tmp-*
+/android-native/.tmp-*
 
 # CWD-local tooling & caches (never commit)
 /tools/

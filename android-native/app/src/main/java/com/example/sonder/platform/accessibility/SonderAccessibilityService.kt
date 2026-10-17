@@ -19,6 +19,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
 import com.example.sonder.BuildConfig
+import com.example.sonder.domain.FloatingHold
 import com.example.sonder.domain.ForegroundSurface
 import com.example.sonder.platform.enforcement.EnforcementCoordinator
 import dagger.hilt.android.AndroidEntryPoint
@@ -74,6 +75,19 @@ class SonderAccessibilityService : AccessibilityService() {
 
     /** Reused across probes: allocating a Rect per window per pass is per-pass garbage. */
     private val pipBounds = Rect()
+
+    /**
+     * When a pause key was last dispatched, for [dispatchPauseIfFresh].
+     *
+     * **Not on the service's own thread**, which is worth saying because the probes around it
+     * are. [pauseMedia] is reached from the coordinator's decision path — `evaluate`'s gate
+     * branch and [coverFloating] — and that runs on the coordinator's own single-threaded
+     * dispatcher, never on this service's main looper; nothing routes it through
+     * [onServiceThread], which wraps the window reads only. It is left unsynchronised because
+     * that dispatcher is one thread, so every write arrives on the same thread as every other,
+     * and a plain field is enough. The coordinator is the only caller and the only reader.
+     */
+    private var lastMediaPauseAtMillis = 0L
 
     /** The thread the platform delivered this service's windows and nodes on. */
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -144,7 +158,7 @@ class SonderAccessibilityService : AccessibilityService() {
             content = ActiveWindowContent(::showsMarkers),
             appCloser = AppCloser(::closePackage),
             mediaPauser = MediaPauser(::pauseMedia),
-            pipWindows = PipWindows(::hasPipWindow),
+            pipWindows = PipWindows(::pipWindowFor),
         )
         AccessibilityGate.onServiceConnected(this)
     }
@@ -555,8 +569,19 @@ class SonderAccessibilityService : AccessibilityService() {
      * caught on its own.
      */
     private fun closePackage(packageName: String) {
-        // Home first: it is the half that always works, and ordering it first means the user
-        // is out of the app even if everything after it fails.
+        // No pause of its own, and this is the correction rather than an omission. The media key
+        // is a *toggle*, so one dispatch stops the player and a second starts it: what counts is
+        // the total across the episode, not any individual dispatch. The gate dispatched its own
+        // when the blocker went up, so a dispatch here would be the second — it starts the very
+        // player the gate had just stopped, and the Home action immediately behind it hands that
+        // playing app a picture-in-picture window. The nudge meant to prevent the float builds it.
+        //
+        // The gap is also not one a clock can cover, which is why a debounce is not the fix: the
+        // gate's key lands when the blocker goes up and this one would land whenever the user
+        // finishes reading the panel, so the interval is the user's. A window wide enough to span
+        // a considered tap would swallow the next, genuinely separate gate as well. See
+        // [pauseMedia] for why the raise is the only place the app's playing state is still
+        // knowable.
         performGlobalAction(GLOBAL_ACTION_HOME)
         runCatching { activityManager.killBackgroundProcesses(packageName) }
         if (BuildConfig.DEBUG) Log.d(TAG, "APP_CLOSED(pkg=$packageName)")
@@ -566,10 +591,33 @@ class SonderAccessibilityService : AccessibilityService() {
      * Stop what the app in front is playing — see [MediaPauser], which is the contract this
      * implements.
      *
-     * `KEYCODE_MEDIA_PAUSE` rather than `KEYCODE_MEDIA_PLAY_PAUSE`: the latter *toggles*, so
-     * dispatching it at an app that is already paused would start it — the exact opposite of
-     * what the blocker wants, and reachable whenever the user had paused the reel themselves
-     * before the gate went up. A dedicated pause is a no-op on an app that is not playing.
+     * **`KEYCODE_MEDIA_PLAY_PAUSE`, and the note that used to be here argued for the opposite
+     * one.** `KEYCODE_MEDIA_PAUSE` is a no-op in this app's scope: YouTube publishes its
+     * short-form surface through a media session whose playback state is `STOPPED` with no
+     * pause action, so a dedicated pause is a key nothing handles, and the clip behind the
+     * blocker kept advancing while the log said `MEDIA_PAUSED`. The toggle is what YouTube's
+     * player actually answers.
+     *
+     * The cost is the case the old comment was worried about: a user who had *already* paused
+     * the reel themselves watches it start again. The gate branch bounds it by asking
+     * [shortFormSurfacePresent] first, which is the right question there — but that question is
+     * "is a short-form surface on screen", not "is the player running", so it cannot see the
+     * user's own pause either, and the cover path cannot even ask it. What bounds the count at
+     * the cover is the caller sending the key once per float rather than once per pass.
+     *
+     * **It belongs to the raise, not to the way out.** [closePackage] deliberately dispatches
+     * nothing: the gate has already sent a key for this episode, so one more on the way out is
+     * the *even* dispatch, and Home immediately behind a resumed player is what produces the
+     * float this whole path exists to avoid. The two sides differ because the raise has the
+     * surface in front of it as evidence there is something to pause, while by the time the user
+     * taps CLOSE no probe available here can say whether the player is still stopped — so the
+     * way out sends nothing rather than guessing. See [closePackage].
+     *
+     * What it does have to survive is the raising being decided twice for one raise — the
+     * surface event and the re-check pass behind it — which [dispatchPauseIfFresh] is for. The
+     * repeat that window cannot be trusted with is the long one, a float re-covered pass after
+     * pass; that is the caller's to dedupe, and [EnforcementCoordinator.coverFloating] does it
+     * on the hold standing for that float.
      *
      * The key goes to whoever holds the media session, which is the app the user was watching:
      * our own overlay is deliberately not focusable, so it cannot be holding one. A failure
@@ -577,22 +625,59 @@ class SonderAccessibilityService : AccessibilityService() {
      * is a nuisance, not a hole in the gate.
      */
     private fun pauseMedia() {
+        // Observability on failure is worth more than the dispatch: if the duplicate arrives
+        // outside this window the log says so, rather than the gate silently resuming.
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "MEDIA_PAUSE_REQUESTED")
+        }
+        dispatchPauseIfFresh()
+    }
+
+    /**
+     * The debounce: the backstop against one raise being dispatched twice.
+     *
+     * A toggle is only safe at an odd count, and the raising of a blocker is decided more than
+     * once for what is one episode to the user — the surface event raises it, and the re-check
+     * pass behind it raises it again for the same app, the pair the device log shows 60 ms
+     * apart. The probe behind that branch does not deduplicate them: it is built to keep
+     * answering *yes* behind our own blocker (see `walkForMarker`'s `coveredByUs`, which exists
+     * so a gate already up can still recognise the surface it is over).
+     *
+     * It is a *backstop*, not the mechanism. The window is short because the pair it catches is
+     * a same-frame pair, and a longer one would start swallowing genuinely separate gates — and
+     * because a window can never express "once per episode" in the general case: the gap between
+     * a gate going up and the user tapping CLOSE is the user's, and a float stays found for as
+     * long as it is up. Both of those repeats are the callers' to deduplicate, and each does it
+     * on a fact rather than a clock. See [closePackage] and
+     * [EnforcementCoordinator.coverFloating].
+     */
+    private fun dispatchPauseIfFresh() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastMediaPauseAtMillis < MEDIA_PAUSE_DEBOUNCE_MILLIS) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "MEDIA_PAUSE_SUPPRESSED")
+            return
+        }
+        lastMediaPauseAtMillis = now
+        dispatchPauseKey()
+    }
+
+    private fun dispatchPauseKey() {
         runCatching {
-            val now = android.os.SystemClock.uptimeMillis()
+            val now = SystemClock.uptimeMillis()
             audioManager.dispatchMediaKeyEvent(
-                KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0),
+                KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0),
             )
             audioManager.dispatchMediaKeyEvent(
-                KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE, 0),
+                KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0),
             )
             if (BuildConfig.DEBUG) Log.d(TAG, "MEDIA_PAUSED")
         }.onFailure { Log.w(TAG, "media pause failed", it) }
     }
 
     /**
-     * Whether [packageName] owns a window much smaller than the screen — see [PipWindows],
-     * which is the contract this implements, including why the answer fails closed on an
-     * unmeasurable window.
+     * What [packageName] is doing in the window list — see [PipWindows], which is the contract
+     * this implements, including why an unreadable list answers [FloatingHold.Answer.Unknown]
+     * rather than "nothing there".
      *
      * Both dimensions are tested rather than the area: a PiP window is a small rectangle, and
      * a full-screen window with a big letterboxed video inside it is not one. The threshold is
@@ -601,23 +686,61 @@ class SonderAccessibilityService : AccessibilityService() {
      *
      * The window's own package is read from its root, the same way [activePackage] reads it,
      * because the window-type check alone would answer about the *system's* PiP container
-     * rather than about the app inside it.
+     * rather than about the app inside it. That read happens last, and only for windows the
+     * bounds test has already kept: see [readPipWindow].
      */
-    private fun hasPipWindow(packageName: String): Boolean =
-        onServiceThread(fallback = false) { readPipWindow(packageName) }
+    private fun pipWindowFor(packageName: String): FloatingHold.Answer =
+        onServiceThread(fallback = FloatingHold.Answer.Unknown) { readPipWindow(packageName) }
 
-    private fun readPipWindow(packageName: String): Boolean = runCatching {
-        val listed = windows ?: return@runCatching false
+    private fun readPipWindow(packageName: String): FloatingHold.Answer = runCatching {
+        val listed = windows ?: return@runCatching FloatingHold.Answer.Unknown
         val metrics = resources.displayMetrics
         val maxWidth = metrics.widthPixels * PIP_MAX_SCREEN_FRACTION
         val maxHeight = metrics.heightPixels * PIP_MAX_SCREEN_FRACTION
-        listed.any { window ->
-            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@any false
-            if (window.root?.packageName?.toString() != packageName) return@any false
+        val candidates = listed.filter { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@filter false
             window.getBoundsInScreen(pipBounds)
             pipBounds.width() in 1..maxWidth.toInt() && pipBounds.height() in 1..maxHeight.toInt()
         }
-    }.getOrDefault(false)
+        // The app's own window is read from its root, the same way [activePackage] reads it,
+        // and only for a window that has already measured as small. That ordering is the whole
+        // point: asking every window for its root is a binder round-trip per window, and doing
+        // it before the bounds test spends the probe's budget on windows that cannot be a float.
+        // The filter above touches no root at all; only these few do.
+        var blind = false
+        candidates.forEach { window ->
+            when (val rootPackage = window.root?.packageName?.toString()) {
+                packageName -> return@runCatching FloatingHold.Answer.Found(packageName)
+                // A small application window whose root will not resolve. It is *not* a "no":
+                // this app cannot be ruled out as its owner, and on this device the small
+                // window that answers like this is the picture-in-picture surface itself. Read
+                // as "no" it cleared the hold three passes running and the blocker came off the
+                // float it was covering — the flash this whole rule exists to prevent.
+                null -> blind = true
+                else -> Unit
+            }
+        }
+        if (blind) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "PIP_PROBE_BLIND(pkg=$packageName candidates=${candidates.size})")
+            FloatingHold.Answer.Unknown
+        } else {
+            if (BuildConfig.DEBUG) {
+                // Bounded diagnostic: only when a small application window exists but none of
+                // them is this app. That is the one answer whose cause cannot be inferred.
+                val appWindows = listed.count { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                if (candidates.isNotEmpty()) {
+                    Log.d(TAG, "PIP_PROBE_NONE(pkg=$packageName apps=$appWindows small=${candidates.size} screen=${metrics.widthPixels}x${metrics.heightPixels} limit=${maxWidth.toInt()}x${maxHeight.toInt()})")
+                }
+            }
+            FloatingHold.Answer.None
+        }
+    }.getOrElse { t ->
+        // A disconnected service or a detached node. `windows` reads empty rather than throwing
+        // when the service has gone, so this is the rarer case, and it is the one the answer
+        // must not guess about.
+        if (BuildConfig.DEBUG) Log.d(TAG, "PIP_PROBE_FAILED(pkg=$packageName ${t.javaClass.simpleName})")
+        FloatingHold.Answer.Unknown
+    }
 
     override fun onInterrupt() = Unit
 
@@ -693,6 +816,23 @@ class SonderAccessibilityService : AccessibilityService() {
          * than wedging the loop.
          */
         const val PROBE_TIMEOUT_MILLIS = 150L
+
+        /**
+         * How long after a pause key another one is suppressed.
+         *
+         * The decision path runs the gate for the same app twice in a frame — the surface event
+         * and the re-check pass behind it — and the media key is a *toggle*, so two dispatches
+         * are a pause and a resume. The pair has been measured at 60 ms on the device; a second
+         * covers it with room for a busy main thread.
+         *
+         * A backstop for that pair, and the limit of what a clock can express. It deliberately
+         * covers neither of the two long repeats, because both are open-ended and a window wide
+         * enough to span either would swallow the next real gate: the gap between a gate going
+         * up and the user tapping CLOSE is however long the user reads, and a float stays found
+         * for as long as it is on screen. Those two are deduplicated on facts instead — see
+         * [closePackage] and [EnforcementCoordinator.coverFloating].
+         */
+        const val MEDIA_PAUSE_DEBOUNCE_MILLIS = 2_000L
 
         /**
          * How much of the screen a window may cover and still count as picture-in-picture.

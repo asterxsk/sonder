@@ -11,9 +11,15 @@ package com.example.sonder.platform.accessibility
  *
  * Implemented by [SonderAccessibilityService] by dispatching a media key to the focused
  * window, which is the app's own window: the overlay is deliberately not focusable, so the
- * pause lands on the app the user was watching. A media session that is already paused
- * ignores it, and an app with no media session ignores it too — this is a nudge, not an
- * authority, and the gate does not depend on it having worked.
+ * pause lands on the app the user was watching.
+ *
+ * **The key is `KEYCODE_MEDIA_PLAY_PAUSE`, a toggle, so this does not mean "pause" — it means
+ * "flip".** A session that is already paused *starts* when this is called, which is the
+ * opposite of the name, and it is not a hypothetical: the gate dispatches this when the blocker
+ * goes up and the player behind it stays paused until something moves it. That is why the
+ * caller must dispatch it an odd number of times per episode and why no caller is entitled to
+ * call it "to be sure" — see [SonderAccessibilityService.dispatchPauseIfFresh] for the debounce
+ * that exists for exactly that reason. An app with no media session still ignores it.
  *
  * Nullable everywhere it is used, like every other capability here: with no connected service
  * there is nothing to dispatch with.

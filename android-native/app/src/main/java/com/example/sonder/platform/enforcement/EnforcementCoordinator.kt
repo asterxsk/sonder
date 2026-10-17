@@ -242,6 +242,43 @@ class EnforcementCoordinator @Inject constructor(
         closeJob = scope.launch {
             launch {
                 controller.closeRequested.collect { pkg ->
+                    // The user has asked to leave, so they have left: the session is parked and
+                    // billed before the app goes, exactly as it is when any other app takes the
+                    // screen. Without this the session stayed *active* — CLOSE APP is not a
+                    // window event, so nothing else would have parked it — and a float the app
+                    // leaves behind reads as a window the user is still inside and has paid for.
+                    // It went unreported, the hold aged out, and the blocker came off the video
+                    // it was covering until the absence grace expired and put it back: the
+                    // strobe, from the one dismissal that never touched the session. [pauseAccess]
+                    // is the same park-and-bill every other way out of a won app goes through.
+                    //
+                    // Caught rather than left to propagate, because this collector cannot be
+                    // allowed to take its sibling down with it: the body reaches a Room
+                    // transaction through [billForeground], this coroutine is a child of
+                    // [closeJob], and a child that fails cancels its parent — so one database
+                    // hiccup would also stop `unlocked` being collected, and a won hand could
+                    // never open a gated app again. Failing soft keeps the pair independent; the
+                    // dismissal and the close below are what the user asked for and run either
+                    // way.
+                    runCatching { pauseAccess(System.currentTimeMillis()) }
+                        .onFailure { Log.w(TAG, "could not park the session on CLOSE", it) }
+                    // No dispatch here, and the reason is the toggle's arithmetic rather than a
+                    // missing fact. The gate sent its key when the blocker went up, so a key here
+                    // would be the *second* for this episode — the one that starts the player
+                    // back up — and the Home action immediately behind it is what hands a playing
+                    // app a picture-in-picture window. The nudge meant to prevent the float
+                    // builds it.
+                    //
+                    // Nothing here can tell whether that first key actually landed, which is why
+                    // the decision is to send nothing rather than to send conditionally. The two
+                    // candidates both fail: a clock cannot span the interval, since it is however
+                    // long the user reads the panel, and the surface probe answers "is this app
+                    // showing a short-form surface", not "is the player running" — it is built to
+                    // keep answering yes when its own blocker is up (see `walkForMarker`'s
+                    // coveredByUs), so it would say yes whatever the player is doing. Acting on
+                    // either would dispatch on a guess, and the wrong guess is the resumed player.
+                    // A missed pause costs a clip that plays to the instant Home lands, which the
+                    // cover and the hold behind it already treat as survivable.
                     // Blocker first, in case the app ignores Home: the user must not be left
                     // staring at a wall over an app they asked to leave.
                     overlayHost.dismiss(reason = "closed by user: $pkg")
@@ -323,7 +360,7 @@ class EnforcementCoordinator @Inject constructor(
         // which is not a window-state event for its activity and so is named by nothing else
         // in this class.
         if (screenIsInUse() && isCurrent(mine)) {
-            val floating = pipTargetToCover(now)
+            val probe = probeFloat()
             // Asked again, and not because the answer might have changed in one assignment:
             // that probe parks this pass in `onServiceThread`'s latch, waiting on the very
             // thread the screen-off broadcast and service teardown are delivered on, so a
@@ -334,10 +371,22 @@ class EnforcementCoordinator @Inject constructor(
             if (!isCurrent(mine) || !screenIsInUse()) return
             // One pass is not evidence about a float — see [FloatingHold] — so the answer is
             // aged through the rule rather than acted on directly. A float found now is
-            // covered whatever the rule says, because covering is the safe direction.
-            floatingHold = FloatingHold.afterPass(floatingHold, foundNow = floating)
-            if (floating != null) {
-                coverFloating(floating, mine)
+            // covered whatever the rule says, because covering is the safe direction, and a
+            // pass that could not read the list is aged as [FloatingHold.Answer.Unknown] so it
+            // holds what it has instead of being read as "the float is gone".
+            val answer = probe.pkg?.let { FloatingHold.Answer.Found(it) }
+                ?: if (probe.read) FloatingHold.Answer.None else FloatingHold.Answer.Unknown
+            // Read before the ageing overwrites it, because it is what tells [coverFloating]
+            // whether this float is the one the blocker is already over. The hold is the
+            // episode: it stands for as long as the float does and is cleared outright by the
+            // things that end one. See [coverFloating] for why the overlay window is not.
+            val alreadyHeld = floatingHold.coveredFor == probe.pkg
+            floatingHold = FloatingHold.afterPass(floatingHold, answer)
+            if (!probe.read && probe.pkg == null) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "float probe unreadable; holding the blocker")
+            }
+            if (probe.pkg != null) {
+                coverFloating(probe.pkg, mine, alreadyHeld = alreadyHeld)
                 return
             }
             // A miss is not a release. This pass is the only one that runs every
@@ -346,7 +395,7 @@ class EnforcementCoordinator @Inject constructor(
             // very blocker the hold was put up to keep — which is the strobe, arriving by
             // the one path that never consulted the hold. The pass falls through again on
             // its own once [FloatingHold] has run out of confirming passes.
-            if (!FloatingHold.releaseAllowed(pkg = null, floating = floating, hold = floatingHold)) {
+            if (!FloatingHold.releaseAllowed(pkg = null, floating = probe.pkg, hold = floatingHold)) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "release refused: a gated app is still floating")
                 return
             }
@@ -584,26 +633,111 @@ class EnforcementCoordinator @Inject constructor(
     }
 
     /**
-     * The enabled target currently playing on in a picture-in-picture window with nothing
-     * left in its bank, or null.
+     * The enabled target playing on in a picture-in-picture window that has paid for nothing,
+     * or null.
      *
-     * An app with time in the bank is left alone: a float is then something the user paid
-     * for, and it is exactly what the gate promised them. An app with an empty bank has paid
-     * nothing, and a small window is the one place it can keep running without one.
+     * Whether the user has won time decides whether a float is *reported*, not whether it is
+     * looked for — see the body, where the two were once the same check and the app that was
+     * actually floating was the one app never probed. A float belonging to an app with time in
+     * the bank is something the user paid for, and is exactly what the gate promised them.
      */
-    private fun pipTargetToCover(nowMillis: Long): String? {
-        if (!repository.isCacheReady()) return null
-        val probe = pipWindows ?: return null
-        // A float is covered whenever its app is one the user has not won their way into.
-        // That was `bank <= 0` before the gate became a per-visit thing, and the two were the
-        // same question then: an app with time in the bank was an app the user was in. They
-        // are not the same now — time in the bank buys nothing until a hand is won — so the
-        // question asked is the one the gate asks, or a target with a bank could play on in a
-        // floating window over everything else.
-        return repository.enabledPackages().firstOrNull { pkg ->
-            !accessSessions.isAvailableFor(pkg, nowMillis) && probe.hasPipWindow(pkg)
+    private fun probeFloat(): FloatProbe {
+        if (!repository.isCacheReady()) return FloatProbe(pkg = null, read = false)
+        val probe = pipWindows ?: return FloatProbe(pkg = null, read = false)
+        // Asked once, and an empty answer is *readable*. The two early returns above are
+        // "could not look" — no cache, no service — and answer Unknown so a hold survives them.
+        // A target list with nothing in it is a different thing entirely: the walk ran and
+        // there was nothing to walk, so the pass is settled and its answer is None. Left to fall
+        // through, the loop below would never execute, `read` would stay at its initial false,
+        // and the pass would be reported as an unreadable list — which freezes the miss counter
+        // forever. The user can reach that: a float raises the blocker, then the target it
+        // belongs to is soft-removed or disabled, and the blocker would have had no way down.
+        val targets = repository.enabledPackages()
+        if (targets.isEmpty()) return FloatProbe(pkg = null, read = true)
+        // Every enabled target is probed, and the access session no longer decides *whether* to
+        // ask. It used to: a target with an available session was skipped outright, so the app
+        // that was actually floating — the one the user had just been gated by, which is the one
+        // most likely to still hold a session — was the one app never measured. The others
+        // answered "no small window of mine", those answers read as the list being legible, and
+        // the hold aged out on the silence of every app except the one it was holding.
+        //
+        // The session still decides what the answer *means*, which is the part it was ever
+        // entitled to: a float belonging to an app the user has won time in is the window they
+        // paid for, and covering it would be the gate reneging on the hand it just paid out. So
+        // a paid float is deliberately not reported — and, because nothing readable was found,
+        // the pass ages the hold out and the blocker comes off, exactly as before.
+        var read = false
+        var blind = false
+        var found: String? = null
+        targets.forEach { pkg ->
+            when (val answer = probe.pipWindowFor(pkg)) {
+                is FloatingHold.Answer.Found -> {
+                    read = true
+                    if (found == null && !userIsInside(pkg)) {
+                        found = answer.packageName
+                    }
+                }
+                FloatingHold.Answer.None -> read = true
+                // The window list could not be read for this app. It is not evidence that
+                // anything is absent, so the caller must not act as if the float is gone.
+                FloatingHold.Answer.Unknown -> blind = true
+            }
         }
+        return FloatProbe(pkg = found, read = read && !blind)
     }
+
+    /**
+     * Whether the user is *inside* [pkg] right now — actually in it, not merely entitled to it.
+     *
+     * This deliberately does not use [AccessSessionStore.isAvailableFor], which is the predicate
+     * the gate uses to decide who may still be billed and includes [AccessSession]'s absence
+     * grace. That grace is the whole point of the distinction here: it keeps a session alive for
+     * a minute after the user leaves, which is right for billing — walking out for a moment must
+     * not forfeit a won hand — and wrong for this question. CLOSE APP leaves the app, which marks
+     * the session away, and the app's video keeps playing in the float it left behind; read
+     * through the grace, that float is a window the user *paid for*, so it went unreported, the
+     * hold aged out on the silence, and the blocker came off the very video it was covering —
+     * then went straight back up when the grace expired, which is the flash.
+     *
+     * A session with no absence is one the user has not left, so this is the same notion of
+     * "in the app" that [AccessEntry.ACTIVE] carries out of [AccessSessionStore.enter] — and
+     * the `== true` is load-bearing rather than style. A package with **no session at all** is
+     * the ordinary state of a target the user has not won time in: the bank was spent, or a
+     * hand was never won, and [AccessSessionStore.grant] is the only thing that ever creates
+     * one. Writing this as `sessions[pkg]?.awaySinceMillis == null` reads that missing session
+     * as "not away" and so as "the user is inside" — which is the exact inversion of the
+     * intent, and it lands on the one app that matters: a gated app that paid nothing leaves a
+     * float behind, and that is precisely the float this rule exists to report. [AccessEntry]
+     * agrees — `enter` on a package with no session answers [AccessEntry.DENIED], never ACTIVE.
+     */
+    private fun userIsInside(pkg: String): Boolean {
+        val session = accessSessions.sessions.value[pkg] ?: return false
+        return session.awaySinceMillis == null && session.remainingMillis > 0L
+    }
+
+    /**
+     * The target whose float the blocker should be over, or null when no target has one.
+     *
+     * Null is the *only* answer this can give when a pass could not read the window list — the
+     * [FloatProbe.read] bit that distinguishes that case is dropped here, because the callers
+     * of this form take a package and nothing else. Every one of them then asks
+     * [FloatingHold.releaseAllowed], which refuses on a standing hold, so a blind pass cannot
+     * release through this path: it arrives as "nothing found" against a hold that is still
+     * up. See [FloatProbe] for the form that does carry the distinction.
+     */
+    private fun pipTargetToCover(): String? = probeFloat().pkg
+
+    /**
+     * One float probe against every target: the target to cover, and whether the pass settled.
+     *
+     * [read] is false when any enabled target answered [FloatingHold.Answer.Unknown] — the class
+     * of pass that arrives exactly while a Short is playing, because the service thread the
+     * probe parks on is the one the playing app saturates. Reading such a pass as "no float" is
+     * the strobe the hold exists to stop, so it is reported as unreadable and the hold is left
+     * standing. A target that *was* probed and had no small window does not rescue the pass: the
+     * app that had to guess is the app that could be the float.
+     */
+    private data class FloatProbe(val pkg: String?, val read: Boolean)
 
     /**
      * The float the blocker was raised over and the run of passes since one found it. Aged
@@ -631,10 +765,38 @@ class EnforcementCoordinator @Inject constructor(
      * lands in between would otherwise post its dismissal first and be overtaken by the
      * window this call creates — a blocker left composed over the keyguard, with nothing on
      * screen classified as release-worthy to take it down.
+     *
+     * [alreadyHeld] is the caller's answer to "was the hold already over this float", read before
+     * this pass aged the hold, and together with the blocker window it decides the pause. Two
+     * facts rather than one, because each covers the case the other cannot:
+     *
+     *  - the *window* is what notices a raise that has not become a float yet. The gate branch
+     *    dispatches its own key when the blocker goes up, and a hold is not started until a pass
+     *    finds the float — so on the pass that first finds one, the hold is still empty and the
+     *    only record of that earlier key is the blocker standing over the package. Conditioned on
+     *    the hold alone, this would send the *even* dispatch and start the player back up;
+     *  - the *hold* is what survives the window being destroyed under a live float. A
+     *    configuration change tears the overlay off, and [GateOverlayHost] drops its record when
+     *    that happens, while the float it was over keeps playing in its own window. Conditioned
+     *    on the window alone — which is what this was — that pass read "no blocker is up for this
+     *    app", sent the key again, and resumed the float behind its own blocker.
+     *
+     * The hold does not have the first failure and the window does not have the second, so the
+     * pause is sent only when neither says a key has already gone out for this episode. A second
+     * float over the same package still gets its own dispatch: both facts are cleared by the
+     * things that end an episode — screen-off, service stop, a fresh connection, a satisfied
+     * grant, a rebuild of the blocker.
      */
-    private fun coverFloating(pkg: String, mine: Int) {
+    private fun coverFloating(pkg: String, mine: Int, alreadyHeld: Boolean) {
         if (!isCurrent(mine) || !screenIsInUse()) return
-        mediaPauser?.pauseMedia()
+        // The pause is sent once per float, not once per pass. This is called for as long as the
+        // float is found — a PiP window persists, so that is every [WATCH_INTERVAL_MILLIS] —
+        // and the media key is a *toggle*, not the dedicated pause it used to be. Sent every
+        // pass it would be a pause, a resume, a pause: the debounce only slows the alternation
+        // to one move per [MEDIA_PAUSE_DEBOUNCE_MILLIS], so a covered float would have its audio
+        // flipping on and off for as long as it stayed covered, which is worse than either
+        // extreme.
+        if (!alreadyHeld && overlayHost.shownForPackage != pkg) mediaPauser?.pauseMedia()
         val label = repository.enabledTarget(pkg)?.label?.takeIf { it.isNotBlank() }
             ?: pkg.substringAfterLast('.').uppercase()
         overlayHost.showGate(pkg, label)
@@ -797,7 +959,7 @@ class EnforcementCoordinator @Inject constructor(
                     // release is refused here for the same reason the pass refuses it.
                     if (!FloatingHold.releaseAllowed(
                             pkg = null,
-                            floating = pipTargetToCover(System.currentTimeMillis()),
+                            floating = pipTargetToCover(),
                             hold = floatingHold,
                         )
                     ) {
@@ -860,7 +1022,7 @@ class EnforcementCoordinator @Inject constructor(
                     }
                 } else if (!FloatingHold.releaseAllowed(
                         pkg = null,
-                        floating = pipTargetToCover(now),
+                        floating = pipTargetToCover(),
                         hold = floatingHold,
                     )
                 ) {
@@ -882,7 +1044,7 @@ class EnforcementCoordinator @Inject constructor(
                 // and the next pass would put it back — the strobe again, from the one
                 // dismissal that never asked about a float. [pkg]'s own float is the case
                 // where releasing is the whole point, and the hold goes down with it.
-                val floating = pipTargetToCover(now)
+                val floating = pipTargetToCover()
                 val hold = floatingHold
                 if (!FloatingHold.releaseAllowed(pkg = pkg, floating = floating, hold = hold)) {
                     if (BuildConfig.DEBUG) {

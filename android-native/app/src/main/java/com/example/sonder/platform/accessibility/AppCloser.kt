@@ -24,10 +24,22 @@ fun interface AppCloser {
      * UI text must not overpromise.** `GLOBAL_ACTION_HOME` is what actually closes the
      * experience — the app leaves the screen and the blocker with it. The process kill is a
      * best-effort nudge: `killBackgroundProcesses` cannot touch an app that is in the
-     * foreground on any modern Android release, and by the time this is called the app has
-     * only just been sent to the background, so on most devices it is a no-op. It is kept
-     * because it does help in the case it can — an app the user has already left, still
-     * holding a warm process and a paused activity — and it costs nothing when it does not.
+     * foreground on any modern Android release, and it cannot touch one holding a
+     * picture-in-picture window either, because a pinned task is visible and therefore carries
+     * visible importance. So on the devices where a float exists the kill does nothing at all,
+     * and the Home action is not merely incomplete there — it is what *creates* the float, by
+     * giving a playing app the task switch that hands it the right to enter PiP.
+     *
+     * The conclusion that follows is about the *player's state*, not about the order of
+     * operations inside this method, and it is worth stating precisely because the obvious fix
+     * is the wrong one. What must be true before Home is sent is that the app is not playing —
+     * that is what stops Android handing it a picture-in-picture window on the way out. What
+     * must *not* be assumed is that this method can establish it. The pause available here is a
+     * toggle, so "pause before leaving" is only safe when the player is known to be running,
+     * and by the time the user taps CLOSE the gate has usually stopped it already; a second
+     * toggle then starts it, and the app reaches Home playing — the float this class exists to
+     * prevent. The gate therefore pauses once, on the way *in*, where it knows the player was
+     * playing because it just saw the surface. This method leaves.
      *
      * The user's next launch of the app starts where the app is, not where the blocker left
      * it: no granted time is created or extended by closing, and the target is still gated
