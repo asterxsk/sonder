@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -39,7 +40,10 @@ import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
+import com.example.sonder.ui.kit.CardPadding
 import com.example.sonder.ui.kit.PixelButton
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelCardVariant
 import com.example.sonder.ui.kit.PixelButtonStyle
 import kotlinx.coroutines.delay
 
@@ -117,22 +121,23 @@ fun OnboardingScreen(
         )
         Spacer(Modifier.height(PixelSpace.Section))
 
-        // Progress rail: one block per step, filled up to where the user is. It is
-        // positional rather than per-permission: the label under it says "STEP 2 OF 4",
-        // and a rail that lit a later block green because that permission happened to be
-        // granted already would contradict the number right beneath it. So the current
-        // step is green, everything past it is the unfilled tone, and the rail only
-        // reaches its end when the last step is done.
+        // One progress statement, not two. There used to be a segmented rail *and* a
+        // "STEP 1 OF 4" label under it, saying the same thing in two visual languages and
+        // disagreeing about the details — the rail was per-permission, the label was
+        // positional, so a permission granted out of order lit a block the number denied.
+        // The step count is the honest one, and the pips beside it are that count drawn:
+        // four marks, one per step, the current one filled.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(PixelSpace.Tight),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             SonderPermission.entries.forEachIndexed { index, _ ->
                 val reached = allGranted || index <= currentStep
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(ProgressRailHeight)
+                        .padding(horizontal = PixelSpace.Tight / 2)
+                        .size(ProgressPipSize)
                         .background(if (reached) PixelPalette.Success else PixelPalette.Panel)
                         .border(
                             PixelSpace.Stroke,
@@ -151,9 +156,8 @@ fun OnboardingScreen(
                 missing.isEmpty() -> "ALL PERMISSIONS GRANTED ✓"
                 else -> "SETUP COMPLETE — ${skipped.size} OPTIONAL OFF"
             },
-            style = PixelTypeScale.Badge,
-            fontFamily = PixelFont,
-            color = if (allGranted) PixelPalette.Success else PixelPalette.Muted,
+            style = MonoTypeScale.Metadata,
+            color = if (allGranted) PixelPalette.Success else TextSoft,
         )
         Spacer(Modifier.height(PixelSpace.Section))
 
@@ -184,8 +188,8 @@ fun OnboardingScreen(
     }
 }
 
-/** One block of the progress rail; taller than a stroke so the fill reads as a segment. */
-private val ProgressRailHeight = 8.dp
+/** One progress pip: a square, because the world has no circles. */
+private val ProgressPipSize = 10.dp
 
 @Composable
 private fun StepCard(
@@ -199,12 +203,14 @@ private fun StepCard(
     onSkip: (() -> Unit)? = null,
 ) {
     val copy = copyFor(permission)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(PixelPalette.Surface)
-            .border(PixelSpace.Stroke, PixelPalette.Primary)
-            .padding(PixelSpace.Room),
+    // The step you are on is the loudest card in the wizard, which is the one place an
+    // accent frame is doing structural work: it says *this* step, where the ghosts below
+    // are the steps that are not happening yet.
+    PixelCard(
+        modifier = modifier,
+        variant = PixelCardVariant.SOLID,
+        padding = CardPadding.MD,
+        intent = PixelPalette.Primary,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -263,45 +269,47 @@ private fun StepCard(
 @Composable
 private fun GhostStep(permission: SonderPermission) {
     val copy = copyFor(permission)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PixelPalette.Surface)
-            .border(PixelSpace.Stroke, PixelPalette.BorderDark)
-            .padding(horizontal = PixelSpace.Base, vertical = PixelSpace.Snug),
-        verticalAlignment = Alignment.CenterVertically,
+    // A subtle card, not a solid one: these are the steps that are not happening yet, and
+    // giving them the same surface and shadow as the live step flattens the difference the
+    // wizard is trying to draw.
+    PixelCard(
+        variant = PixelCardVariant.SUBTLE,
+        padding = CardPadding.SM,
     ) {
-        androidx.compose.material3.Text(
-            "□",
-            color = PixelPalette.Muted,
-            modifier = Modifier.padding(end = PixelSpace.Base),
-        )
-        Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             androidx.compose.material3.Text(
-                copy.title,
-                style = PixelTypeScale.Badge,
-                fontFamily = PixelFont,
+                "□",
                 color = PixelPalette.Muted,
+                modifier = Modifier.padding(end = PixelSpace.Base),
             )
-            androidx.compose.material3.Text(
-                copy.reassure,
-                style = MonoTypeScale.Metadata,
-                color = PixelPalette.Muted,
-            )
+            Column {
+                androidx.compose.material3.Text(
+                    copy.title,
+                    style = PixelTypeScale.Badge,
+                    fontFamily = PixelFont,
+                    color = PixelPalette.Muted,
+                )
+                androidx.compose.material3.Text(
+                    copy.reassure,
+                    style = MonoTypeScale.Metadata,
+                    color = PixelPalette.Muted,
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun CompletionCard(onBegin: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PixelPalette.Surface)
-            .border(PixelSpace.Stroke, PixelPalette.Success)
-            .padding(PixelSpace.Section),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    PixelCard(
+        variant = PixelCardVariant.SOLID,
+        padding = CardPadding.LG,
+        intent = PixelPalette.Success,
     ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         androidx.compose.material3.Text(
             "✓",
             style = PixelTypeScale.Timer,
@@ -328,6 +336,7 @@ private fun CompletionCard(onBegin: () -> Unit) {
             style = PixelButtonStyle.SUCCESS,
             modifier = Modifier.fillMaxWidth(),
         )
+        }
     }
 }
 

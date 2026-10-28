@@ -135,6 +135,27 @@ object MonoTypeScale {
     )
 
     /**
+     * A counted value — wins, losses, a tally — at display size.
+     *
+     * The platform's default face, and the choice is forced by what the two brand faces do
+     * to a zero. Press Start 2P draws its nought as a hollow rectangle: at display size that
+     * is a ring, which reads as an icon or a spinner rather than as the number nought, and a
+     * ledger's most common value is zero. DM Mono draws a *slashed* zero, which is even worse
+     * here — a circle with a stroke through it is the universal "not allowed", printed in red
+     * on the losses tile. Neither is a number a reader can scan.
+     *
+     * The system face draws 0 and O unambiguously and every digit at its own width, which is
+     * what a count needs and what neither decorative face supplies. This is the one place the
+     * app deliberately leaves its own type.
+     */
+    val Count = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 34.sp,
+        lineHeight = 38.sp,
+    )
+
+    /**
      * The dock's tab label. Mono rather than the pixel face for two reasons: the label is
      * sentence case, which the pixel face has no lowercase cut for, and §4's floor keeps
      * the pixel face at 10sp and above — a smaller pixel label would break that rule

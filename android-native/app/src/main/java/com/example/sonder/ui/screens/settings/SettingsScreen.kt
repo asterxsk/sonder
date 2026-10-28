@@ -37,9 +37,13 @@ import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.BadgeTone
+import com.example.sonder.ui.kit.ButtonSize
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelGroupLabel
+import com.example.sonder.ui.kit.PixelSectionHeader
 import com.example.sonder.ui.kit.PixelStatusBadge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -91,22 +95,15 @@ fun SettingsScreen(
         // heading while every other screen starts flush left, which is the kind of
         // one-screen difference that reads as a mistake rather than as a choice.
     ) {
-        androidx.compose.material3.Text(
-            "SETTINGS",
-            style = PixelTypeScale.ScreenTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Primary,
+        PixelSectionHeader(
+            title = "SETTINGS",
+            subtitle = "What Sonder is allowed to see, and what it does with it",
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
-        PixelPanel(modifier = Modifier.fillMaxWidth()) {
+        PixelCard(modifier = Modifier.fillMaxWidth()) {
             Column {
-                androidx.compose.material3.Text(
-                    "PERMISSIONS",
-                    style = PixelTypeScale.SectionTitle,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Text,
-                )
+                PixelGroupLabel(text = "PERMISSIONS")
                 Spacer(Modifier.height(PixelSpace.Base))
                 SonderPermission.entries.forEach { p ->
                     val granted = p !in missing
@@ -134,6 +131,7 @@ fun SettingsScreen(
                             granted -> PixelStatusBadge(BadgeTone.GRANTED, labelOverride = "OK")
                             declinedOptional -> PixelButton(
                                 text = "TURN ON",
+                                size = ButtonSize.SM,
                                 onClick = {
                                     // Wanting it back has to clear the "no" as well as open
                                     // Settings, or the on-open reminder would keep ignoring a
@@ -144,14 +142,17 @@ fun SettingsScreen(
                                 modifier = Modifier.semantics {
                                     contentDescription = "TURN ON ${p.label}"
                                 },
-                                minHeight = PixelSpace.Target,
-                            )
+                                )
                             else -> PixelButton(
                                 text = "FIX",
                                 onClick = { PermissionHandoff.request(context, p) },
+                                // The danger style matches the red the row's label is already
+                                // carrying: one state, one colour. Amber here was the app's
+                                // normal-action tone, so the row contradicted itself.
+                                style = PixelButtonStyle.DANGER,
                                 // "FIX" alone reads the same four times in TalkBack; name the row.
                                 modifier = Modifier.semantics { contentDescription = "FIX ${p.label}" },
-                                minHeight = PixelSpace.Target,
+                                size = ButtonSize.SM,
                             )
                         }
                     }
