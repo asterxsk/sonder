@@ -45,6 +45,7 @@ import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelSearchField
+import com.example.sonder.ui.kit.PixelSectionHeader
 import com.example.sonder.ui.kit.PixelSkeletonList
 import com.example.sonder.ui.kit.SteppedCornerInset
 import com.example.sonder.ui.kit.pixelSteppedCorners
@@ -90,11 +91,9 @@ fun TargetPickerScreen(
             .padding(horizontal = PixelSpace.Room),
     ) {
         Spacer(Modifier.height(PixelSpace.Room))
-        androidx.compose.material3.Text(
-            "ADD APPS",
-            style = PixelTypeScale.ScreenTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Primary,
+        PixelSectionHeader(
+            title = "ADD APPS",
+            subtitle = "Pick what to gate — DONE saves the ticked apps",
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
@@ -118,6 +117,7 @@ fun TargetPickerScreen(
                 TargetPickerViewState.LoadFailed -> FramedNote(
                     title = "APPS UNAVAILABLE",
                     body = "The system did not return the app list. This is not an empty device.",
+                    tone = PixelPalette.Danger,
                 ) {
                     PixelButton(
                         text = "TRY AGAIN",

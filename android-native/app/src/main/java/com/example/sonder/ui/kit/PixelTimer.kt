@@ -61,38 +61,45 @@ fun PixelTimer(
     }
 }
 
-/** The four canonical badges of design_v3 §14: ✓ GRANTED / ▣ LOCKED / ♠ PLAYING / ⌛ COOLDOWN. */
-enum class BadgeTone(val glyph: String, val label: String, val color: Color) {
-    GRANTED("✓", "GRANTED", PixelPalette.Success),
-    LOCKED("▣", "LOCKED", PixelPalette.Danger),
-    PLAYING("♠", "PLAYING", PixelPalette.Info),
-    COOLDOWN("⌛", "COOLDOWN", PixelPalette.Primary),
+/**
+ * The four canonical badges of design_v3 §14: ✓ GRANTED / ▣ LOCKED / ♠ PLAYING / ⌛ COOLDOWN.
+ * Each one names its [PixelChipTone] so the badge and the chip cannot drift apart — a
+ * GRANTED badge is the success tone wherever it is drawn.
+ */
+enum class BadgeTone(
+    val glyph: String,
+    val label: String,
+    internal val chip: PixelChipTone,
+) {
+    GRANTED("✓", "GRANTED", PixelChipTone.SUCCESS),
+    LOCKED("▣", "LOCKED", PixelChipTone.DANGER),
+    PLAYING("♠", "PLAYING", PixelChipTone.INFO),
+    COOLDOWN("⌛", "COOLDOWN", PixelChipTone.PRIMARY),
 }
 
+/** The badge's colour, kept as a property so callers that tint something else can match it. */
+val BadgeTone.color: Color get() = chip.color
+
+/**
+ * The status badge, now drawn through [PixelChip] so the app has one status token rather
+ * than two: the chip's frame, its badge type and its two-tone logic, with the badge's own
+ * glyph and word supplied here.
+ *
+ * [labelOverride] exists for the callers whose state is not one of the four canonical ones
+ * — a row that says SAVED rather than GRANTED — and keeps the glyph, because the glyph is
+ * what makes a scan of the list possible.
+ */
 @Composable
 fun PixelStatusBadge(
     tone: BadgeTone,
     modifier: Modifier = Modifier,
     labelOverride: String? = null,
 ) {
-    androidx.compose.material3.Surface(
-        color = PixelPalette.Surface,
-        contentColor = tone.color,
+    PixelChip(
+        label = labelOverride ?: tone.label,
+        glyph = tone.glyph,
+        tone = tone.chip,
+        variant = PixelChipVariant.OUTLINE,
         modifier = modifier,
-    ) {
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier
-                .background(PixelPalette.Surface)
-                .border(PixelSpace.Stroke, tone.color)
-                .padding(horizontal = PixelSpace.Snug, vertical = PixelSpace.Tight),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            androidx.compose.material3.Text(
-                text = "${tone.glyph} ${labelOverride ?: tone.label}",
-                style = PixelTypeScale.Badge,
-                fontFamily = PixelFont,
-                color = tone.color,
-            )
-        }
-    }
+    )
 }
