@@ -4,6 +4,13 @@
     {
       "name": "bug-video",
       "url": "file:///C:/Users/Admin/Downloads/Bug.mp4"
+    },
+    {
+      "name": "sonder-device",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/android-preview/server.mjs"],
+      "port": 8787,
+      "url": "http://localhost:8787"
     }
   ]
 }

@@ -20,7 +20,7 @@ import kotlin.math.ceil
  * stay identical on every surface.
  *
  * The shadow sits under the element, so a caller that wants the frame to occupy the
- * shadow's footprint adds [shadowOffset] as end/bottom spacing — [PixelPanel] does.
+ * shadow's footprint adds [shadowOffset] as end/bottom spacing — [PixelCard] does.
  */
 fun Modifier.pixelShadow(
     offset: Dp = PixelSpace.Tight,

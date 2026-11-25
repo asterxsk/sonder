@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.ZoneId
 import java.util.Locale
@@ -51,7 +52,10 @@ import com.example.sonder.ui.kit.ChipState
 import com.example.sonder.ui.kit.ChipTier
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelCardTitle
+import com.example.sonder.ui.kit.PixelCardVariant
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTimer
 import com.example.sonder.ui.kit.TimerTone
@@ -167,15 +171,25 @@ private fun LockedBlocker(label: String) {
 
     Spacer(Modifier.height(16.dp))
 
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    // The refusal card carries the danger frame, because it is the one card on the gate
+    // whose whole content is a refusal — the countdown beneath it is the answer to it.
+    PixelCard(
+        variant = PixelCardVariant.SOLID,
+        padding = CardPadding.MD,
+        intent = PixelPalette.Danger,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(
                 text = label.uppercase(),
                 style = PixelTypeScale.ScreenTitle,
                 fontFamily = PixelFont,
                 color = PixelPalette.Text,
+                textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PixelSpace.Tight))
             Text(
                 text = "OUT OF TIME — LOCKED FOR TODAY",
                 style = MonoTypeScale.Metadata,
@@ -242,42 +256,42 @@ private fun BlackjackBlocker(
     onPlayAgain: () -> Unit,
     onClose: () -> Unit,
 ) {
-    // §14 status badge row. GRANTED is the badge of a hand that was won, and it is keyed to
-    // the win rather than to the bank the hand left: a push leaves time in the bank without
-    // granting anything, so a balance-keyed badge would read GRANTED over the one outcome
-    // that must not open a door. The wall is drawn instead of this whole composable when the
-    // bank is gone, so there is no third case here.
-    if (state.justWon) {
-        PixelStatusBadge(BadgeTone.GRANTED)
-    } else {
-        PixelStatusBadge(BadgeTone.PLAYING)
-    }
-
-    Spacer(Modifier.height(16.dp))
-
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
+    // The status lives in the card's header, not above it. It used to be a badge floating on
+    // its own line above the app's name card, which put three separate framed bands — badge,
+    // name, table — across the top third of the screen before a single card had been dealt.
+    // Inside the header it reads as what it is: the state of this app, on the card that names
+    // the app. GRANTED is still keyed to the win rather than to the bank the hand left: a push
+    // leaves time in the bank without granting anything, so a balance-keyed badge would read
+    // GRANTED over the one outcome that must not open a door.
+    PixelCard(variant = PixelCardVariant.SOLID, padding = CardPadding.MD) {
+        PixelCard.Header {
+            PixelCardTitle(
                 text = label.uppercase(),
-                style = PixelTypeScale.ScreenTitle,
-                fontFamily = PixelFont,
                 color = PixelPalette.Text,
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}",
-                style = MonoTypeScale.Metadata,
-                color = PixelPalette.Muted,
-            )
+            if (state.justWon) {
+                PixelStatusBadge(BadgeTone.GRANTED)
+            } else {
+                PixelStatusBadge(BadgeTone.PLAYING)
+            }
         }
+        Text(
+            text = "BANK ${formatRemaining(state.bankMillis)} OF ${formatRemaining(state.maxMillis)}",
+            style = MonoTypeScale.Metadata,
+            color = PixelPalette.Muted,
+            modifier = Modifier.padding(top = PixelSpace.Tight),
+        )
     }
 
     Spacer(Modifier.height(16.dp))
 
-    // §9 blackjack table
-    PixelPanel(
-        modifier = Modifier.fillMaxWidth(),
-        fillColor = PixelPalette.Panel,
+    // §9 blackjack table. A subtle card: the table sits *inside* the gate's own surface,
+    // which is what its raised-panel fill always meant — it is not a second card on the
+    // screen, it is the felt on the one card. The cut colour is that host fill, so the
+    // stepped corners are cut with panel rather than with the screen's black.
+    PixelCard(
+        variant = PixelCardVariant.SUBTLE,
+        padding = CardPadding.MD,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),

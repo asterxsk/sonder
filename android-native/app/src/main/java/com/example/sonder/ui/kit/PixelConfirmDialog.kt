@@ -2,14 +2,9 @@ package com.example.sonder.ui.kit
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,9 +23,10 @@ import com.example.sonder.theme.TextSoft
  * panel replaces the content rather than dimming it, and the dock stays where it is as
  * the screen's persistent chrome.
  *
- * [confirmStyle] defaults to DANGER because the only caller so far is a removal, and a
- * destructive answer should be the one that looks like one. The dismiss control is always
- * the quiet one, so nothing here can be answered "yes" by momentum.
+ * [confirmStyle] defaults to DANGER because the answer behind the question is usually
+ * destructive — a removal, a discard — and that answer should look like what it does. The
+ * dismiss control is always the quiet one, so nothing here can be answered "yes" by
+ * momentum.
  */
 @Composable
 fun PixelConfirmDialog(
@@ -56,43 +52,48 @@ fun PixelConfirmDialog(
             .padding(horizontal = PixelSpace.Room),
         contentAlignment = Alignment.Center,
     ) {
-        PixelPanel(modifier = Modifier.fillMaxWidth()) {
-            Column(
+        PixelCard(
+            modifier = Modifier.fillMaxWidth(),
+            variant = PixelCardVariant.SOLID,
+            padding = CardPadding.MD,
+            // The card is framed in the colour of the answer it is asking for, so a removal
+            // is legible as a removal before the buttons are read.
+            intent = when (confirmStyle) {
+                PixelButtonStyle.DANGER -> PixelPalette.Danger
+                PixelButtonStyle.SUCCESS -> PixelPalette.Success
+                else -> null
+            },
+        ) {
+            androidx.compose.material3.Text(
+                text = title,
+                style = PixelTypeScale.SectionTitle,
+                fontFamily = PixelFont,
+                color = PixelPalette.Text,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                androidx.compose.material3.Text(
-                    text = title,
-                    style = PixelTypeScale.SectionTitle,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Text,
-                    textAlign = TextAlign.Center,
+            )
+            androidx.compose.material3.Text(
+                text = body,
+                style = MonoTypeScale.Body,
+                color = TextSoft,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = PixelSpace.Snug),
+            )
+            PixelCard.Footer {
+                PixelButton(
+                    text = dismissText,
+                    onClick = onDismiss,
+                    style = PixelButtonStyle.SECONDARY,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.height(PixelSpace.Snug))
-                androidx.compose.material3.Text(
-                    text = body,
-                    style = MonoTypeScale.Body,
-                    color = TextSoft,
-                    textAlign = TextAlign.Center,
+                PixelButton(
+                    text = confirmText,
+                    onClick = onConfirm,
+                    style = confirmStyle,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.height(PixelSpace.Room))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PixelSpace.Base),
-                ) {
-                    PixelButton(
-                        text = dismissText,
-                        onClick = onDismiss,
-                        style = PixelButtonStyle.SECONDARY,
-                        modifier = Modifier.weight(1f),
-                    )
-                    PixelButton(
-                        text = confirmText,
-                        onClick = onConfirm,
-                        style = confirmStyle,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
             }
         }
     }

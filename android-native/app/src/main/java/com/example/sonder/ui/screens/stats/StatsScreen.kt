@@ -28,7 +28,15 @@ import com.example.sonder.theme.PixelPalette
 import com.example.sonder.theme.PixelSpace
 import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelCardTitle
+import com.example.sonder.ui.kit.PixelChip
+import com.example.sonder.ui.kit.PixelChipTone
+import com.example.sonder.ui.kit.PixelChipVariant
+import com.example.sonder.ui.kit.PixelEmptyState
+import com.example.sonder.ui.kit.PixelGroupLabel
+import com.example.sonder.ui.kit.PixelSectionHeader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,11 +60,9 @@ fun StatsScreen(
             .padding(horizontal = PixelSpace.Room),
     ) {
         Spacer(Modifier.height(PixelSpace.Room))
-        androidx.compose.material3.Text(
-            "STATS",
-            style = PixelTypeScale.ScreenTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Primary,
+        PixelSectionHeader(
+            title = "STATS",
+            subtitle = "Every hand you have played, as it was dealt",
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
@@ -78,12 +84,7 @@ fun StatsScreen(
         }
 
         Spacer(Modifier.height(PixelSpace.Section))
-        androidx.compose.material3.Text(
-            "RECENT HANDS",
-            style = PixelTypeScale.SectionTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Text,
-        )
+        PixelGroupLabel(text = "RECENT HANDS")
         Spacer(Modifier.height(PixelSpace.Snug))
 
         when {
@@ -115,105 +116,90 @@ private fun SummaryPanel(
     tone: Color,
     modifier: Modifier = Modifier,
 ) {
-    PixelPanel(modifier = modifier) {
+    PixelCard(modifier = modifier, padding = CardPadding.SM) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // Glyph and word first, small and quiet, then the count beneath them at display
+            // size: the label is what the reader is looking for and the number is what they
+            // take away, and in that order the tile reads top-down in one glance.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Text(glyph, color = tone)
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(PixelSpace.Tight))
                 androidx.compose.material3.Text(
                     label,
-                    style = PixelTypeScale.Badge,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Muted,
+                    style = MonoTypeScale.Metadata,
+                    color = TextSoft,
                 )
             }
             androidx.compose.material3.Text(
                 "$value",
-                style = PixelTypeScale.Timer,
-                fontFamily = PixelFont,
+                // Not the pixel face: its nought is a hollow ring. See [MonoTypeScale.Count].
+                style = MonoTypeScale.Count,
                 color = tone,
             )
         }
     }
 }
 
-/** Framed explanatory state — visually a panel, not a blank screen. */
+/**
+ * Framed explanatory state — a card, not a blank screen.
+ *
+ * Both of this screen's not-yet states are ordinary: Room has not answered, or the ledger
+ * is genuinely empty. The card is drawn in the neutral tone for exactly that reason — a
+ * ledger with no hands is a fact about the user, not a fault in the app.
+ */
 @Composable
 private fun FramedNote(title: String, body: String) {
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            androidx.compose.material3.Text(
-                title,
-                style = PixelTypeScale.SectionTitle,
-                fontFamily = PixelFont,
-                color = PixelPalette.Text,
-            )
-            Spacer(Modifier.height(6.dp))
-            androidx.compose.material3.Text(
-                body,
-                style = MonoTypeScale.Body,
-                color = TextSoft,
-            )
-        }
-    }
+    PixelEmptyState(title = title, body = body)
 }
 
 @Composable
 private fun HandRow(hand: HandEntity, timeFmt: SimpleDateFormat) {
-    PixelPanel {
+    PixelCard(padding = CardPadding.SM) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
+            PixelCard.Header {
+                PixelCardTitle(
                     // The stored label, which is the app's own name at the time of the hand.
                     // Rows written before the label existed fall back to the package name:
                     // the last dot-segment used to be printed here, which turned
                     // com.instagram.android into "android" — the word every Instagram and
                     // YouTube hand was filed under.
-                    androidx.compose.material3.Text(
-                        hand.label.ifBlank { hand.packageName },
-                        style = PixelTypeScale.SectionTitle,
-                        fontFamily = PixelFont,
-                        color = PixelPalette.Text,
-                    )
-                    androidx.compose.material3.Text(
-                        timeFmt.format(Date(hand.playedAtMillis)),
-                        style = MonoTypeScale.PackageId,
-                        color = TextSoft,
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    androidx.compose.material3.Text(
-                        when (hand.outcome) {
-                            "WIN" -> "✓ WIN"
-                            "LOSE" -> "▣ LOSS"
-                            else -> "— PUSH"
-                        },
-                        style = PixelTypeScale.Badge,
-                        fontFamily = PixelFont,
-                        color = when (hand.outcome) {
-                            "WIN" -> PixelPalette.Success
-                            "LOSE" -> PixelPalette.Danger
-                            else -> PixelPalette.Muted
-                        },
-                    )
-                    androidx.compose.material3.Text(
-                        // What the hand was played for and what it left behind: the two
-                        // numbers that explain a ledger whose rows are all the same shape.
-                        "bet ${hand.stakeMillis / 60_000}m · bank ${hand.bankAfterMillis / 60_000}m",
-                        style = MonoTypeScale.PackageId,
-                        color = TextSoft,
-                    )
-                }
+                    text = hand.label.ifBlank { hand.packageName },
+                )
+                PixelChip(
+                    // The outcome is the one thing a scan of this ledger is looking for, so
+                    // it is the one thing that gets a filled chip rather than an outline.
+                    label = when (hand.outcome) {
+                        "WIN" -> "WIN"
+                        "LOSE" -> "LOSS"
+                        else -> "PUSH"
+                    },
+                    glyph = when (hand.outcome) {
+                        "WIN" -> "✓"
+                        "LOSE" -> "▣"
+                        else -> "—"
+                    },
+                    tone = when (hand.outcome) {
+                        "WIN" -> PixelChipTone.SUCCESS
+                        "LOSE" -> PixelChipTone.DANGER
+                        else -> PixelChipTone.NEUTRAL
+                    },
+                    variant = if (hand.outcome == "WIN" || hand.outcome == "LOSE") {
+                        PixelChipVariant.SOLID
+                    } else {
+                        PixelChipVariant.OUTLINE
+                    },
+                )
             }
+            PixelCard.Meta(
+                // The timestamp and the two numbers that explain a ledger whose rows are all
+                // the same shape, on one line under the name.
+                text = "${timeFmt.format(Date(hand.playedAtMillis))}  ·  " +
+                    "bet ${hand.stakeMillis / 60_000}m · bank ${hand.bankAfterMillis / 60_000}m",
+                modifier = Modifier.padding(top = PixelSpace.Tight),
+            )
 
             // The hands, as they were dealt. A row from before cards were recorded has
             // neither line, and the ledger simply says less about that hand rather than

@@ -32,7 +32,9 @@ import com.example.sonder.theme.PixelTypeScale
 import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelCardVariant
 
 /**
  * The on-open reminder: a pixel card over a dimmed screen, listing only the grants that are
@@ -42,7 +44,7 @@ import com.example.sonder.ui.kit.PixelPanel
  * the first, and it is a conversation; this lands on top of whatever the user was doing when
  * the audit noticed a grant had gone. So it stays a card rather than a screen: no dock, no
  * navigation, nothing to explore — a title, the reason in one line each, and two ways out.
- * Everything is drawn from the same kit the rest of the app uses ([PixelPanel]'s hard frame
+ * Everything is drawn from the same kit the rest of the app uses ([PixelCard]'s hard frame
  * and stepped corners, [PixelButton]'s amber fill and stepped press), because a reminder
  * that renders in the platform's own widgets reads as a system dialog rather than as this
  * app asking for something.
@@ -99,9 +101,11 @@ fun PermissionPromptContent(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        PixelPanel(
-            borderColor = PixelPalette.Primary,
+        PixelCard(
             modifier = Modifier.fillMaxWidth(),
+            variant = PixelCardVariant.OUTLINED,
+            padding = CardPadding.MD,
+            intent = PixelPalette.Primary,
         ) {
             // The scroll belongs to the content, not to the panel. Hung on the panel it
             // moved the frame along with the rows: the top border, its stepped-corner nicks

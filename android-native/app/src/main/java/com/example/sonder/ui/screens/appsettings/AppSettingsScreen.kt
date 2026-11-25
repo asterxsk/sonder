@@ -36,7 +36,8 @@ import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelConfirmDialog
 import com.example.sonder.ui.kit.PixelHoldButton
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelCard
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelSweepButton
 import com.example.sonder.ui.kit.PixelTabs
@@ -96,7 +97,10 @@ fun AppSettingsScreen(
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // The app's name carries the status chip on its own line, because a chip beside a
+        // long app name at this width either truncates the name or wraps the header onto two
+        // lines with a chip floating in the middle of it.
+        Row(verticalAlignment = Alignment.Top) {
             Text(
                 ui.label ?: packageName,
                 style = PixelTypeScale.ScreenTitle,
@@ -119,10 +123,11 @@ fun AppSettingsScreen(
             packageName,
             style = MonoTypeScale.PackageId,
             color = TextSoft,
+            modifier = Modifier.padding(top = PixelSpace.Tight),
         )
         Spacer(Modifier.height(PixelSpace.Section))
 
-        PixelPanel(modifier = Modifier.fillMaxWidth()) {
+        PixelCard(modifier = Modifier.fillMaxWidth()) {
             Column {
                 // Shown only for an app with a known short-form surface. On any other app a
                 // shorts-scope option could never fire, so offering it would be a setting
@@ -354,10 +359,13 @@ private fun MaxControl(current: Long, onSelect: (Long) -> Unit) {
             color = PixelPalette.Text,
         )
         Text(
-            if (matched >= 0) "MAX" else "CUSTOM ${formatDuration(current)}",
-            style = PixelTypeScale.Badge,
-            fontFamily = PixelFont,
-            color = PixelPalette.Muted,
+            // The trailing label says the current value in plain time, not the word MAX.
+            // The presets are four different ceilings and the right-hand label is the one
+            // place the *chosen* one is spelled out; "MAX" answered a question about a
+            // maximum of what, and looked like a fifth preset the user had to pick.
+            text = if (matched >= 0) bankSizeWords(current) else "CUSTOM ${formatDuration(current)}",
+            style = MonoTypeScale.Metadata,
+            color = TextSoft,
         )
     }
     Spacer(Modifier.height(PixelSpace.Snug))
@@ -372,6 +380,21 @@ private fun MaxControl(current: Long, onSelect: (Long) -> Unit) {
         style = MonoTypeScale.Metadata,
         color = TextSoft,
     )
+}
+
+/**
+ * A bank size as words — "1 hour", "2 hours", "30 minutes" — for the control's trailing
+ * label. A raw H:MM:SS string there duplicated the preset tab it was sitting beside; words
+ * say what was chosen, and the tabs already show the numerals.
+ */
+private fun bankSizeWords(millis: Long): String {
+    val minutes = (millis / 60_000L).toInt()
+    return when {
+        minutes < 60 -> "$minutes minutes"
+        minutes % 60 == 0 && minutes == 60 -> "1 hour"
+        minutes % 60 == 0 -> "${minutes / 60} hours"
+        else -> formatDuration(millis)
+    }
 }
 
 private data class Preset(val label: String, val value: Long)

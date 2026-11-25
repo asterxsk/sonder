@@ -36,7 +36,11 @@ import com.example.sonder.ui.kit.BadgeTone
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelCat
 import com.example.sonder.ui.kit.PixelLoader
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.PixelCard
+import com.example.sonder.ui.kit.PixelCardTitle
+import com.example.sonder.ui.kit.CardPadding
+import com.example.sonder.ui.kit.PixelEmptyState
+import com.example.sonder.ui.kit.PixelGroupLabel
 import com.example.sonder.ui.kit.PixelStatusBadge
 import com.example.sonder.ui.kit.PixelTimer
 import com.example.sonder.ui.kit.TimerTone
@@ -63,33 +67,7 @@ fun HomeScreen(
         contentPadding = PaddingValues(top = PixelSpace.Room, bottom = PixelSpace.Room),
         verticalArrangement = Arrangement.spacedBy(PixelSpace.Base),
     ) {
-        item {
-            Column {
-                Row {
-                    androidx.compose.material3.Text(
-                        text = "SONDER",
-                        style = PixelTypeScale.Wordmark,
-                        fontFamily = PixelFont,
-                        color = PixelPalette.Primary,
-                    )
-                    Spacer(Modifier.width(PixelSpace.Snug))
-                    // The amber pixel after the wordmark: one block of the brand
-                    // accent, the way a console prints its cursor.
-                    Box(
-                        modifier = Modifier
-                            .padding(top = PixelSpace.Snug)
-                            .size(CursorBlockSize)
-                            .background(PixelPalette.Primary),
-                    )
-                }
-                Spacer(Modifier.height(PixelSpace.Tight))
-                androidx.compose.material3.Text(
-                    text = "limits are earned back one hand at a time",
-                    style = MonoTypeScale.Metadata,
-                    color = TextSoft,
-                )
-            }
-        }
+        item { Wordmark() }
 
         // Everything is one lazy list, so a short screen or a large font scale can
         // scroll to the panel's action instead of clipping it off the bottom.
@@ -105,43 +83,26 @@ fun HomeScreen(
         }
 
         if (current != null && current.rows.isNotEmpty()) {
-            item {
-                androidx.compose.material3.Text(
-                    text = "LIMITED APPS",
-                    style = PixelTypeScale.SectionTitle,
-                    fontFamily = PixelFont,
-                    color = TextSoft,
-                )
-            }
+            item { PixelGroupLabel(text = "LIMITED APPS") }
             items(current.rows, key = { it.packageName }) { row -> HomeTargetPanel(row) }
         }
     }
 }
 
-/** Loading: the shared pixel loader so an initializing screen never reads as frozen. */
+/** Loading: the shared waiting state, so an initializing screen never reads as frozen. */
 @Composable
 private fun HomeLoadingPanel() {
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            androidx.compose.material3.Text(
-                text = "READING PROTECTION STATE",
-                style = PixelTypeScale.SectionTitle,
-                fontFamily = PixelFont,
-                color = PixelPalette.Text,
-            )
-            Spacer(Modifier.height(PixelSpace.Snug))
-            PixelLoader()
-        }
-    }
+    PixelEmptyState(
+        title = "READING PROTECTION STATE",
+        body = "Checking what is being enforced on this device.",
+        busy = true,
+    )
 }
 
 /** The compact live-status panel: one deterministic presentation per [HomeSummary]. */
 @Composable
 private fun HomeStatusPanel(summary: HomeSummary, onLimitApps: () -> Unit) {
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
+    PixelCard(modifier = Modifier.fillMaxWidth(), padding = CardPadding.MD) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -224,39 +185,62 @@ private fun HomeTargetPanel(row: HomeRow) {
         .filter { it.isNotEmpty() }
         .joinToString(", ")
 
-    PixelPanel(
+    PixelCard(
         modifier = Modifier
             .fillMaxWidth()
             // One merged node per row: the badge glyph never gets spelled out, and the
             // state reads as a word next to the app name.
             .semantics(mergeDescendants = true) { contentDescription = description },
+        padding = CardPadding.SM,
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                androidx.compose.material3.Text(
-                    text = row.label,
-                    style = PixelTypeScale.SectionTitle,
-                    fontFamily = PixelFont,
-                    color = PixelPalette.Text,
-                )
-                // A null override leaves the badge reading its own word (GRANTED / LOCKED).
-                val tone = when (row.badge()) {
-                    HomeBadge.GRANTED -> BadgeTone.GRANTED
-                    HomeBadge.LOCKED -> BadgeTone.LOCKED
-                }
-                PixelStatusBadge(tone, labelOverride = row.badgeText())
+        PixelCard.Header {
+            PixelCardTitle(row.label)
+            // A null override leaves the badge reading its own word (GRANTED / LOCKED).
+            val tone = when (row.badge()) {
+                HomeBadge.GRANTED -> BadgeTone.GRANTED
+                HomeBadge.LOCKED -> BadgeTone.LOCKED
             }
-            Spacer(Modifier.height(PixelSpace.Tight))
+            PixelStatusBadge(tone, labelOverride = row.badgeText())
+        }
+        PixelCard.Meta(
+            text = row.packageName,
+            modifier = Modifier.padding(top = PixelSpace.Tight),
+        )
+    }
+}
+
+/**
+ * The wordmark and its tagline. The cursor block after it is one square of the brand
+ * accent — the way a console prints its caret — and it is the only ornament on Home.
+ *
+ * Not [PixelSectionHeader]: the wordmark is a logotype at a larger size with a two-digit
+ * subtitle, and forcing it into the screen-header component would have meant a size
+ * parameter that only Home uses.
+ */
+@Composable
+private fun Wordmark() {
+    Column {
+        Row {
             androidx.compose.material3.Text(
-                text = row.packageName,
-                style = MonoTypeScale.PackageId,
-                color = TextSoft,
+                text = "SONDER",
+                style = PixelTypeScale.Wordmark,
+                fontFamily = PixelFont,
+                color = PixelPalette.Primary,
+            )
+            Spacer(Modifier.width(PixelSpace.Snug))
+            Box(
+                modifier = Modifier
+                    .padding(top = PixelSpace.Snug)
+                    .size(CursorBlockSize)
+                    .background(PixelPalette.Primary),
             )
         }
+        Spacer(Modifier.height(PixelSpace.Tight))
+        androidx.compose.material3.Text(
+            text = "limits are earned back one hand at a time",
+            style = MonoTypeScale.Metadata,
+            color = TextSoft,
+        )
     }
 }
 

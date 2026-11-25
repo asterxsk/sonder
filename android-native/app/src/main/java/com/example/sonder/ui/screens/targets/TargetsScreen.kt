@@ -11,12 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.sonder.theme.MonoTypeScale
@@ -28,7 +27,8 @@ import com.example.sonder.theme.TextSoft
 import com.example.sonder.ui.kit.PixelButton
 import com.example.sonder.ui.kit.PixelButtonStyle
 import com.example.sonder.ui.kit.PixelLoader
-import com.example.sonder.ui.kit.PixelPanel
+import com.example.sonder.ui.kit.PixelEmptyState
+import com.example.sonder.ui.kit.PixelSectionHeader
 import com.example.sonder.ui.kit.PixelSkeletonList
 import com.example.sonder.ui.kit.TargetRow
 
@@ -57,12 +57,13 @@ fun TargetsScreen(
             .padding(contentPadding)
             .padding(horizontal = PixelSpace.Room),
     ) {
+        // A subtitle rather than a bare title: this screen is the only place that says
+        // what the list is *for*, and an empty list on a bare heading reads as a list
+        // that failed to load.
         Spacer(Modifier.height(PixelSpace.Room))
-        Text(
-            "TARGETS",
-            style = PixelTypeScale.ScreenTitle,
-            fontFamily = PixelFont,
-            color = PixelPalette.Primary,
+        PixelSectionHeader(
+            title = "TARGETS",
+            subtitle = "Apps that ask you to win a hand first",
         )
         Spacer(Modifier.height(PixelSpace.Room))
 
@@ -80,6 +81,7 @@ fun TargetsScreen(
                 TargetsViewState.LoadFailed -> FramedNote(
                     title = "APPS UNAVAILABLE",
                     body = "The system did not return the app list. This is not an empty device.",
+                    tone = PixelPalette.Danger,
                 ) {
                     PixelButton(
                         text = "TRY AGAIN",
@@ -136,44 +138,32 @@ private fun AddAppsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 /**
- * Framed explanatory state — a panel, not a blank list, so empty never reads as
- * frozen. [action] is the optional control a state needs; the others pass none.
- * Shared with the picker, whose states are the same family.
+ * Framed explanatory state — a card, not a blank list, so empty never reads as frozen.
+ * [action] is the optional control a state needs; the others pass none.
+ *
+ * Kept as an alias rather than deleted: Targets and the picker both call it, and both are
+ * describing the same three states, so one shared shape is the point.
  */
 @Composable
 internal fun FramedNote(
     title: String,
     body: String,
     busy: Boolean = false,
+    tone: Color = PixelPalette.Muted,
     action: (@Composable () -> Unit)? = null,
 ) {
-    PixelPanel(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (busy) {
-                PixelLoader()
-                Spacer(Modifier.height(PixelSpace.Base))
-            }
-            Text(
-                title,
-                style = PixelTypeScale.SectionTitle,
-                fontFamily = PixelFont,
-                color = PixelPalette.Text,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(PixelSpace.Snug))
-            Text(
-                body,
-                style = MonoTypeScale.Body,
-                color = TextSoft,
-                textAlign = TextAlign.Center,
-            )
-            if (action != null) {
-                Spacer(Modifier.height(PixelSpace.Room))
-                action()
-            }
-        }
-    }
+    PixelEmptyState(
+        title = title,
+        body = body,
+        busy = busy,
+        tone = tone,
+        // The states that describe a fault carry the app's own mark for it; the two that
+        // describe an ordinary empty list carry nothing, because an empty list is not an
+        // error and dressing it as one is the habit this replaces.
+        glyph = when (tone) {
+            PixelPalette.Danger -> "▣"
+            else -> null
+        },
+        action = action,
+    )
 }
